@@ -1,0 +1,51 @@
+```text
++--------------------------------------+
+| CLI-MODE                             |
+| Select Model                         |
++--------------------------------------+
+|                                      |
+| 1. Gemini 3.8 Flash (Default)        |
+| 2. Gemini 3.7 Flash                  |
+| 3. Gemini 3.6 Flash                  |
+| 4. Gemini 3.1 Pro                    |
+| R. Refresh models                    |
+| B. Back                              |
+| X. Exit                              |
++--------------------------------------+
+```
+
+Show one phase at a time.
+
+```text
++--------------------------------------+
+| CLI-MODE                             |
+| Select Reasoning Effort              |
++--------------------------------------+
+| Model: Gemini 3.8 Flash              |
+|                                      |
+| 1. High (Default)                    |
+| 2. Medium                            |
+| 3. Low                               |
+| B. Back                              |
+| X. Exit                              |
++--------------------------------------+
+```
+
+Show one phase at a time.
+
+```text
++--------------------------------------+
+| CLI-MODE                             |
+| Select Access Level                  |
++--------------------------------------+
+| Model: Gemini 3.8 Flash | Effort:    |
+| High                                 |
+|                                      |
+| 1. allow (Default) - Auto-approve    |
+| all tools                            |
+| 2. prompt - Default permission       |
+| prompts                              |
+| B. Back                              |
+| X. Exit                              |
++--------------------------------------+
+```

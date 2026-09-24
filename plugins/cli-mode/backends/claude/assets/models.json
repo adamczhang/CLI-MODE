@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "fetchedAt": "2026-09-23T22:38:13-05:00",
+  "source": "Fresh session metadata from configured ACPX claude profile (sessions show)",
+  "note": "modelFamilies preserve the order advertised by the runtime. The ambiguous 'default' row advertised for each selector is deliberately omitted; CLI-MODE requires a concrete verified choice.",
+  "requestedDefaultModelId": "opus[1m]",
+  "requestedDefaultEffort": "high",
+  "requestedDefaultAccess": "allow",
+  "accessControl": {
+    "key": "mode",
+    "advertisedCurrentValue": "default",
+    "options": [
+      {
+        "access": "prompt",
+        "nativeValue": "default",
+        "nativeName": "Manual",
+        "description": "Default permission prompt flow"
+      },
+      {
+        "access": "auto-edit",
+        "nativeValue": "acceptEdits",
+        "nativeName": "Accept edits",
+        "description": "Auto-approve file edit tools"
+      },
+      {
+        "access": "allow",
+        "nativeValue": "bypassPermissions",
+        "nativeName": "Bypass permissions",
+        "description": "Bypass all permission checks"
+      }
+    ],
+    "advertisedUnmapped": [
+      {
+        "nativeValue": "plan",
+        "nativeName": "Plan",
+        "reason": "Plan mode is a workflow state whose ExitPlanMode gate needs interactive choices that headless auto-approval cannot answer."
+      },
+      {
+        "nativeValue": "auto",
+        "nativeName": "Auto",
+        "reason": "Advertised conditionally; CLI-MODE maps allow to bypassPermissions and does not silently substitute another mode."
+      }
+    ]
+  },
+  "effortControl": {
+    "key": "effort",
+    "advertisedCurrentValue": "default"
+  },
+  "advertisedCurrentModelId": "default",
+  "models": [
+    {
+      "id": "sonnet",
+      "name": "Sonnet 5"
+    },
+    {
+      "id": "claude-fable-5-1[1m]",
+      "name": "Fable 5.1"
+    },
+    {
+      "id": "opus[1m]",
+      "name": "Opus 5.5"
+    },
+    {
+      "id": "haiku",
+      "name": "Haiku 4.5"
+    }
+  ],
+  "modelFamilies": [
+    {
+      "name": "Sonnet 5",
+      "modelId": "sonnet",
+      "efforts": [
+        { "name": "Low", "value": "low" },
+        { "name": "Medium", "value": "medium" },
+        { "name": "High", "value": "high" },
+        { "name": "Xhigh", "value": "xhigh" },
+        { "name": "Max", "value": "max" }
+      ]
+    },
+    {
+      "name": "Fable 5.1",
+      "modelId": "claude-fable-5-1[1m]",
+      "efforts": [
+        { "name": "Low", "value": "low" },
+        { "name": "Medium", "value": "medium" },
+        { "name": "High", "value": "high" },
+        { "name": "Xhigh", "value": "xhigh" },
+        { "name": "Max", "value": "max" }
+      ]
+    },
+    {
+      "name": "Opus 5.5",
+      "modelId": "opus[1m]",
+      "efforts": [
+        { "name": "Low", "value": "low" },
+        { "name": "Medium", "value": "medium" },
+        { "name": "High", "value": "high" },
+        { "name": "Xhigh", "value": "xhigh" },
+        { "name": "Max", "value": "max" }
+      ]
+    },
+    {
+      "name": "Haiku 4.5",
+      "modelId": "haiku",
+      "effortSupported": false,
+      "efforts": []
+    }
+  ]
+}

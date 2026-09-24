@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "fetchedAt": "2026-09-21T23:42:16-05:00",
+  "source": "Fresh session metadata from configured ACPX copilot profile (sessions show)",
+  "note": "This runtime advertises no model catalog and no reasoning-effort selector over ACP: available_models, available_model_names, current_model_id and model_control are all null. Model choice belongs to the Copilot CLI itself. It does advertise a real permission control, allow_all, which CLI-MODE applies and verifies. Its mode selector uses ACP session-mode URIs and chooses an interaction style, not a permission level; CLI-MODE pins Agent.",
+  "requestedDefaultModelId": "provider-default",
+  "requestedDefaultAccess": "allow",
+  "modelControl": null,
+  "effortControl": null,
+  "interactionMode": {
+    "key": "mode",
+    "pinnedValue": "https://agentclientprotocol.com/protocol/session-modes#agent",
+    "pinnedName": "Agent",
+    "advertisedUnmapped": [
+      {
+        "nativeValue": "https://agentclientprotocol.com/protocol/session-modes#plan",
+        "nativeName": "Plan",
+        "reason": "Interaction style, not a permission level. CLI-MODE passes work through, so it pins Agent."
+      },
+      {
+        "nativeValue": "https://agentclientprotocol.com/protocol/session-modes#autopilot",
+        "nativeName": "Autopilot",
+        "reason": "Interaction style, not a permission level. CLI-MODE passes work through, so it pins Agent."
+      }
+    ]
+  },
+  "accessControl": {
+    "key": "allow_all",
+    "enforcedBy": "native+acpx",
+    "advertisedCurrentValue": "off",
+    "options": [
+      {
+        "access": "allow",
+        "nativeValue": "on",
+        "nativeName": "Allow all",
+        "description": "Native allow_all=on, plus ACPX auto-approval within host limits"
+      },
+      {
+        "access": "prompt",
+        "nativeValue": "off",
+        "nativeName": "Prompt",
+        "description": "Native allow_all=off; requests that cannot be handled noninteractively are reported"
+      }
+    ],
+    "unsupported": [
+      {
+        "access": "auto-edit",
+        "reason": "Copilot advertises allow_all as an on/off control with no auto-approve-edits-only value, so there is nothing native to apply or verify for auto-edit. CLI-MODE does not approximate one."
+      }
+    ]
+  },
+  "advertisedCurrentModelId": null,
+  "models": [],
+  "modelFamilies": [
+    {
+      "name": "Provider default",
+      "modelId": "provider-default",
+      "efforts": []
+    }
+  ]
+}

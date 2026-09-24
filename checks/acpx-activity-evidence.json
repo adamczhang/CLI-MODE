@@ -1,0 +1,54 @@
+{
+  "scope": "Unreleased activity improvements in the development worktree; released archives and installed plugin unchanged",
+  "date": "2026-09-22",
+  "sourceBase": "cffecf7f77d41f328ae89c119393f5da66e3680f",
+  "acpxVersion": "0.18.0",
+  "sourceSuiteBeforeUnicodeFix": {
+    "passed": 426,
+    "seconds": 181.345
+  },
+  "finalTargetedActivitySuite": {
+    "passed": 12
+  },
+  "freshPackageSuite": {
+    "passed": 428,
+    "skipped": 0,
+    "seconds": 183.265,
+    "runtimeTests": [
+      "test_activity_and_quiet_share_controller_session_and_exactly_one_prompt",
+      "test_activity_streams_before_result_and_excludes_private_payloads",
+      "test_cancel_after_control_spawn_before_owner_submission_is_not_lost",
+      "test_cancel_after_spawn_before_bridge_submission_is_not_lost",
+      "test_cancel_waits_for_terminal_settlement",
+      "test_cold_reconfiguration_refuses_a_missing_provider_conversation",
+      "test_cold_reconnect_keeps_conversation",
+      "test_controller_activation_modes_and_reconfiguration_share_one_session",
+      "test_dependency_change_is_rejected_without_using_path_fallback",
+      "test_invalid_cursor_restarts_observation_without_replaying_work",
+      "test_missing_provider_session_does_not_create_a_fresh_conversation",
+      "test_owner_loss_never_claims_settlement",
+      "test_permission_denial_does_not_poison_later_allowed_turn",
+      "test_recoverable_terminal_error_does_not_fail_completed_turn",
+      "test_separate_clients_preserve_context_exact_input_and_artifacts",
+      "test_unsupported_mcp_configuration_never_silently_loses_tools"
+    ]
+  },
+  "archive": {
+    "path": "%USERPROFILE%\\AppData\\Local\\Temp\\cli-mode-activity-final-tw8jqem2\\dist\\cli-mode-0.1.10.zip",
+    "sha256": "5817d6f426063b35107a46c1a1094311a6e677b93e160da90222afad6e0d1017",
+    "currentSourceEntriesVerified": 81
+  },
+  "freshExtractionEvidence": "%USERPROFILE%\\AppData\\Local\\Temp\\cli-mode-fresh-package-1npidzx2\\evidence.json",
+  "checks": [
+    "plugin validation",
+    "skill validation",
+    "Python compilation",
+    "Node syntax",
+    "git diff --check",
+    "LF/CRLF package reproducibility"
+  ],
+  "liveProviders": false,
+  "installedHostVerified": false,
+  "visualInspection": false,
+  "visualInspectionLimit": "Browser URL policy blocked local-file preview; renderer behavior and escaping tested programmatically"
+}

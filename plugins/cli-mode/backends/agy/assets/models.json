@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 1,
+  "fetchedAt": "2026-09-21T15:06:36.913665-05:00",
+  "source": "Fresh session metadata from configured ACPX antigravity profile",
+  "requestedDefaultModelId": "gemini-3.8-flash-high",
+  "requestedDefaultAccess": "allow",
+  "accessControl": {
+    "key": "mode",
+    "advertisedCurrentValue": "default",
+    "options": [
+      {
+        "access": "prompt",
+        "nativeValue": "default",
+        "nativeName": "Default",
+        "description": "Default permission prompt flow"
+      },
+      {
+        "access": "allow",
+        "nativeValue": "yolo",
+        "nativeName": "YOLO",
+        "description": "Auto-approve all tools"
+      }
+    ],
+    "unsupported": [
+      {
+        "access": "auto-edit",
+        "reason": "ACPX client file permissions block writes even in native auto_edit mode; edits-only access is unsupported."
+      }
+    ]
+  },
+  "advertisedCurrentModelId": "gemini-3.7-flash-high",
+  "models": [
+    {
+      "id": "gemini-3.8-flash-high",
+      "name": "Gemini 3.8 Flash (High)"
+    },
+    {
+      "id": "gemini-3.8-flash-medium",
+      "name": "Gemini 3.8 Flash (Medium)"
+    },
+    {
+      "id": "gemini-3.8-flash-low",
+      "name": "Gemini 3.8 Flash (Low)"
+    },
+    {
+      "id": "gemini-3.7-flash-high",
+      "name": "Gemini 3.7 Flash (High)"
+    },
+    {
+      "id": "gemini-3.7-flash-medium",
+      "name": "Gemini 3.7 Flash (Medium)"
+    },
+    {
+      "id": "gemini-3.7-flash-low",
+      "name": "Gemini 3.7 Flash (Low)"
+    },
+    {
+      "id": "gemini-3.6-flash-high",
+      "name": "Gemini 3.6 Flash (High)"
+    },
+    {
+      "id": "gemini-3.6-flash-medium",
+      "name": "Gemini 3.6 Flash (Medium)"
+    },
+    {
+      "id": "gemini-3.6-flash-low",
+      "name": "Gemini 3.6 Flash (Low)"
+    },
+    {
+      "id": "gemini-pro-agent",
+      "name": "Gemini 3.1 Pro (High)"
+    },
+    {
+      "id": "gemini-3.1-pro-low",
+      "name": "Gemini 3.1 Pro (Low)"
+    }
+  ],
+  "configOptions": [
+    {
+      "currentValue": "gemini-3.7-flash-high",
+      "options": [
+        {
+          "value": "gemini-3.8-flash-high",
+          "name": "Gemini 3.8 Flash (High)",
+          "description": "gemini-3.8-flash-high"
+        },
+        {
+          "value": "gemini-3.8-flash-medium",
+          "name": "Gemini 3.8 Flash (Medium)",
+          "description": "gemini-3.8-flash-medium"
+        },
+        {
+          "value": "gemini-3.8-flash-low",
+          "name": "Gemini 3.8 Flash (Low)",
+          "description": "gemini-3.8-flash-low"
+        },
+        {
+          "value": "gemini-3.7-flash-high",
+          "name": "Gemini 3.7 Flash (High)",
+          "description": "gemini-3.7-flash-high"
+        },
+        {
+          "value": "gemini-3.7-flash-medium",
+          "name": "Gemini 3.7 Flash (Medium)",
+          "description": "gemini-3.7-flash-medium"
+        },
+        {
+          "value": "gemini-3.7-flash-low",
+          "name": "Gemini 3.7 Flash (Low)",
+          "description": "gemini-3.7-flash-low"
+        },
+        {
+          "value": "gemini-3.6-flash-high",
+          "name": "Gemini 3.6 Flash (High)",
+          "description": "gemini-3.6-flash-high"
+        },
+        {
+          "value": "gemini-3.6-flash-medium",
+          "name": "Gemini 3.6 Flash (Medium)",
+          "description": "gemini-3.6-flash-medium"
+        },
+        {
+          "value": "gemini-3.6-flash-low",
+          "name": "Gemini 3.6 Flash (Low)",
+          "description": "gemini-3.6-flash-low"
+        },
+        {
+          "value": "gemini-pro-agent",
+          "name": "Gemini 3.1 Pro (High)",
+          "description": "gemini-pro-agent"
+        },
+        {
+          "value": "gemini-3.1-pro-low",
+          "name": "Gemini 3.1 Pro (Low)",
+          "description": "gemini-3.1-pro-low"
+        }
+      ],
+      "id": "model",
+      "name": "Model",
+      "category": "model",
+      "type": "select"
+    },
+    {
+      "currentValue": "default",
+      "options": [
+        {
+          "value": "default",
+          "name": "Default",
+          "description": "Default permission prompt flow"
+        },
+        {
+          "value": "auto_edit",
+          "name": "Auto Edit",
+          "description": "Auto-approve file edit tools"
+        },
+        {
+          "value": "yolo",
+          "name": "YOLO",
+          "description": "Auto-approve all tools"
+        }
+      ],
+      "id": "mode",
+      "name": "Session Mode",
+      "category": "mode",
+      "type": "select"
+    }
+  ],
+  "modelFamilies": [
+    {
+      "name": "Gemini 3.8 Flash",
+      "efforts": [
+        {
+          "name": "High",
+          "modelId": "gemini-3.8-flash-high"
+        },
+        {
+          "name": "Medium",
+          "modelId": "gemini-3.8-flash-medium"
+        },
+        {
+          "name": "Low",
+          "modelId": "gemini-3.8-flash-low"
+        }
+      ]
+    },
+    {
+      "name": "Gemini 3.7 Flash",
+      "efforts": [
+        {
+          "name": "High",
+          "modelId": "gemini-3.7-flash-high"
+        },
+        {
+          "name": "Medium",
+          "modelId": "gemini-3.7-flash-medium"
+        },
+        {
+          "name": "Low",
+          "modelId": "gemini-3.7-flash-low"
+        }
+      ]
+    },
+    {
+      "name": "Gemini 3.6 Flash",
+      "efforts": [
+        {
+          "name": "High",
+          "modelId": "gemini-3.6-flash-high"
+        },
+        {
+          "name": "Medium",
+          "modelId": "gemini-3.6-flash-medium"
+        },
+        {
+          "name": "Low",
+          "modelId": "gemini-3.6-flash-low"
+        }
+      ]
+    },
+    {
+      "name": "Gemini 3.1 Pro",
+      "efforts": [
+        {
+          "name": "High",
+          "modelId": "gemini-pro-agent"
+        },
+        {
+          "name": "Low",
+          "modelId": "gemini-3.1-pro-low"
+        }
+      ]
+    }
+  ]
+}

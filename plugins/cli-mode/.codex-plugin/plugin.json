@@ -1,0 +1,28 @@
+{
+  "name": "cli-mode",
+  "version": "0.3.0",
+  "description": "Persistent CLI-agent routing through ACPX with queued forwarding and public activity: Antigravity, Claude Code, Grok Build, Cursor, GitHub Copilot and Codex CLI.",
+  "author": {
+    "name": "CLI-MODE Project"
+  },
+  "skills": "./codex/skills/",
+  "interface": {
+    "displayName": "CLI-MODE",
+    "composerIcon": "./assets/icon.jpg",
+    "logo": "./assets/icon.jpg",
+    "logoDark": "./assets/icon.jpg",
+    "shortDescription": "Use six persistent CLI agents through ACPX with Direct or queued Passthrough routing.",
+    "longDescription": "CLI-MODE routes to one persistent CLI agent with Direct mode by default or queued Passthrough forwarding. Select an agent with /cli or /cli <agent>. Each backend provides setup, public tool and message progress, and the quota reporting its runtime supports.",
+    "developerName": "CLI-MODE Project",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "/cli",
+      "/cli claude",
+      "/cli cursor",
+      "/cli copilot",
+      "/cli codex"
+    ],
+    "brandColor": "#006400"
+  }
+}

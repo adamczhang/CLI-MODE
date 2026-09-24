@@ -1,0 +1,7 @@
+interface:
+  brand_color: "#006400"
+  display_name: "CLI-MODE"
+  short_description: "Control single-session CLI-agent passthrough"
+  default_prompt: "/cli"
+policy:
+  allow_implicit_invocation: true

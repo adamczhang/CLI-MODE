@@ -1,0 +1,227 @@
+{
+  "schemaVersion": 1,
+  "fetchedAt": "2026-09-22",
+  "source": "Live ACPX codex session metadata; each model selected before reading reasoning_effort",
+  "requestedDefaultModelId": "gpt-6-sol",
+  "requestedDefaultEffort": "high",
+  "requestedDefaultAccess": "allow",
+  "modelFamilies": [
+    {
+      "modelId": "gpt-6-astra",
+      "name": "6 Astra",
+      "efforts": [
+        {
+          "name": "Low",
+          "value": "low"
+        },
+        {
+          "name": "Medium",
+          "value": "medium"
+        },
+        {
+          "name": "High",
+          "value": "high"
+        },
+        {
+          "name": "Xhigh",
+          "value": "xhigh"
+        },
+        {
+          "name": "Max",
+          "value": "max"
+        },
+        {
+          "name": "Ultra",
+          "value": "ultra"
+        }
+      ]
+    },
+    {
+      "modelId": "gpt-6-sol",
+      "name": "6 Sol",
+      "efforts": [
+        {
+          "name": "Low",
+          "value": "low"
+        },
+        {
+          "name": "Medium",
+          "value": "medium"
+        },
+        {
+          "name": "High",
+          "value": "high"
+        },
+        {
+          "name": "Xhigh",
+          "value": "xhigh"
+        },
+        {
+          "name": "Max",
+          "value": "max"
+        },
+        {
+          "name": "Ultra",
+          "value": "ultra"
+        }
+      ]
+    },
+    {
+      "modelId": "gpt-5.6-sol",
+      "name": "5.6 Sol",
+      "efforts": [
+        {
+          "name": "Low",
+          "value": "low"
+        },
+        {
+          "name": "Medium",
+          "value": "medium"
+        },
+        {
+          "name": "High",
+          "value": "high"
+        },
+        {
+          "name": "Xhigh",
+          "value": "xhigh"
+        },
+        {
+          "name": "Max",
+          "value": "max"
+        },
+        {
+          "name": "Ultra",
+          "value": "ultra"
+        }
+      ]
+    },
+    {
+      "modelId": "gpt-5.6-terra",
+      "name": "5.6 Terra",
+      "efforts": [
+        {
+          "name": "Low",
+          "value": "low"
+        },
+        {
+          "name": "Medium",
+          "value": "medium"
+        },
+        {
+          "name": "High",
+          "value": "high"
+        },
+        {
+          "name": "Xhigh",
+          "value": "xhigh"
+        },
+        {
+          "name": "Max",
+          "value": "max"
+        },
+        {
+          "name": "Ultra",
+          "value": "ultra"
+        }
+      ]
+    },
+    {
+      "modelId": "gpt-5.6-luna",
+      "name": "5.6 Luna",
+      "efforts": [
+        {
+          "name": "Low",
+          "value": "low"
+        },
+        {
+          "name": "Medium",
+          "value": "medium"
+        },
+        {
+          "name": "High",
+          "value": "high"
+        },
+        {
+          "name": "Xhigh",
+          "value": "xhigh"
+        },
+        {
+          "name": "Max",
+          "value": "max"
+        }
+      ]
+    },
+    {
+      "modelId": "gpt-5.5",
+      "name": "5.5",
+      "efforts": [
+        {
+          "name": "Low",
+          "value": "low"
+        },
+        {
+          "name": "Medium",
+          "value": "medium"
+        },
+        {
+          "name": "High",
+          "value": "high"
+        },
+        {
+          "name": "Xhigh",
+          "value": "xhigh"
+        }
+      ]
+    }
+  ],
+  "models": [
+    {
+      "id": "gpt-6-astra",
+      "name": "6 Astra"
+    },
+    {
+      "id": "gpt-6-sol",
+      "name": "6 Sol"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "5.6 Sol"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "5.6 Terra"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "5.6 Luna"
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "5.5"
+    }
+  ],
+  "effortControl": {
+    "key": "reasoning_effort"
+  },
+  "accessControl": {
+    "key": "mode",
+    "options": [
+      {
+        "access": "allow",
+        "nativeValue": "agent-full-access",
+        "nativeName": "Full access"
+      }
+    ],
+    "unsupported": [
+      {
+        "access": "auto-edit",
+        "reason": "Approve for me is automatic review, not an edits-only permission policy; no verified auto-edit mapping."
+      },
+      {
+        "access": "prompt",
+        "reason": "Codex read-only preset allowed workspace writes without ACP approval callbacks in live testing; headless Prompt cannot be enforced."
+      }
+    ]
+  }
+}

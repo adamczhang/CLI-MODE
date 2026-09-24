@@ -1,0 +1,125 @@
+{
+  "name": "cli-mode",
+  "owner": {
+    "name": "CLI-MODE Project"
+  },
+  "description": "CLI-MODE for Claude Code: use six CLI agents through ACPX from inside Claude Code.",
+  "plugins": [
+    {
+      "name": "cli-mode",
+      "displayName": "CLI-MODE",
+      "version": "0.3.0",
+      "description": "Persistent CLI-agent routing through ACPX with queued forwarding and public activity: Antigravity, Claude Code, Grok Build, Cursor, GitHub Copilot and Codex CLI.",
+      "author": {
+        "name": "CLI-MODE Project"
+      },
+      "homepage": "https://github.com/adamczhang/CLI-MODE",
+      "repository": "https://github.com/adamczhang/CLI-MODE",
+      "license": "MIT",
+      "keywords": [
+        "acp",
+        "acpx",
+        "agents",
+        "antigravity",
+        "claude",
+        "grok",
+        "cursor",
+        "copilot",
+        "codex"
+      ],
+      "source": "./plugins/cli-mode",
+      "strict": false,
+      "commands": [
+        "./claude/commands/"
+      ],
+      "hooks": {
+        "SessionStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python",
+                "args": [
+                  "${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"
+                ],
+                "timeout": 15
+              }
+            ]
+          }
+        ],
+        "UserPromptSubmit": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python",
+                "args": [
+                  "${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"
+                ],
+                "timeout": 90,
+                "statusMessage": "CLI-MODE"
+              }
+            ]
+          }
+        ],
+        "PreToolUse": [
+          {
+            "matcher": "Agent",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python",
+                "args": [
+                  "${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"
+                ],
+                "timeout": 15
+              }
+            ]
+          },
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python",
+                "args": [
+                  "${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"
+                ],
+                "timeout": 15,
+                "if": "Bash(python *)"
+              }
+            ]
+          },
+          {
+            "matcher": "PowerShell",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python",
+                "args": [
+                  "${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"
+                ],
+                "timeout": 15,
+                "if": "PowerShell(python *)"
+              }
+            ]
+          }
+        ],
+        "Stop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python",
+                "args": [
+                  "${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"
+                ],
+                "timeout": 15
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

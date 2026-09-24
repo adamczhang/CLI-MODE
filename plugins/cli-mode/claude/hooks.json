@@ -1,0 +1,48 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 15}
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 90,
+           "statusMessage": "CLI-MODE"}
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 15}
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 15,
+           "if": "Bash(python *)"}
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 15,
+           "if": "PowerShell(python *)"}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 15}
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/route.py\"",
+            "timeout": 15,
+            "commandWindows": "python -c __import__('runpy').run_path(__import__('os').environ['PLUGIN_ROOT']+'/hooks/route.py',run_name='__main__')"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/route.py\"",
+            "timeout": 15,
+            "commandWindows": "python -c __import__('runpy').run_path(__import__('os').environ['PLUGIN_ROOT']+'/hooks/route.py',run_name='__main__')"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(functions\\.)?(collaboration\\.)?(spawn_agent|followup_task|send_message|Agent)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/route.py\"",
+            "timeout": 15,
+            "commandWindows": "python -c __import__('runpy').run_path(__import__('os').environ['PLUGIN_ROOT']+'/hooks/route.py',run_name='__main__')"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "cli-mode-acpx-runtime",
+  "private": true,
+  "description": "The ACPX version CLI-MODE is tested against. Setup installs it with npm ci into a CLI-MODE-owned folder.",
+  "dependencies": {
+    "acpx": "0.18.0"
+  }
+}

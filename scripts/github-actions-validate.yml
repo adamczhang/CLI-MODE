@@ -1,0 +1,24 @@
+name: Validate plugin
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Build and verify portable package
+        run: python scripts/package_plugin.py
+      - name: Test fresh package with isolated state
+        run: python checks/package_smoke.py

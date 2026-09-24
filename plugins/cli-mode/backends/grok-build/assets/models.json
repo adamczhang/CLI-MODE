@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "fetchedAt": "2026-09-22T00:05:00-05:00",
+  "source": "Fresh session metadata from configured ACPX grok-build profile (sessions show)",
+  "note": "This runtime advertises only model and reasoning_effort. It exposes no permission-mode selector and no ACP session modes, so access is enforced entirely by ACPX client-side approval policy and nothing native is set or verified.",
+  "requestedDefaultModelId": "grok-4.7",
+  "requestedDefaultEffort": "high",
+  "requestedDefaultAccess": "allow",
+  "accessControl": {
+    "key": null,
+    "enforcedBy": "acpx",
+    "advertisedCurrentValue": null,
+    "options": [
+      {
+        "access": "allow",
+        "nativeValue": null,
+        "nativeName": "Always approve",
+        "description": "ACPX auto-approves tool requests within host limits"
+      },
+      {
+        "access": "prompt",
+        "nativeValue": null,
+        "nativeName": "Prompt",
+        "description": "ACPX default permission flow; requests that cannot be handled noninteractively are reported"
+      }
+    ],
+    "unsupported": [
+      {
+        "access": "auto-edit",
+        "reason": "Grok Build advertises no permission-mode selector and no ACP session modes, so there is no native auto-approve-edits-only setting to apply or verify. CLI-MODE does not approximate one."
+      }
+    ]
+  },
+  "effortControl": {
+    "key": "reasoning_effort",
+    "advertisedCurrentValue": "high"
+  },
+  "advertisedCurrentModelId": "grok-4.7",
+  "models": [
+    {
+      "id": "grok-4.7",
+      "name": "Grok 4.7"
+    },
+    {
+      "id": "grok-4.7-build-fast",
+      "name": "Grok 4.7 Fast"
+    },
+    {
+      "id": "grok-4.6",
+      "name": "Grok 4.6"
+    },
+    {
+      "id": "grok-4.5",
+      "name": "Grok 4.5"
+    }
+  ],
+  "modelFamilies": [
+    {
+      "name": "Grok 4.7",
+      "modelId": "grok-4.7",
+      "efforts": [
+        { "name": "Extra High", "value": "xhigh" },
+        { "name": "High", "value": "high" },
+        { "name": "Medium", "value": "medium" },
+        { "name": "Low", "value": "low" }
+      ]
+    },
+    {
+      "name": "Grok 4.7 Fast",
+      "modelId": "grok-4.7-build-fast",
+      "efforts": [
+        { "name": "Extra High", "value": "xhigh" },
+        { "name": "High", "value": "high" },
+        { "name": "Medium", "value": "medium" },
+        { "name": "Low", "value": "low" }
+      ]
+    },
+    {
+      "name": "Grok 4.6",
+      "modelId": "grok-4.6",
+      "efforts": [
+        { "name": "Extra High", "value": "xhigh" },
+        { "name": "High", "value": "high" },
+        { "name": "Medium", "value": "medium" },
+        { "name": "Low", "value": "low" }
+      ]
+    },
+    {
+      "name": "Grok 4.5",
+      "modelId": "grok-4.5",
+      "efforts": [
+        { "name": "Extra High", "value": "xhigh" },
+        { "name": "High", "value": "high" },
+        { "name": "Medium", "value": "medium" },
+        { "name": "Low", "value": "low" }
+      ]
+    }
+  ]
+}

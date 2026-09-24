@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "backends": [
+    {
+      "id": "agy",
+      "displayName": "Antigravity CLI",
+      "entrypoint": "../../../../backends/agy/backend.md",
+      "acpxProfile": "antigravity",
+      "activateCommand": "/cli agy",
+      "offCommand": "/cli stop",
+      "prerequisites": [
+        [
+          "ACPX",
+          null
+        ],
+        [
+          "Antigravity CLI",
+          "agy"
+        ]
+      ],
+      "effortRepresentation": "combined",
+      "commandTransport": "native-handoff",
+      "quota": "account",
+      "catalogRefresh": "owned-session-metadata"
+    },
+    {
+      "id": "claude",
+      "displayName": "Claude Code CLI",
+      "entrypoint": "../../../../backends/claude/backend.md",
+      "acpxProfile": "claude",
+      "activateCommand": "/cli claude",
+      "offCommand": "/cli stop",
+      "prerequisites": [
+        [
+          "ACPX",
+          null
+        ],
+        [
+          "npx",
+          "npx"
+        ],
+        [
+          "Claude Code CLI",
+          "claude"
+        ]
+      ],
+      "effortRepresentation": "separate",
+      "commandTransport": "acp",
+      "quota": "account",
+      "catalogRefresh": "owned-session-metadata"
+    },
+    {
+      "id": "grok-build",
+      "displayName": "Grok Build CLI",
+      "entrypoint": "../../../../backends/grok-build/backend.md",
+      "acpxProfile": "grok-build",
+      "aliases": [
+        "grok"
+      ],
+      "activateCommand": "/cli grok",
+      "offCommand": "/cli stop",
+      "prerequisites": [
+        [
+          "ACPX",
+          null
+        ],
+        [
+          "Grok Build CLI",
+          "grok"
+        ]
+      ],
+      "effortRepresentation": "separate",
+      "commandTransport": "acp",
+      "quota": "unavailable",
+      "catalogRefresh": "owned-session-metadata"
+    },
+    {
+      "id": "cursor",
+      "displayName": "Cursor CLI",
+      "entrypoint": "../../../../backends/cursor/backend.md",
+      "acpxProfile": "cursor",
+      "activateCommand": "/cli cursor",
+      "offCommand": "/cli stop",
+      "prerequisites": [
+        [
+          "ACPX",
+          null
+        ],
+        [
+          "Cursor CLI",
+          "cursor-agent"
+        ]
+      ],
+      "effortRepresentation": "none",
+      "commandTransport": "acp",
+      "quota": "unavailable",
+      "catalogRefresh": "owned-session-metadata"
+    },
+    {
+      "id": "copilot",
+      "displayName": "GitHub Copilot CLI",
+      "entrypoint": "../../../../backends/copilot/backend.md",
+      "acpxProfile": "copilot",
+      "activateCommand": "/cli copilot",
+      "offCommand": "/cli stop",
+      "prerequisites": [
+        [
+          "ACPX",
+          null
+        ],
+        [
+          "GitHub Copilot CLI",
+          "copilot"
+        ]
+      ],
+      "effortRepresentation": "none",
+      "commandTransport": "acp",
+      "quota": "unavailable",
+      "catalogRefresh": "owned-session-metadata"
+    },
+    {
+      "id": "codex",
+      "displayName": "Codex CLI",
+      "entrypoint": "../../../../backends/codex/backend.md",
+      "acpxProfile": "codex",
+      "activateCommand": "/cli codex",
+      "offCommand": "/cli stop",
+      "prerequisites": [
+        [
+          "ACPX",
+          null
+        ],
+        [
+          "npx",
+          "npx"
+        ],
+        [
+          "Codex CLI",
+          "codex"
+        ]
+      ],
+      "effortRepresentation": "separate",
+      "commandTransport": "acp",
+      "quota": "unavailable",
+      "catalogRefresh": "owned-session-metadata"
+    }
+  ]
+}

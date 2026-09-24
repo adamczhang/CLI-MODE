@@ -1,0 +1,248 @@
+{
+  "schemaVersion": 1,
+  "source": "https://antigravity.google/docs/cli/reference/",
+  "checkedAt": "2026-09-22",
+  "commands": [
+    {
+      "name": "add-dir",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "needs persistent workspace-directory management"
+    },
+    {
+      "name": "agents",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "boost",
+      "aliases": [],
+      "kind": "workflow",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "artifact",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "opens an artifact review panel"
+    },
+    {
+      "name": "btw",
+      "aliases": [],
+      "kind": "workflow",
+      "requirement": "needs a concurrent side-question channel"
+    },
+    {
+      "name": "clear",
+      "aliases": [
+        "new"
+      ],
+      "kind": "native",
+      "requirement": "resets the interactive conversation"
+    },
+    {
+      "name": "config",
+      "aliases": [
+        "settings"
+      ],
+      "kind": "native",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "context",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "opens a context visualization panel"
+    },
+    {
+      "name": "copy",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "copies to the system clipboard"
+    },
+    {
+      "name": "credits",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "diff",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "opens an interactive diff viewer"
+    },
+    {
+      "name": "exit",
+      "aliases": [
+        "quit"
+      ],
+      "kind": "native",
+      "requirement": "closes the interactive terminal session; use /cli stop in CLI-MODE"
+    },
+    {
+      "name": "fast",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "changes interactive execution state"
+    },
+    {
+      "name": "feedback",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "opens the feedback panel"
+    },
+    {
+      "name": "fork",
+      "aliases": [
+        "branch"
+      ],
+      "kind": "native",
+      "requirement": "creates another conversation"
+    },
+    {
+      "name": "help",
+      "aliases": [],
+      "kind": "host-help",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "hooks",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "keybindings",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "opens the keyboard shortcut editor"
+    },
+    {
+      "name": "logout",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "changes the native account login"
+    },
+    {
+      "name": "mcp",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "opens the MCP server manager"
+    },
+    {
+      "name": "model",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "open",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "opens an external editor"
+    },
+    {
+      "name": "permissions",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "planning",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "changes interactive planning state"
+    },
+    {
+      "name": "rename",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "renames the native conversation"
+    },
+    {
+      "name": "remote-control",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "controls the native remote-control daemon"
+    },
+    {
+      "name": "resume",
+      "aliases": [
+        "switch",
+        "conversation"
+      ],
+      "kind": "native",
+      "requirement": "opens a conversation picker"
+    },
+    {
+      "name": "rewind",
+      "aliases": [
+        "undo"
+      ],
+      "kind": "native",
+      "requirement": "rewinds native conversation history"
+    },
+    {
+      "name": "skills",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "statusline",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "configures a terminal status bar"
+    },
+    {
+      "name": "tasks",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "opens a background-task manager"
+    },
+    {
+      "name": "teamwork-preview",
+      "aliases": [
+        "teamwork"
+      ],
+      "kind": "workflow",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "title",
+      "aliases": [],
+      "kind": "native",
+      "requirement": "changes the terminal title"
+    },
+    {
+      "name": "usage",
+      "aliases": [
+        "quota"
+      ],
+      "kind": "native",
+      "requirement": "requires an advertised native headless handler"
+    },
+    {
+      "name": "voice",
+      "aliases": [
+        "record"
+      ],
+      "kind": "native",
+      "requirement": "requires microphone input and interactive dictation"
+    }
+  ],
+  "workflowSource": "https://antigravity.google/docs/slash-commands/",
+  "workflows": [
+    "boost",
+    "teamwork-preview",
+    "goal",
+    "plan",
+    "grill-me",
+    "learn",
+    "schedule",
+    "browser",
+    "btw"
+  ]
+}

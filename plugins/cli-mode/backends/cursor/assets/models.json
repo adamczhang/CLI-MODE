@@ -1,0 +1,405 @@
+{
+  "schemaVersion": 1,
+  "fetchedAt": "2026-09-21T23:29:14-05:00",
+  "source": "Fresh session metadata from configured ACPX cursor profile (sessions show)",
+  "note": "Model values are opaque advertised IDs, including bracketed settings. Never reconstruct or edit them. This runtime advertises no reasoning-effort selector or permission mode. Native writes bypass ACP permission callbacks, so only allow access is supported. Its mode selector (agent/plan/ask) chooses an interaction style, not a permission level; CLI-MODE pins it to agent.",
+  "requestedDefaultModelId": "composer-2.5[fast=true]",
+  "requestedDefaultAccess": "allow",
+  "interactionMode": {
+    "key": "mode",
+    "pinnedValue": "agent",
+    "pinnedName": "Agent",
+    "advertisedUnmapped": [
+      {
+        "nativeValue": "plan",
+        "nativeName": "Plan",
+        "reason": "Interaction style, not a permission level. CLI-MODE passes work through, so it pins Agent."
+      },
+      {
+        "nativeValue": "ask",
+        "nativeName": "Ask",
+        "reason": "Interaction style, not a permission level. CLI-MODE passes work through, so it pins Agent."
+      }
+    ]
+  },
+  "accessControl": {
+    "key": null,
+    "enforcedBy": "acpx",
+    "advertisedCurrentValue": null,
+    "options": [
+      {
+        "access": "allow",
+        "nativeValue": null,
+        "nativeName": "Always approve",
+        "description": "ACPX auto-approves tool requests within host limits"
+      }
+    ],
+    "unsupported": [
+      {
+        "access": "prompt",
+        "reason": "Cursor has no permission-mode selector and its native writes bypass ACP permission requests. Prompt access cannot be enforced; only allow is supported."
+      },
+      {
+        "access": "auto-edit",
+        "reason": "Cursor advertises no permission-mode selector, so there is no native auto-approve-edits-only setting to apply or verify. CLI-MODE does not approximate one."
+      }
+    ]
+  },
+  "effortControl": null,
+  "advertisedCurrentModelId": "default[]",
+  "models": [
+    {
+      "id": "default[]",
+      "name": "Auto"
+    },
+    {
+      "id": "grok-4.7[context=256k,reasoning_effort=high,fast=true]",
+      "name": "grok-4.7"
+    },
+    {
+      "id": "grok-4.6[effort=high,fast=true]",
+      "name": "grok-4.6"
+    },
+    {
+      "id": "composer-2.5[fast=true]",
+      "name": "composer-2.5"
+    },
+    {
+      "id": "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]",
+      "name": "claude-opus-5"
+    },
+    {
+      "id": "claude-opus-4-8[thinking=true,context=300k,effort=high,fast=false]",
+      "name": "claude-opus-4-8"
+    },
+    {
+      "id": "gpt-5.6-sol[context=272k,reasoning=medium,fast=false]",
+      "name": "gpt-5.6-sol"
+    },
+    {
+      "id": "gpt-5.5[context=272k,reasoning=medium,fast=false]",
+      "name": "gpt-5.5"
+    },
+    {
+      "id": "claude-fable-5-1[thinking=true,context=300k,effort=high]",
+      "name": "claude-fable-5-1"
+    },
+    {
+      "id": "claude-fable-5[thinking=true,context=300k,effort=high]",
+      "name": "claude-fable-5"
+    },
+    {
+      "id": "grok-4.5[effort=high,fast=true]",
+      "name": "grok-4.5"
+    },
+    {
+      "id": "gemini-3.8-flash[reasoning_effort=high]",
+      "name": "gemini-3.8-flash"
+    },
+    {
+      "id": "gemini-3.7-flash[effort=high]",
+      "name": "gemini-3.7-flash"
+    },
+    {
+      "id": "muse-spark-1.3[context=300k,effort=high]",
+      "name": "muse-spark-1.3"
+    },
+    {
+      "id": "gpt-5.6-terra[context=272k,reasoning=medium,fast=false]",
+      "name": "gpt-5.6-terra"
+    },
+    {
+      "id": "claude-sonnet-5[thinking=true,context=300k,effort=high]",
+      "name": "claude-sonnet-5"
+    },
+    {
+      "id": "claude-sonnet-4-6[thinking=true,context=200k,effort=medium]",
+      "name": "claude-sonnet-4-6"
+    },
+    {
+      "id": "gpt-5.3-codex[reasoning=medium,fast=false]",
+      "name": "gpt-5.3-codex"
+    },
+    {
+      "id": "claude-opus-4-7[thinking=true,context=300k,effort=xhigh,fast=false]",
+      "name": "claude-opus-4-7"
+    },
+    {
+      "id": "gpt-5.4[context=272k,reasoning=medium,fast=false]",
+      "name": "gpt-5.4"
+    },
+    {
+      "id": "claude-opus-4-6[thinking=true,context=200k,effort=high]",
+      "name": "claude-opus-4-6"
+    },
+    {
+      "id": "claude-opus-4-5[thinking=true]",
+      "name": "claude-opus-4-5"
+    },
+    {
+      "id": "gpt-5.2[reasoning=medium,fast=false]",
+      "name": "gpt-5.2"
+    },
+    {
+      "id": "gpt-5.6-luna[context=272k,reasoning=medium,fast=false]",
+      "name": "gpt-5.6-luna"
+    },
+    {
+      "id": "gemini-3.6-flash[effort=high]",
+      "name": "gemini-3.6-flash"
+    },
+    {
+      "id": "gemini-3.1-pro[]",
+      "name": "gemini-3.1-pro"
+    },
+    {
+      "id": "gpt-5.4-mini[reasoning=medium]",
+      "name": "gpt-5.4-mini"
+    },
+    {
+      "id": "gpt-5.4-nano[reasoning=medium]",
+      "name": "gpt-5.4-nano"
+    },
+    {
+      "id": "claude-haiku-4-5[thinking=true]",
+      "name": "claude-haiku-4-5"
+    },
+    {
+      "id": "claude-sonnet-4-5[thinking=true,context=200k]",
+      "name": "claude-sonnet-4-5"
+    },
+    {
+      "id": "gpt-5.1[reasoning=medium]",
+      "name": "gpt-5.1"
+    },
+    {
+      "id": "gemini-3-flash[]",
+      "name": "gemini-3-flash"
+    },
+    {
+      "id": "gemini-3.5-flash[]",
+      "name": "gemini-3.5-flash"
+    },
+    {
+      "id": "claude-sonnet-4[thinking=false,context=200k]",
+      "name": "claude-sonnet-4"
+    },
+    {
+      "id": "gpt-5-mini[]",
+      "name": "gpt-5-mini"
+    },
+    {
+      "id": "gemini-2.5-flash[]",
+      "name": "gemini-2.5-flash"
+    },
+    {
+      "id": "kimi-k3[reasoning=max]",
+      "name": "kimi-k3"
+    },
+    {
+      "id": "kimi-k2.7-code[]",
+      "name": "kimi-k2.7-code"
+    },
+    {
+      "id": "glm-5.2[reasoning=high]",
+      "name": "glm-5.2"
+    }
+  ],
+  "modelFamilies": [
+    {
+      "name": "Auto",
+      "modelId": "default[]",
+      "efforts": []
+    },
+    {
+      "name": "grok-4.7",
+      "modelId": "grok-4.7[context=256k,reasoning_effort=high,fast=true]",
+      "efforts": []
+    },
+    {
+      "name": "grok-4.6",
+      "modelId": "grok-4.6[effort=high,fast=true]",
+      "efforts": []
+    },
+    {
+      "name": "composer-2.5",
+      "modelId": "composer-2.5[fast=true]",
+      "efforts": []
+    },
+    {
+      "name": "claude-opus-5",
+      "modelId": "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]",
+      "efforts": []
+    },
+    {
+      "name": "claude-opus-4-8",
+      "modelId": "claude-opus-4-8[thinking=true,context=300k,effort=high,fast=false]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5.6-sol",
+      "modelId": "gpt-5.6-sol[context=272k,reasoning=medium,fast=false]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5.5",
+      "modelId": "gpt-5.5[context=272k,reasoning=medium,fast=false]",
+      "efforts": []
+    },
+    {
+      "name": "claude-fable-5-1",
+      "modelId": "claude-fable-5-1[thinking=true,context=300k,effort=high]",
+      "efforts": []
+    },
+    {
+      "name": "claude-fable-5",
+      "modelId": "claude-fable-5[thinking=true,context=300k,effort=high]",
+      "efforts": []
+    },
+    {
+      "name": "grok-4.5",
+      "modelId": "grok-4.5[effort=high,fast=true]",
+      "efforts": []
+    },
+    {
+      "name": "gemini-3.8-flash",
+      "modelId": "gemini-3.8-flash[reasoning_effort=high]",
+      "efforts": []
+    },
+    {
+      "name": "gemini-3.7-flash",
+      "modelId": "gemini-3.7-flash[effort=high]",
+      "efforts": []
+    },
+    {
+      "name": "muse-spark-1.3",
+      "modelId": "muse-spark-1.3[context=300k,effort=high]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5.6-terra",
+      "modelId": "gpt-5.6-terra[context=272k,reasoning=medium,fast=false]",
+      "efforts": []
+    },
+    {
+      "name": "claude-sonnet-5",
+      "modelId": "claude-sonnet-5[thinking=true,context=300k,effort=high]",
+      "efforts": []
+    },
+    {
+      "name": "claude-sonnet-4-6",
+      "modelId": "claude-sonnet-4-6[thinking=true,context=200k,effort=medium]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5.3-codex",
+      "modelId": "gpt-5.3-codex[reasoning=medium,fast=false]",
+      "efforts": []
+    },
+    {
+      "name": "claude-opus-4-7",
+      "modelId": "claude-opus-4-7[thinking=true,context=300k,effort=xhigh,fast=false]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5.4",
+      "modelId": "gpt-5.4[context=272k,reasoning=medium,fast=false]",
+      "efforts": []
+    },
+    {
+      "name": "claude-opus-4-6",
+      "modelId": "claude-opus-4-6[thinking=true,context=200k,effort=high]",
+      "efforts": []
+    },
+    {
+      "name": "claude-opus-4-5",
+      "modelId": "claude-opus-4-5[thinking=true]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5.2",
+      "modelId": "gpt-5.2[reasoning=medium,fast=false]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5.6-luna",
+      "modelId": "gpt-5.6-luna[context=272k,reasoning=medium,fast=false]",
+      "efforts": []
+    },
+    {
+      "name": "gemini-3.6-flash",
+      "modelId": "gemini-3.6-flash[effort=high]",
+      "efforts": []
+    },
+    {
+      "name": "gemini-3.1-pro",
+      "modelId": "gemini-3.1-pro[]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5.4-mini",
+      "modelId": "gpt-5.4-mini[reasoning=medium]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5.4-nano",
+      "modelId": "gpt-5.4-nano[reasoning=medium]",
+      "efforts": []
+    },
+    {
+      "name": "claude-haiku-4-5",
+      "modelId": "claude-haiku-4-5[thinking=true]",
+      "efforts": []
+    },
+    {
+      "name": "claude-sonnet-4-5",
+      "modelId": "claude-sonnet-4-5[thinking=true,context=200k]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5.1",
+      "modelId": "gpt-5.1[reasoning=medium]",
+      "efforts": []
+    },
+    {
+      "name": "gemini-3-flash",
+      "modelId": "gemini-3-flash[]",
+      "efforts": []
+    },
+    {
+      "name": "gemini-3.5-flash",
+      "modelId": "gemini-3.5-flash[]",
+      "efforts": []
+    },
+    {
+      "name": "claude-sonnet-4",
+      "modelId": "claude-sonnet-4[thinking=false,context=200k]",
+      "efforts": []
+    },
+    {
+      "name": "gpt-5-mini",
+      "modelId": "gpt-5-mini[]",
+      "efforts": []
+    },
+    {
+      "name": "gemini-2.5-flash",
+      "modelId": "gemini-2.5-flash[]",
+      "efforts": []
+    },
+    {
+      "name": "kimi-k3",
+      "modelId": "kimi-k3[reasoning=max]",
+      "efforts": []
+    },
+    {
+      "name": "kimi-k2.7-code",
+      "modelId": "kimi-k2.7-code[]",
+      "efforts": []
+    },
+    {
+      "name": "glm-5.2",
+      "modelId": "glm-5.2[reasoning=high]",
+      "efforts": []
+    }
+  ]
+}

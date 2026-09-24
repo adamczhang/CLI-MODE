@@ -1,0 +1,9 @@
+{
+  "archive": "cli-mode-0.1.10.zip",
+  "sha256": "112d0535cbdf47ad1e5c151b3c6ded366530ddf62685e56bf31cd2901c23fecb",
+  "fileCount": 81,
+  "temporaryBuild": true,
+  "freshExtraction": true,
+  "freshHome": true,
+  "testSummary": "Ran 438 tests in 212.544s"
+}

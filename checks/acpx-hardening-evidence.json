@@ -1,0 +1,55 @@
+{
+  "scope": "Unreleased development worktree; released dist archives unchanged",
+  "date": "2026-09-22",
+  "sourceBase": "cffecf7f77d41f328ae89c119393f5da66e3680f",
+  "upstream": {
+    "OpenClaw": "90e52dde35df3074ee3f4a34e6d0cad3a13f4d3d",
+    "ACPX": "edb0db8121cb4bf43fad252d4756774335c0ebfb"
+  },
+  "acpxVersion": "0.18.0",
+  "pythonVersion": "3.14.7",
+  "nodeVersion": "v26.8.2",
+  "sourceSuite": {
+    "passed": 413,
+    "seconds": 159.876
+  },
+  "additionalSourceTest": "test_acpx_runtime.SharedRuntime.test_cancel_after_control_spawn_before_owner_submission_is_not_lost: passed",
+  "freshPackageSuite": {
+    "passed": 414,
+    "skipped": 0,
+    "seconds": 162.95,
+    "runtimeTests": [
+      "test_cancel_after_control_spawn_before_owner_submission_is_not_lost",
+      "test_cancel_after_spawn_before_bridge_submission_is_not_lost",
+      "test_cancel_waits_for_terminal_settlement",
+      "test_cold_reconfiguration_refuses_a_missing_provider_conversation",
+      "test_cold_reconnect_keeps_conversation",
+      "test_controller_activation_modes_and_reconfiguration_share_one_session",
+      "test_dependency_change_is_rejected_without_using_path_fallback",
+      "test_invalid_cursor_restarts_observation_without_replaying_work",
+      "test_missing_provider_session_does_not_create_a_fresh_conversation",
+      "test_owner_loss_never_claims_settlement",
+      "test_permission_denial_does_not_poison_later_allowed_turn",
+      "test_recoverable_terminal_error_does_not_fail_completed_turn",
+      "test_separate_clients_preserve_context_exact_input_and_artifacts",
+      "test_unsupported_mcp_configuration_never_silently_loses_tools"
+    ]
+  },
+  "archive": {
+    "path": "%USERPROFILE%\\AppData\\Local\\Temp\\cli-mode-hardening-build-udb7u54p\\dist\\cli-mode-0.1.10.zip",
+    "sha256": "2f370ce3bc1f66479b796d843d3a29b9d294c9b54956d458010afd91dd402e0c",
+    "currentSourceEntriesVerified": 79
+  },
+  "freshExtractionEvidence": "%USERPROFILE%\\AppData\\Local\\Temp\\cli-mode-fresh-package-cjpgqg0p\\evidence.json",
+  "checks": [
+    "plugin validation",
+    "skill validation",
+    "Python compilation",
+    "Node syntax",
+    "git diff --check",
+    "LF/CRLF full-package reproducibility"
+  ],
+  "liveProviders": false,
+  "installedHostVerified": false,
+  "processTreeVerified": false
+}
