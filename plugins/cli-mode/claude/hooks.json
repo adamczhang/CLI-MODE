@@ -10,7 +10,7 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 90,
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 300,
            "statusMessage": "CLI-MODE"}
         ]
       }

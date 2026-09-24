@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Claude Code: an agent turn runs as a background task. Claude posts "Passing to …" and ends its turn; the agent's work shows as a row in Claude Code's background tasks (named after the agent and the prompt, one line per step), and when the agent finishes, Claude posts its whole output. Claude no longer spends a short turn every 25 seconds checking on the agent. With `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` the previous behaviour stays.
+- Claude Code: activating an agent (`/cli bind`, the activation menu, `/cli model`, `/cli effort` and narrower access) runs inside CLI-MODE's hook, so it no longer shows up as a background task of its own, and it costs no Claude turn to run. Raising access still goes through Claude Code's permission prompt.
 
 ## 0.3.1 — Hooks that run on current Codex — 2026-09-24
 

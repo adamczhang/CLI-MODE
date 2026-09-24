@@ -52,7 +52,11 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
 - **Claude Code reply path** (Claude only), in `hooks/claude.py`:
   - Local controls (menus, help, queue, stop) are answered in the hook itself, as a chat reply
     (default) or an instant hook notice.
-  - Slow controls and agent turns get a context naming the exact command.
+  - Activation (`bind`, the activation menu, setting changes: 13-42 s) also runs in the hook, whose prompt
+    timeout is 300 s: as a command Claude runs, it would be a row of its own in the desktop app's background
+    tasks, which list any tool call running past about 2-3 s. Only an activation that widens access, and
+    agent turns, get a context naming the exact command (Claude Code's permission prompt is the user's yes
+    for the first). The hook names those commands' rows after the agent (`<Agent> · starting`/`answer`).
   - PreToolUse auto-approves only CLI-MODE's own controller commands; installing (`setup-start --approved`) and
     activating with wider access (`activate --access` other than `prompt`) still get Claude Code's permission prompt.
   - A `/d` turn posts "Passing to …", runs `controller.py follow --request <id>` and ends. PreToolUse

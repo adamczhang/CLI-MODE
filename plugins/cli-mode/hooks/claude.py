@@ -188,6 +188,9 @@ def show(event, fenced, plain=None):
     """A local control's reply, in the display style this user chose (see DISPLAYS)."""
     plain = fenced if plain is None else plain
     style = STYLE
+    if style != 'model':
+        import presentation
+        plain = presentation.plain_strong(plain)  # A hook notice shows green LaTeX (the activation card's) raw.
     if style == 'model':
         import presentation
         return context(event, 'CLI-MODE answered this control itself; no command needs to run.' + COMPLETE +
@@ -308,12 +311,32 @@ def approve(event, text, root):
                                                                 and '--access' in rest)
             or (rest[0] in ('tune', 'choose') and widens_access(event, rest, root))):
         # Installing, or letting an agent act without asking: the user's yes comes from Claude Code itself.
-        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'ask',
-                                       'permissionDecisionReason': 'CLI-MODE ' + (
-                                           'installs what setup needs' if rest[0] == 'setup-start' else
-                                           'activates the agent with wider access') + '; this needs your yes.'}}
-    return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
-                                   'permissionDecisionReason': 'CLI-MODE controller command for this session.'}}
+        return labelled(event, root, rest, {'hookEventName': 'PreToolUse', 'permissionDecision': 'ask',
+                                            'permissionDecisionReason': 'CLI-MODE ' + (
+                                                'installs what setup needs' if rest[0] == 'setup-start' else
+                                                'activates the agent with wider access') + '; this needs your yes.'})
+    return labelled(event, root, rest, {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
+                                        'permissionDecisionReason': 'CLI-MODE controller command for this session.'})
+
+
+# The only controller commands that can run past the desktop app's row threshold (about 2-3 s) as a command
+# Claude runs: an activation that widens access (13-42 s), and the relay loop without background tasks (25 s).
+ROW_LABELS = {'bind': 'starting', 'activate': 'starting', 'choose': 'starting', 'tune': 'starting', 'relay': 'answer'}
+
+
+def labelled(event, root, rest, output):
+    """Name the command's row, should it get one, after the agent rather than Claude's own words."""
+    if rest[0] in ROW_LABELS:
+        try:
+            import adapters
+            import route
+            state = route.Store(event['session_id'], workspace(event), root).read()
+            agent = adapters.module(state.get('backend') or (state.get('pending') or {}).get('backend') or 'agy')
+            output['updatedInput'] = dict(event.get('tool_input') or {},
+                                          description=agent.LABEL + ' · ' + ROW_LABELS[rest[0]])
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+            pass  # Only the row's name: Claude's own stays.
+    return {'hookSpecificOutput': output}
 
 
 def follow_approval(event, root, rest):
@@ -325,30 +348,59 @@ def follow_approval(event, root, rest):
     import adapters
     import operations
     import route
-    from state import direct_payload
     if len(rest) != 3 or rest[1] != '--request':
         return None
     try:
         store = route.Store(event['session_id'], workspace(event), root)
         state = store.read()
-        record = state['requests'][rest[2]]
-        agent = adapters.module(state.get('backend') or 'agy').LABEL
-        text = store.request_path(rest[2]).read_text(encoding='utf-8')
-        if record.get('routingMode') == 'direct':
-            text = direct_payload(text) or text  # What the agent was sent, without the /d trigger.
-        words = ' '.join(text.split())
+        if rest[2] not in (state.get('requests') or {}):
+            return None  # Not a request of this session: Claude Code's own permissions decide.
         running = operations.following(store, rest[2])
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
-        return None  # Not a request of this session: Claude Code's own permissions decide.
+        return None
     if running:
         return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
                                        'permissionDecisionReason': 'CLI-MODE is already following this request; '
                                                                    'when that follow ends, its relay runs.'}}
-    label = agent + ' · ' + (words[:FOLLOW_LABEL].rstrip() + '…' if len(words) > FOLLOW_LABEL else words)
+    # The label is only the row's name: an older request without one still gets its follow, named by the agent.
+    label = (state.get('followLabels') or {}).get(rest[2])
+    if not isinstance(label, str) or not label:
+        try:
+            label = adapters.module(state.get('backend') or 'agy').LABEL
+        except ValueError:
+            label = 'CLI-MODE'
     return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
                                    'permissionDecisionReason': 'CLI-MODE follows the agent in the background.',
                                    'updatedInput': dict(event.get('tool_input') or {}, run_in_background=True,
                                                         description=label)}}
+
+
+FOLLOW_LABELS_KEPT = 20
+
+
+def remember_label(event, root, request, adapter, direct):
+    """Name the request's follow row now, while its prompt is at hand: `<Agent> · <start of the prompt>`.
+
+    The captured text file is gone once the worker submits it (usually within a second), so the label
+    is saved with the session state, under a key only this hook uses.
+    """
+    import route
+    from state import direct_payload
+    text = host.unwrap_prompt(event.get('prompt', ''), host.CLAUDE)
+    if direct:
+        text = direct_payload(text) or text  # What the agent was sent, without the /d trigger.
+    words = ' '.join(text.split())
+    label = adapter.LABEL + ' · ' + (words[:FOLLOW_LABEL].rstrip() + '…' if len(words) > FOLLOW_LABEL
+                                          else words)
+    try:
+        with route.Store(event['session_id'], workspace(event), root).edit() as state:
+            labels = state.setdefault('followLabels', {})
+            labels.pop(request, None)
+            labels[request] = label
+            for stale in list(labels)[:-FOLLOW_LABELS_KEPT]:
+                labels.pop(stale)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        pass  # Only the row's name is lost; the follow still runs.
 
 
 def followed(event, store, request):
@@ -579,27 +631,30 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
                 if cancellation and cancellation.get('canceled') else 'No agent turn was running; the queue is unchanged.')
         return instant(event, root, 'queue', render=lambda result: note + '\n\n' + presentation.queue_text(result))
     if kind == 'choose':
-        if pending.get('phase') == 'access':  # The last choice activates the agent.
+        words = ('choose', str(decision['number']))
+        if pending.get('phase') == 'access' and widens_access(event, list(words), root):
             return activation(event, root, adapter, 'applies the chosen access level and activates ' +
-                              adapter.DISPLAY_NAME, 'choose', str(decision['number']))
-        return instant(event, root, 'choose', str(decision['number']))
+                              adapter.DISPLAY_NAME, *words)
+        return instant(event, root, *words)  # The access list's choice activates here (see activation()).
     if kind == 'tune':
-        if not decision.get('text'):
-            return instant(event, root, 'tune', '--phase', decision['phase'], '--apply')
-        return activation(event, root, adapter, 'applies "' + decision['text'] + '" as ' + adapter.DISPLAY_NAME +
-                          '\'s ' + decision['phase'] + ' when it matches one advertised option exactly (otherwise its '
-                          'result is the options menu, with a message)', 'tune', '--phase', decision['phase'], '--apply')
+        words = ('tune', '--phase', decision['phase'], '--apply')
+        if decision.get('text') and widens_access(event, list(words), root):
+            return activation(event, root, adapter, 'applies "' + decision['text'] + '" as ' + adapter.DISPLAY_NAME +
+                              '\'s ' + decision['phase'] + ' when it matches one advertised option exactly (otherwise '
+                              'its result is the options menu, with a message)', *words)
+        return instant(event, root, *words)
     if kind == 'bind':
         if pending.get('stage') == 'verifying':
             return show_text(event, 'Activation is already being verified. /cli queue shows its progress.')
-        return activation(event, root, adapter, 'activates ' + adapter.DISPLAY_NAME + ' with its saved defaults (the '
-                          'first time: ' + json.dumps(adapter.DEFAULTS) + ')', 'bind', '--agent', adapter.ID)
+        return instant(event, root, 'bind', '--agent', adapter.ID)
     if kind == 'setup':
         return setup_reply(event, root, state, adapter, event.get('prompt', ''))
     if kind in ('direct', 'delegate'):
         request = decision.get('requestId')
         if not request:
             return show_text(event, 'CLI-MODE: no captured request. Send the message again.')
+        if background():
+            remember_label(event, root, request, adapter, kind == 'direct')
         lead = ('CLI-MODE forwarded this message' + (' (without its /d trigger)' if kind == 'direct' else '') +
                 ' unchanged to the active ' + adapter.LABEL + ' session. Only its text was forwarded: images or files '
                 'attached to it stay with Claude Code, so if it had any, one short line saying the agent did not '
@@ -662,7 +717,13 @@ def color_choice(event, root, choice):
 
 
 def activation(event, root, adapter, what, *words):
-    """A control that can take minutes (it starts or reconfigures the agent): Claude runs it once."""
+    """An activation that widens the agent's access: Claude runs it once, so Claude Code asks the user first.
+
+    Every other activation (bind, the activation menu, a narrower or equal setting) runs in this hook
+    through instant(): it takes 13-42 s while the agent starts and answers one readiness prompt, and as a
+    command Claude runs, it would be a row of its own in the desktop app's background tasks, next to the
+    agent's rows. Here the prompt shows the hook's status line meanwhile (its timeout allows 300 s).
+    """
     return context(event, (
         'CLI-MODE: this control ' + what + '. Its command is `' + command(event, root, *words) + '`. It checks '
         'readiness and sends the agent one short readiness prompt, which can take a minute or two, so it runs once, '
@@ -700,8 +761,7 @@ def setup_reply(event, root, state, adapter, reply):
         if answer in ('1', 'yes', 'y'):
             if not frontends.routing_readiness(state)['ready']:
                 return instant(event, root, 'frontend', '--agent', agent)  # 1 is Recheck routing on this page.
-            return activation(event, root, adapter, 'activates ' + adapter.DISPLAY_NAME + ' with the settings on its '
-                              'menu', 'activate', '--agent', agent)
+            return instant(event, root, 'activate', '--agent', agent)
         if answer == '2':
             return instant(event, root, 'options', '--phase', 'model', '--agent', agent)
     return context(event, (

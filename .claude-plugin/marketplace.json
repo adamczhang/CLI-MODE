@@ -56,7 +56,7 @@
                 "args": [
                   "${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"
                 ],
-                "timeout": 90,
+                "timeout": 300,
                 "statusMessage": "CLI-MODE"
               }
             ]

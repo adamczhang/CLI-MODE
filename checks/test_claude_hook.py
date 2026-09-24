@@ -20,6 +20,11 @@ if HOOK.is_file():  # Not in the Codex package, which checks/package_smoke.py te
     claude = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(claude)
 SESSION = 'claude-session-1'
+
+
+def presentation_plain(text):
+    from presentation import plain_strong
+    return plain_strong(text)
 # Claude Code without background tasks: the relay command waits in the turn itself, as before `follow`.
 no_background = patch.dict(os.environ, {'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS': '1'})
 
@@ -166,15 +171,46 @@ class InstantControls(ClaudeHook):
 
 
 class SlowControls(ClaudeHook):
-    def test_bind_gives_one_exact_command_and_how_to_show_its_result(self):
-        text = self.context(self.prompt('/cli bind claude'))
-        self.assertIn('`' + self.command('bind', '--agent', 'claude') + '`', text)
-        self.assertIn('activation.text', text)
-        self.assertIn('180000 ms', text)
-        self.assertNotIn('messageView', text)
-        # A failed bind's error is CLI-MODE's reply, not Claude's retelling (P7b run 3 added its own advice).
+    """Activation takes 13-42 s. As a command Claude runs, it was a row of its own in the desktop app's
+    background tasks, beside the agent's rows (2026-09-24), so it runs in the prompt hook: its card is the reply."""
+    def setUp(self):
+        super().setUp()
+        usage = patch('confirmation.usage', return_value={'status': 'unavailable', 'reason': 'test'})
+        usage.start()
+        self.addCleanup(usage.stop)
+
+    def test_bind_activates_in_the_hook_with_no_command_for_claude(self):
+        reply = self.prompt('/cli bind agy')
+        self.assertEqual(reply.get('decision'), 'block', reply)
+        self.assertIn('**CLI-MODE Activated**', reply['reason'])  # A hook notice shows plain bold, not LaTeX.
+        self.assertNotIn('$', reply['reason'])
+        self.assertTrue(self.store().read()['active'])
+        del os.environ['CLI_MODE_CLAUDE_INSTANT']  # Chat display: Claude posts the card, with no command to run.
+        self.prompt('/cli stop')
+        card = self.context(self.prompt('/cli bind agy'))
+        self.assertIn('CLI-MODE Activated', presentation_plain(card))
+        self.assertIn('no command needs to run', card)
+        self.assertNotIn('controller.py', card)
+
+    def test_a_failed_activation_is_shown_as_its_error(self):
+        with patch('controller.run', side_effect=RuntimeError('Grok Build CLI is not signed in.')):
+            self.assertEqual(self.prompt('/cli bind grok')['reason'], 'CLI-MODE: Grok Build CLI is not signed in.')
+
+    def test_widening_access_is_still_a_command_so_claude_code_asks(self):
+        control = Controller(self.store(), self.backend)
+        control.frontend()
+        control.activate('gemini-3.8-flash-high', 'prompt')
+        text = self.context(self.prompt('/cli access allow'))
+        tune = self.command('tune', '--phase', 'access', '--apply')
+        self.assertIn('`' + tune + '`', text)
         self.assertIn('`CLI-MODE: ` followed by that error', text)
-        self.assertIn('no advice or alternatives added', text)
+        event = dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='PreToolUse', tool_name='Bash',
+                     tool_input={'command': tune, 'description': 'Claude\'s words'})
+        output = claude.handle(event, self.data)['hookSpecificOutput']
+        self.assertEqual(output['permissionDecision'], 'ask')
+        # Its row, if it gets one (13-42 s), is named after the agent.
+        self.assertEqual(output['updatedInput'], dict(command=tune, description='Antigravity · starting'))
+        self.assertEqual(self.prompt('/cli access prompt').get('decision'), 'block')  # Not wider: in the hook.
 
     def test_every_command_that_can_fail_says_how_its_error_is_shown(self):
         with self.store().edit() as state:
@@ -189,10 +225,12 @@ class SlowControls(ClaudeHook):
         control.frontend('agy')
         with patch('frontends.confirmed', return_value=True):
             control.frontend('agy')  # A configured agent's activation page.
-            yes = self.context(self.prompt('1'))
-            self.assertIn('`' + self.command('activate', '--agent', 'agy') + '`', yes)
             defaults = self.prompt('2')
-        self.assertEqual(defaults['decision'], 'block')
+            self.assertEqual(defaults['decision'], 'block')
+            control.frontend('agy')
+            yes = self.prompt('1')
+        self.assertEqual(yes['decision'], 'block')
+        self.assertIn('**CLI-MODE Activated**', yes['reason'])
 
     def test_install_needs_the_users_explicit_yes(self):
         with self.store().edit() as state:
@@ -451,6 +489,11 @@ class BackgroundFollow(ClaudeHook):
     def test_a_follow_runs_in_the_background_labelled_with_the_agent_and_prompt(self):
         _, request = self.start()
         command = self.command('follow', '--request', request)
+        # Live run 1: the worker submits the request (deleting its captured text) before Claude runs the follow,
+        # and reading that text for the label left the follow unapproved, so headless Claude Code refused it.
+        self.store().request_path(request).unlink()
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'submitting'
         for tool in ('Bash', 'PowerShell'):
             with self.subTest(tool=tool):
                 output = self.pre_tool_use(command, tool)
@@ -465,6 +508,10 @@ class BackgroundFollow(ClaudeHook):
         short = self.store().read()['turnRoute']['requestId']
         output = self.pre_tool_use(self.command('follow', '--request', short))
         self.assertEqual(output['updatedInput']['description'], 'Antigravity · Fix the bug')
+        with self.store().edit() as state:
+            state.pop('followLabels')  # A request from before labels were saved: named by its agent, still allowed.
+        output = self.pre_tool_use(self.command('follow', '--request', short))
+        self.assertEqual((output['permissionDecision'], output['updatedInput']['description']), ('allow', 'Antigravity'))
 
     def test_one_follow_per_request_and_none_for_requests_of_other_sessions(self):
         _, request = self.start()
@@ -535,6 +582,13 @@ class Approval(ClaudeHook):
         self.assertTrue(self.allowed(relay, tool='PowerShell'))
         chain = self.command('relay', '--request', 'a' * 32, '--request', 'b' * 32, '--cursor', '4096')
         self.assertTrue(self.allowed(chain))
+        # Without background tasks a relay call waits 25 s: its row is named after the agent, not by Claude.
+        event = dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='PreToolUse', tool_name='Bash',
+                     tool_input={'command': chain, 'description': 'Relay the answer', 'timeout': 30000})
+        self.assertEqual(claude.handle(event, self.data)['hookSpecificOutput']['updatedInput'],
+                         dict(command=chain, description='Antigravity · answer', timeout=30000))
+        self.assertNotIn('updatedInput', claude.handle(dict(event, tool_input={'command': self.command('queue')}),
+                                                       self.data)['hookSpecificOutput'])  # Quick: no row to name.
         self.assertTrue(self.allowed(chain, tool='PowerShell'))
         self.assertTrue(self.allowed(self.command('bind', '--agent', 'grok-build')))
         self.assertTrue(self.allowed(self.command('activate', '--agent', 'agy')))

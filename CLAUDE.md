@@ -52,6 +52,9 @@ lands in one of three zones below; know which before editing.
   background task (the hook's `updatedInput` forces it and labels the row), ends, and is woken for one relay.
   The Stop guard reads `background_tasks` from Stop's input. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` keeps the
   old 25 s relay loop.
+- The desktop app lists any tool call running past about 2-3 s as a background-tasks row. Only agent turns
+  (`follow`) may: activation runs inside the prompt hook (timeout 300 s), except an activation that widens
+  access, which stays a command so Claude Code asks first.
 - `presentation.strong`/`plain_strong`/`chat_menu`/`relay_plain` (green LaTeX, diff-coloured title rows);
   `relay_view.final_markdown`.
 - Repo-root `.claude-plugin/marketplace.json`, which `package_plugin.py --sync` keeps in sync;

@@ -1,16 +1,23 @@
 # CLI-MODE
 
-![CLI-MODE: unlock third-party subscriptions in Codex](docs/images/banner.jpg)
+![CLI-MODE: unlock third-party subscriptions in Claude Code and Codex](docs/images/banner.jpg)
 
-**Use your other AI coding subscriptions without leaving Codex or Claude Code.**
-CLI-MODE is a plugin for both hosts that hands your prompts to Antigravity, Claude Code, Grok Build,
-Cursor, GitHub Copilot or Codex CLI, and relays their answers back into the chat you were already in.
+**Use your other AI coding subscriptions without leaving Claude Code or Codex.**
+CLI-MODE is a plugin that hands your prompts to Antigravity, Claude Code, Grok Build, Cursor, GitHub
+Copilot or Codex CLI, and relays their answers back into the chat you were already in.
 
-**Windows only for now** · Codex and Claude Code · Six agents over the
+**Windows only for now** · Built for Claude Code, also runs in Codex · Six agents over the
 [Agent Client Protocol](https://agentclientprotocol.com/) · MIT
 
-<!-- Screenshot: a Codex conversation showing "Passing to Claude...", then "Claude says..." with its work
-     summary, and the same turn in Claude Code. 1280 px wide, light or dark theme. -->
+## Hosts
+
+- **Claude Code has first-class support.** It is the primary host: new features are designed for it and
+  arrive there first, and every change is checked against it.
+- **Codex is supported and tested,** but new features may reach it later, or work differently there. The
+  [Claude Code](#claude-code) section lists what currently differs.
+
+<!-- Screenshot: a Claude Code conversation showing "Passing to Grok...", the agent's row in background
+     tasks, then "Grok says..." with its work summary. 1280 px wide, light or dark theme. -->
 
 ## Why
 
@@ -25,7 +32,8 @@ come back into your conversation. No second app, no second chat window, no termi
 ## What you need
 
 - **Windows 10 or 11.** Setup and the agent runtime are Windows-only for now.
-- **A host:** the Codex desktop app (the install uses the Codex CLI), or **Claude Code 2.1.147 or later**.
+- **A host:** **Claude Code 2.1.147 or later** (recommended), or the Codex desktop app (the install uses the
+  Codex CLI).
 - **Python 3.10+ and Node.js 22.13+.** Setup installs the rest, including CLI-MODE's own copy of ACPX.
 - **At least one supported agent CLI,** installed and signed in with its own subscription. You only need the
   ones you plan to use; `/cli` checks each one and guides installation and sign-in.
@@ -48,13 +56,6 @@ access. To switch agents, run `/cli stop` first; conversations do not transfer b
 
 Pick your host and run its block in PowerShell.
 
-**Codex:**
-
-```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.1
-codex plugin add cli-mode@cli-mode
-```
-
 **Claude Code:** download `cli-mode-claude-0.3.1.zip` from the
 [v0.3.1 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.1), extract it, and run:
 
@@ -72,6 +73,13 @@ claude plugin install cli-mode@cli-mode
 The zip's installer also checks Python, Node and your Claude Code version, and adds `/cli` and `/d` to
 autocomplete; see [Claude Code](#claude-code).
 
+**Codex:**
+
+```powershell
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.1
+codex plugin add cli-mode@cli-mode
+```
+
 **Using both?** Install both. They share CLI-MODE's ACPX copy and each agent's sign-in, so an agent set up
 for one host is ready in the other. Conversations and settings stay separate per host.
 
@@ -82,8 +90,8 @@ Release **0.3.1** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.
 
 ## Get started
 
-1. Open a new Codex task with **Full Access** (on Claude Code, start a new session and accept the folder's
-   workspace trust prompt).
+1. Start a new Claude Code session and accept the folder's workspace trust prompt (on Codex, open a new task
+   with **Full Access**).
 2. Run **`/cli`** and choose an agent. Setup checks its dependencies and guides installation and sign-in.
 3. On Codex, if prompted, approve the hooks under **Plugins → CLI-MODE → Hooks → Review / Trust all**, then
    recheck setup.
@@ -140,10 +148,10 @@ followed by the agent's own name for it, for example `Allow (Bypass permissions)
 ## What to expect
 
 - **Persistent context:** follow-up prompts continue the same agent conversation, and settings changes keep it.
-- **Live updates on Codex:** the agent's words arrive as chat updates in readable batches, each with a
-  one-line summary of its work. When the turn ends, one view shows the final message and a collapsible
-  **work** section with the plan and tool activity. On Claude Code the whole answer arrives at the end (see
-  [Claude Code](#claude-code)).
+- **How answers arrive:** on Claude Code, the agent works as a row in Claude Code's background tasks and its
+  whole answer arrives when it finishes, with a one-line work summary (see [Claude Code](#claude-code)). On
+  Codex, the agent's words arrive as chat updates in readable batches, and when the turn ends, one view shows
+  the final message and a collapsible **work** section with the plan and tool activity.
 - **Only public output:** private reasoning and raw tool inputs and outputs are never relayed.
 - **Theme:** menus and views follow your host's light or dark theme; CLI-MODE's own lines are green.
 - **Provider commands:** an agent's slash commands run as commands. CLI-MODE refuses ones that would sign you
@@ -158,7 +166,8 @@ followed by the agent's own name for it, for example `Allow (Bypass permissions)
 
 ## Claude Code
 
-The agents, setup, menus, settings, routing modes and commands are the same as on Codex. What differs:
+Claude Code is CLI-MODE's primary host. The agents, setup, menus, settings, routing modes and commands are
+the same on Codex; what is specific to Claude Code:
 
 - **Commands.** After a zip install, `/cli` and `/d` autocomplete as typed. After a GitHub install, Claude
   Code offers them as `/cli-mode:cli` and `/cli-mode:d`; run **`/cli-mode:cli shortcuts`** once to add `/cli`
@@ -172,8 +181,13 @@ The agents, setup, menus, settings, routing modes and commands are the same as o
   the agent finishes, Claude posts its whole output as one message, with a one-line work summary. Very long
   answers come in parts. With background tasks turned off (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`), Claude
   checks on the agent about every 25 seconds instead.
-- **Interrupting is safe.** If you stop Claude mid-relay (Esc), the agent keeps working. Your next `/d`, or
-  **`/cli resume`**, shows what you missed, oldest first, without resending anything.
+- **Only agents in background tasks.** Activating an agent (10–45 seconds while it starts) runs inside
+  CLI-MODE's hook, so your prompt shows a "CLI-MODE" status line meanwhile and the confirmation card is the
+  reply; it never adds a background task of its own. Raising an agent's access is the exception: Claude
+  Code's permission prompt asks you first.
+- **Interrupting is safe.** If you stop Claude mid-relay (Esc), or stop an agent's row in background tasks,
+  the agent keeps working; only the watching stops. Your next `/d`, or **`/cli resume`**, shows what you
+  missed, oldest first, without resending anything. **`/cli cancel`** stops the agent's turn itself.
 - **Attachments stay with Claude Code.** Only the prompt's text reaches the agent, and Claude says so when a
   message had images or files.
 - **Green titles.** "Passing to …", "… says…" and the activation card's title are green on the desktop and
