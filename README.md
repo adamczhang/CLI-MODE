@@ -20,12 +20,8 @@ Copilot or Codex CLI, and relays their answers back into the chat you were alrea
 | Six agents, setup, `/d` prompts, Agent Settings | ✓ | ✓ |
 | Queue, cancel, resume, provider slash commands | ✓ | ✓ |
 | Live viewer window (`/cli view`) | ✓ | ✓ |
-| Agent turn as a background-task row; Claude free while the agent works | ✓ | — |
-| Activation with no model turn | ✓ | — |
-| Reply style and colour (`/cli display`, `/cli color`), `/cli reset`, `/cli shortcuts` | ✓ | — |
-| Agent's words shown live during the turn | — | ✓ |
-| Final answer as a view with a collapsible work section (plan, tool activity) | — | ✓ |
-| Menus and results as inline views | — | ✓ |
+| Agents listed on the background tasks panel | ✓ | — |
+| Agent streaming updates | Panel viewer | In chat |
 | Help | `/cli help` | `/help` |
 | Needs | workspace trust | a Full Access task |
 
