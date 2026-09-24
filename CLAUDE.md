@@ -48,6 +48,10 @@ lands in one of three zones below; know which before editing.
   `nothing_to_do()` is a pre-import fast path.
 - `claude/hooks.json`, `claude/commands/{cli,d}.md`.
 - `QueueMixin.relay_text()` and `relay_chain()`: nothing mid-turn, then the whole output as the last message.
+- `QueueMixin.follow()` and `operations.follow_path`/`following`: a `/d` turn runs `controller.py follow` as a
+  background task (the hook's `updatedInput` forces it and labels the row), ends, and is woken for one relay.
+  The Stop guard reads `background_tasks` from Stop's input. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` keeps the
+  old 25 s relay loop.
 - `presentation.strong`/`plain_strong`/`chat_menu`/`relay_plain` (green LaTeX, diff-coloured title rows);
   `relay_view.final_markdown`.
 - Repo-root `.claude-plugin/marketplace.json`, which `package_plugin.py --sync` keeps in sync;

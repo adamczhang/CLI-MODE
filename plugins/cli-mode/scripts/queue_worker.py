@@ -8,7 +8,7 @@ import sys
 import time
 import uuid
 
-from operations import _detached_workers, emit, operation_running, pending_work, status_age
+from operations import _detached_workers, emit, follow_path, operation_running, pending_work, status_age
 import adapters
 import host
 import menu_view
@@ -387,20 +387,26 @@ class QueueMixin:
         started = time.monotonic()
         state = self.store.read()
         records, progress = state.get('requests') or {}, state.get('relayProgress') or {}
+        if any(request_id not in records for request_id in request_ids):
+            raise RuntimeError('Captured request was not found in this conversation.')
+        if all((progress.get(request_id) or {}).get('done') for request_id in request_ids):
+            # Background turns overlap: a later relay can post these before this command runs. Never twice.
+            return dict(requestId=request_ids[-1], cursor=cursor, done=True, posted=True,
+                        status=records[request_ids[-1]]['status'], agent=adapters.module(self.agent_of(state)).LABEL,
+                        idleSeconds=None, markdown='', text='', artifacts=[])
         base, held = 0, []  # Where the current request's log starts in the stream; settled requests' words.
         for index, request_id in enumerate(request_ids):
-            record = records.get(request_id)
-            if record is None:
-                raise RuntimeError('Captured request was not found in this conversation.')
+            record = records[request_id]
             local, last = cursor - base, index == len(request_ids) - 1
             if not last and record['status'] not in ('captured', 'submitting'):
                 end = self._log_end(record)
                 saved = progress.get(request_id) or {}
+                if saved.get('done'):
+                    cursor = max(cursor, base + end)  # The stream moves past it, even from its start.
+                    base += end
+                    continue  # Already shown, possibly by a relay that ran after this command was given.
                 if local < end:
                     start, cursor = local, base + end  # The stream stood in it: the rest waits for the end.
-                elif saved.get('done'):
-                    base += end
-                    continue  # Already shown.
                 else:
                     start = saved.get('cursor', 0)
                 held.append((request_id, start))
@@ -442,6 +448,73 @@ class QueueMixin:
         text = '\n\n'.join(pieces)
         return dict(finals[-1][2], cursor=base + current, done=done, markdown='' if done else text, text=text,
                     artifacts=[item for _, _, final in finals[:len(shown)] for item in final['artifacts']])
+
+    # Following a turn from a background task (Claude Code): one short line per step, no agent text.
+    FOLLOW_POLL = 1.0
+    FOLLOW_LINE = 160
+    FOLLOW_ENDS = dict(completed='{} finished.', canceled='{}\'s turn was canceled.',
+                       superseded='{}\'s turn was canceled.', rejected='Not sent to {}.',
+                       uncertain='{}\'s turn could not be confirmed.')
+
+    def follow(self, request_id, write, poll=None):
+        """Wait until a request settles, writing one line per step of the agent's work.
+
+        Claude Code runs this as a background task: the lines fill the task's row in the
+        background-tasks pane, and the task ending wakes Claude, which then runs `relay`
+        once for the agent's words. So nothing here posts or saves relay progress; the
+        process ID file only lets the hook avoid starting a second follow.
+        """
+        label = adapters.module(self.agent_of(self.store.read())).LABEL
+        path = follow_path(self.store, request_id)
+        mine = str(os.getpid())
+        path.write_text(mine, encoding='ascii')
+        tools, failed, plan, cursor, queued, writing = set(), set(), None, 0, False, False
+
+        def say(text):
+            text = ' '.join(relay_view.clean(text).split())
+            write(text if len(text) <= self.FOLLOW_LINE else text[:self.FOLLOW_LINE - 1] + '…')
+        try:
+            while True:
+                view = self.observe(request_id, cursor, limit=500)
+                cursor, status = view['cursor'], view['receipt']['status']
+                for event in view['events']:
+                    kind = event.get('type')
+                    if kind == 'activity' and event.get('toolCallId'):
+                        writing = False
+                        row = relay_view.tool_row(dict(event, kind=event.get('kind') or 'other'),
+                                                  self.store.workspace)
+                        if event['toolCallId'] not in tools:
+                            tools.add(event['toolCallId'])
+                            say(label + ': ' + row)
+                        if event.get('status') == 'failed' and event['toolCallId'] not in failed:
+                            failed.add(event['toolCallId'])
+                            say(label + ': failed: ' + row)
+                    elif kind == 'plan' and isinstance(event.get('entries'), list):
+                        entries = event['entries']
+                        done = sum(isinstance(entry, dict) and entry.get('status') == 'completed' for entry in entries)
+                        if (done, len(entries)) != plan:
+                            plan = (done, len(entries))
+                            say(label + ': plan ' + str(done) + ' of ' + str(len(entries)) + ' steps done')
+                    elif kind == 'message' and not writing:
+                        writing = True
+                        say(label + ' is writing.')
+                    elif kind == 'error':
+                        say(label + ': error: ' + str(event.get('message') or ''))
+                if status == 'captured' and not queued:
+                    queued = True
+                    say(label + ' is finishing an earlier turn; this one is queued.')
+                if status not in ('captured', 'submitting') and not view['events']:
+                    break  # Settled, and its log is read to the end.
+                if not view['events']:
+                    time.sleep(self.FOLLOW_POLL if poll is None else poll)
+        finally:
+            try:
+                if path.read_text(encoding='ascii') == mine:
+                    path.unlink()
+            except OSError:
+                pass  # Another follow took the file over, or it is already gone.
+        say(self.FOLLOW_ENDS.get(status, '{} stopped (' + status + ').').format(label))
+        return dict(requestId=request_id, status=status, done=True)
 
     def _not_sent(self, request_id):
         """The footer of a request refused before it reached the agent, with the reason."""

@@ -43,6 +43,20 @@ def operation_running(operation):
     return True
 
 
+def follow_path(store, request_id):
+    """Where a running `follow` of this request (Claude Code's background task) keeps its process ID."""
+    return store.request_path(request_id).with_name('follow-' + request_id + '.pid')
+
+
+def following(store, request_id):
+    """True while a `follow` of this request is running."""
+    try:
+        pid = int(follow_path(store, request_id).read_text(encoding='ascii'))
+    except (OSError, ValueError):
+        return False
+    return operation_running(dict(pid=pid))
+
+
 def pending_work(state, request_id=None, include_queue=True):
     """One admission gate for prompts, settings, and legacy uncertain receipts."""
     return (any(op.get('requestId') != request_id or request_id is None

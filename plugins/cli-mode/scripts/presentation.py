@@ -254,6 +254,8 @@ def relay_plain(result):
     agent = result.get('agent') or 'The agent'
     post = result['text'] if result['done'] else result.get('markdown') or ''
     again = ' Run the same command again with --cursor ' + str(result['cursor']) + '.'
+    if result.get('posted'):
+        return agent + '\'s answer is already posted above, so there is nothing more to post.'
     if result['done']:
         lead = agent + ' has finished. Post everything below this line exactly, as the last message of the turn.'
     elif post:

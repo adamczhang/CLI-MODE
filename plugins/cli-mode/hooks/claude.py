@@ -86,7 +86,7 @@ ARGUMENT = re.compile(r'[A-Za-z0-9_.:-]+')
 # Controller commands Claude may run without asking. The others (send, pump,
 # route, draft, observe, format-*) read files or bypass the queue.
 ALLOWED = frozenset((
-    'relay', 'queue', 'status', 'bind', 'activate', 'choose', 'navigate', 'settings', 'mode', 'progress', 'view', 'tune',
+    'relay', 'follow', 'queue', 'status', 'bind', 'activate', 'choose', 'navigate', 'settings', 'mode', 'progress', 'view', 'tune',
     'activation-message', 'frontend', 'options', 'first-time-check', 'setup-status', 'setup-manual', 'setup-start',
     'off', 'cancel', 'resume', 'refresh', 'commands', 'catalog'))
 RESET = ('/cli reset', '$cli reset', '/cli-mode:cli reset')
@@ -103,6 +103,12 @@ ERROR = (' A command that fails exits with code 1 and returns only `error`: the 
          'that error, shown the same way, with no advice or alternatives added.')
 ACTIVATION_TIMEOUT_MS = 180000
 RELAY_TIMEOUT_MS = 30000
+FOLLOW_LABEL = 30  # Characters of the prompt in a follow's background-task row.
+
+
+def background():
+    """Claude Code runs background tasks unless CLAUDE_CODE_DISABLE_BACKGROUND_TASKS turns them off."""
+    return os.environ.get('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS', '').strip().lower() not in ('1', 'true', 'yes', 'on')
 
 
 # Commands ----------------------------------------------------------------
@@ -295,6 +301,8 @@ def approve(event, text, root):
             or any("'" in token for token in tokens)
             or ' '.join(quote(token) for token in tokens) != text):
         return None
+    if rest[0] == 'follow':
+        return follow_approval(event, root, rest)
     access = rest[rest.index('--access') + 1:][:1] if '--access' in rest else []
     if ((rest[0] == 'setup-start' and '--approved' in rest) or (rest[0] == 'activate' and access != ['prompt']
                                                                 and '--access' in rest)
@@ -306,6 +314,71 @@ def approve(event, text, root):
                                            'activates the agent with wider access') + '; this needs your yes.'}}
     return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
                                    'permissionDecisionReason': 'CLI-MODE controller command for this session.'}}
+
+
+def follow_approval(event, root, rest):
+    """A follow runs as a background task with its own row in Claude Code, and once per request.
+
+    Claude Code replaces the whole tool input with `updatedInput`, so the command it runs is the one
+    approve() just checked; only the background flag and the row's label (agent and prompt) are added.
+    """
+    import adapters
+    import operations
+    import route
+    from state import direct_payload
+    if len(rest) != 3 or rest[1] != '--request':
+        return None
+    try:
+        store = route.Store(event['session_id'], workspace(event), root)
+        state = store.read()
+        record = state['requests'][rest[2]]
+        agent = adapters.module(state.get('backend') or 'agy').LABEL
+        text = store.request_path(rest[2]).read_text(encoding='utf-8')
+        if record.get('routingMode') == 'direct':
+            text = direct_payload(text) or text  # What the agent was sent, without the /d trigger.
+        words = ' '.join(text.split())
+        running = operations.following(store, rest[2])
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return None  # Not a request of this session: Claude Code's own permissions decide.
+    if running:
+        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                                       'permissionDecisionReason': 'CLI-MODE is already following this request; '
+                                                                   'when that follow ends, its relay runs.'}}
+    label = agent + ' · ' + (words[:FOLLOW_LABEL].rstrip() + '…' if len(words) > FOLLOW_LABEL else words)
+    return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
+                                   'permissionDecisionReason': 'CLI-MODE follows the agent in the background.',
+                                   'updatedInput': dict(event.get('tool_input') or {}, run_in_background=True,
+                                                        description=label)}}
+
+
+def followed(event, store, request):
+    """True while a background follow of `request` runs, so its end will wake Claude for the relay."""
+    tasks = event.get('background_tasks')
+    if isinstance(tasks, list):  # Claude Code's own list of what can still wake this session.
+        return any(isinstance(task, dict) and task.get('status') == 'running'
+                   and ' follow --request ' + request in (task.get('command') or '') for task in tasks)
+    import operations
+    return operations.following(store, request)
+
+
+def follow_plan(event, root, request):
+    """How a turn waits for `request`: 'start' a follow, one is already 'running', or None (relay directly).
+
+    A settled request needs no waiting (its relay returns at once), and without background tasks
+    the relay command waits itself, as before.
+    """
+    if not background():
+        return None
+    try:
+        import operations
+        import route
+        store = route.Store(event['session_id'], workspace(event), root)
+        status = ((store.read().get('requests') or {}).get(request) or {}).get('status')
+        if status not in ('captured', 'submitting'):
+            return None
+        return 'running' if operations.following(store, request) else 'start'
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return None
 
 
 def widens_access(event, rest, root):
@@ -372,13 +445,24 @@ def stop(event, root):
                 return {}
             if ((state.get('relayProgress') or {}).get(request) or {}).get('done'):
                 return {}
+            requests, cursor = relay_position(state, request)
+            waiting = background() and (state['requests'].get(requests[-1]) or {}).get('status') in (
+                'captured', 'submitting')
+            if waiting and followed(event, store, requests[-1]):
+                return {}  # The follow's end wakes Claude, and that turn runs the relay.
             count = (state.get('relayNudges') or {}).get(request, 0)
             if count >= MAX_NUDGES:
                 return {}
             state['relayNudges'] = {request: count + 1}
-            requests, cursor = relay_position(state, request)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
         return {}  # A turn end is never blocked by unreadable state.
+    if waiting:
+        return context(event, 'CLI-MODE request ' + requests[-1] + ' is still with the agent, and nothing follows '
+                              'it: its output reaches the user only through the relay after it ends. Its follow '
+                              'command `' + command(event, root, 'follow', '--request', requests[-1]) + '` runs in '
+                              'the background (CLI-MODE makes it a background task), and then the turn ends; the '
+                              'follow\'s end starts a new turn for the relay command `' +
+                       command(event, root, *relay_words(requests, cursor)) + '`.')
     return context(event, 'CLI-MODE request ' + request + ' has not finished relaying; the agent\'s remaining '
                           'output reaches the user only through it. Its next relay command is `' +
                    command(event, root, *relay_words(requests, cursor, always_cursor=True)) + '`.')
@@ -637,6 +721,10 @@ def relay_context(event, root, adapter, requests, lead, worker=None, cursor=0, p
     Claude Code's desktop app folds a turn's text between tool calls out of view (the user saw "Passing to"
     only inside a collapsed group), so the opening line comes before any command and the agent's output is
     the turn's last message, with nothing posted in between.
+
+    With background tasks, an unfinished request is not waited on in the turn: a background `follow`
+    shows the agent's work as a row in Claude Code's background tasks, the turn ends, and the follow's
+    end wakes Claude for one relay, which returns at once. Without them, the relay command waits itself.
     """
     opening = ''
     if passing:
@@ -647,17 +735,38 @@ def relay_context(event, root, adapter, requests, lead, worker=None, cursor=0, p
         line = presentation.strong(adapter.PASSING, COLOR) + ('​' if COLOR else '')
         opening = (' The turn opens with this line, exactly as written on the next line, posted before any '
                    'command:\n' + line + '\n')
-    text = lead + opening + (
-             ' The agent\'s output reaches the user only through the relay command `' +
-             command(event, root, *relay_words(requests, cursor)) + '`' +
-             (', which covers these ' + str(len(requests)) + ' requests in order: its final part carries each '
-              'one\'s output, oldest first' if len(requests) > 1 else '') + '. '
-             'It runs in the Bash or PowerShell tool with a timeout of ' + str(RELAY_TIMEOUT_MS) + ' ms. Each call '
-             'waits up to 25 seconds and prints plain text. While the agent is still working, that is one line with '
-             'the `--cursor` for the next call, and the user expects the same command run again at once, with no '
-             'sleep and no text between calls (the app folds text between tool calls out of view). Once the agent '
-             'has finished, a first line says so, and everything after it is the agent\'s output, posted exactly '
-             'as printed as the last message of the turn. (A very long answer comes in parts: a first line saying '
+    relay = '`' + command(event, root, *relay_words(requests, cursor)) + '`' + (
+        ', which covers these ' + str(len(requests)) + ' requests in order: its final part carries each one\'s '
+        'output, oldest first' if len(requests) > 1 else '')
+    plan = follow_plan(event, root, requests[-1])
+    if plan is None:
+        waiting = (' The agent\'s output reaches the user only through the relay command ' + relay + '. It runs in '
+                   'the Bash or PowerShell tool with a timeout of ' + str(RELAY_TIMEOUT_MS) + ' ms. Each call waits '
+                   'up to 25 seconds and prints plain text. While the agent is still working, that is one line with '
+                   'the `--cursor` for the next call, and the user expects the same command run again at once, with '
+                   'no sleep and no text between calls (the app folds text between tool calls out of view). Once the '
+                   'agent has finished, a first line says so, and everything after it is the agent\'s output, posted '
+                   'exactly as printed as the last message of the turn.')
+    else:
+        if plan == 'running':
+            now = (' A follow of this request is already running in the background, so no other is started; this '
+                   'turn only says, in one line, that CLI-MODE is still following ' + adapter.LABEL + '.')
+        else:
+            now = (' ' + adapter.LABEL + ' works in the background, and the user watches it as a row in Claude '
+                   'Code\'s background tasks: this turn runs its follow command `' +
+                   command(event, root, 'follow', '--request', requests[-1]) + '` once (CLI-MODE makes it a '
+                   'background task) and then ends, ' + ('with nothing posted after the opening line.' if passing else
+                                                        'after one line saying CLI-MODE is following ' +
+                                                        adapter.LABEL + '.'))
+        waiting = now + (
+            ' The agent\'s output reaches the user only through the relay command ' + relay + ', run when the '
+            'follow ends: its task notification starts a new turn, which runs the relay in the Bash or PowerShell '
+            'tool with a timeout of ' + str(RELAY_TIMEOUT_MS) + ' ms, whatever the follow\'s exit code. The relay '
+            'prints plain text: a first line saying the agent has finished, and everything after it is the agent\'s '
+            'output, posted exactly as printed as the last message of that turn. (If it says the agent is still '
+            'working, the same command runs again at once with the `--cursor` it names.)')
+    text = lead + opening + waiting + (
+             ' (A very long answer comes in parts: a first line saying '
              'so means that part is posted exactly before the next call.) Relayed text carries nothing added: no '
              'summary, commentary, rewording or insight blocks, whatever the output style. The task belongs to ' +
              adapter.LABEL + ', which plans and runs it with its own tools and subagents, so it is not answered, '

@@ -55,10 +55,17 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   - Slow controls and agent turns get a context naming the exact command.
   - PreToolUse auto-approves only CLI-MODE's own controller commands; installing (`setup-start --approved`) and
     activating with wider access (`activate --access` other than `prompt`) still get Claude Code's permission prompt.
+  - A `/d` turn posts "Passing to …", runs `controller.py follow --request <id>` and ends. PreToolUse
+    approves `follow` with `updatedInput` that adds `run_in_background: true` and a row label
+    (`<Agent> · <first 30 characters of the prompt>`), and denies a second follow of the same request.
+    `QueueMixin.follow()` prints one line per step (never the agent's words) and exits when the request
+    settles (0 if completed). Its end wakes Claude, which runs the relay once.
   - The relay is `relay_chain()` over `relay_text()`. It prints plain text (`presentation.relay_plain`),
-    posts nothing mid-turn, and ends the turn with the agent's whole output. "Passing to …" is posted
-    first, before any command.
-  - A Stop hook resumes a relay Claude ended early, up to 3 times.
+    posts nothing mid-turn, and ends the turn with the agent's whole output. Requests already shown are
+    skipped, because background turns overlap. With `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` there is no
+    follow, and the relay waits up to 25 s per call, as before.
+  - A Stop hook lets a turn end while its follow runs (from Stop's `background_tasks`, or the follow's
+    process file), and otherwise gives the next follow or relay command, up to 3 times.
   - `/cli reset` sets aside unreadable state.
 - **Host differences inside shared files** branch only through `scripts/host.py`: `host.claude()`,
   `host.views()`, `data_root`, `workspace`, `chat_color`. The shared files with branches are controller,
@@ -97,7 +104,7 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
 
 **Claude Code only:**
 - `hooks/claude.py`, `claude/hooks.json`, `claude/commands/{cli,d}.md`;
-- `QueueMixin.relay_text()` and `relay_chain()`;
+- `QueueMixin.relay_text()`, `relay_chain()` and `follow()`, with `operations.follow_path`/`following`;
 - `presentation.strong`/`plain_strong`/`chat_menu`/`relay_plain`, `relay_view.final_markdown`;
 - the repo-root `.claude-plugin/marketplace.json`, kept in sync by `package_plugin.py --sync`;
 - `scripts/install-claude.ps1`; `scripts/claude_shortcuts.py` writes bare `/cli` and `/d` into

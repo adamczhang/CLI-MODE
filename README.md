@@ -167,9 +167,11 @@ The agents, setup, menus, settings, routing modes and commands are the same as o
 - **Replies are chat messages.** Menus and confirmations are posted as normal chat, each costing one small
   Claude turn. **`/cli display instant`** shows them at once with no model turn, as a hook notice (the desktop
   app frames it as "blocked by hook"); **`/cli display chat`** switches back.
-- **The answer arrives whole.** Claude posts "Passing to …" first, checks on the agent about every 25 seconds
-  (one short Claude turn each) without posting in between, then posts the agent's whole output as the last
-  message, with a one-line work summary. Very long answers come in parts.
+- **The answer arrives whole.** Claude posts "Passing to …" and ends its turn. The agent's work shows as a
+  row in Claude Code's background tasks, named after the agent and the prompt, with one line per step. When
+  the agent finishes, Claude posts its whole output as one message, with a one-line work summary. Very long
+  answers come in parts. With background tasks turned off (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`), Claude
+  checks on the agent about every 25 seconds instead.
 - **Interrupting is safe.** If you stop Claude mid-relay (Esc), the agent keeps working. Your next `/d`, or
   **`/cli resume`**, shows what you missed, oldest first, without resending anything.
 - **Attachments stay with Claude Code.** Only the prompt's text reaches the agent, and Claude says so when a
@@ -189,8 +191,10 @@ you ran its CLI yourself. Your host also does some work: on Codex, relaying happ
 on Claude Code, see the next question.
 
 **Does relaying cost Claude turns?** On Claude Code, yes, a few small ones: each menu reply is one short turn
-(none with `/cli display instant`), and while an agent works, Claude checks on it about every 25 seconds. If
-you pick the Claude Code agent inside Claude Code, the agent and the relaying draw on the same Claude plan.
+(none with `/cli display instant`), and each agent turn takes two: one to pass it on, one to post the answer.
+Nothing runs in between, however long the agent works (with background tasks off, Claude checks on it about
+every 25 seconds instead). If you pick the Claude Code agent inside Claude Code, the agent and the relaying
+draw on the same Claude plan.
 
 **Is my code sent anywhere new?** Only to the agent you choose, which talks to its own provider as it would
 from your terminal. CLI-MODE has no server of its own. Its settings, queue and relay logs stay on your

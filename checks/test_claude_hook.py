@@ -20,6 +20,8 @@ if HOOK.is_file():  # Not in the Codex package, which checks/package_smoke.py te
     claude = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(claude)
 SESSION = 'claude-session-1'
+# Claude Code without background tasks: the relay command waits in the turn itself, as before `follow`.
+no_background = patch.dict(os.environ, {'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS': '1'})
 
 
 @unittest.skipUnless(HOOK.is_file(), 'The Claude Code hook is not in the Codex package')
@@ -214,6 +216,7 @@ class Relay(ClaudeHook):
             self.assertNotIn(codex_only, text)
         self.assertLess(len(text), 10000)  # Claude Code's cap on hook context.
 
+    @no_background
     def test_the_turn_opens_with_the_passing_line_before_any_command(self):
         # The desktop app folds text between tool calls into a collapsed group, where the user found
         # "Passing to Grok...": the line comes first, the agent's output last, nothing in between.
@@ -262,11 +265,13 @@ class Relay(ClaudeHook):
         first = self.store().read()['turnRoute']['requestId']
         text = self.context(self.prompt('/d second task'))
         second = self.store().read()['turnRoute']['requestId']
-        self.assertLess(text.index(first), text.index(second))
+        relay = text[text.index(' relay --request'):]
+        self.assertLess(relay.index(first), relay.index(second))
         self.assertIn('not sent again', text)
         # One command for both: given one each, Claude posted only the last one's final text (P7b run 2).
         self.assertIn('`' + self.command('relay', '--request', first, '--request', second) + '`', text)
-        self.assertEqual(text.count('--request'), 2)
+        self.assertIn('`' + self.command('follow', '--request', second) + '`', text)  # FIFO: the latest ends last.
+        self.assertEqual(text.count('--request'), 3)
         self.assertIn('oldest first', text)
         with self.store().edit() as state:
             state['relayProgress'] = {first: dict(cursor=10, done=True), second: dict(cursor=10, done=True)}
@@ -303,7 +308,7 @@ class Relay(ClaudeHook):
         second = self.store().read()['turnRoute']['requestId']
         text = self.context(self.prompt('/cli resume'))
         self.assertIn('`' + self.command('relay', '--request', first, '--request', second) + '`', text)
-        self.assertEqual(text.count('--request'), 2)
+        self.assertEqual(text.count('--request'), 3)  # Both in the one relay, and the follow of the queued one.
 
     def test_compaction_resumes_a_chain_at_its_stream_cursor(self):
         self.activate('direct')
@@ -370,6 +375,7 @@ class Relay(ClaudeHook):
 
 
 class StopGuard(ClaudeHook):
+    @no_background
     def test_an_early_stop_gets_the_next_relay_command_a_few_times(self):
         self.activate('direct')
         self.prompt('/d Long task')
@@ -382,6 +388,7 @@ class StopGuard(ClaudeHook):
         self.assertIn('hookSpecificOutput', self.event('Stop', stop_hook_active=True))
         self.assertEqual(self.event('Stop', stop_hook_active=True), {})  # At most three nudges.
 
+    @no_background
     def test_the_guard_continues_a_turn_with_all_the_requests_it_carries(self):
         self.activate('direct')
         self.prompt('/d First task')  # Its relay never finished.
@@ -406,6 +413,112 @@ class StopGuard(ClaudeHook):
         self.assertEqual(self.event('Stop'), {})
         self.prompt('ordinary host question')
         self.assertEqual(self.event('Stop'), {})
+
+
+class BackgroundFollow(ClaudeHook):
+    """A /d turn posts the Passing line, starts a background `follow` and ends; the follow's end wakes Claude
+    for one relay. Probes P1-P4 (2026-09-24) confirmed each Claude Code behaviour this relies on."""
+    PROMPT = 'Explain the parser in detail please'
+    LABEL = 'Antigravity · Explain the parser in detail p…'  # Agent, then 30 characters of the prompt.
+
+    def start(self):
+        self.activate('direct')
+        text = self.context(self.prompt('/d ' + self.PROMPT))
+        return text, self.store().read()['turnRoute']['requestId']
+
+    def pre_tool_use(self, command, tool='Bash'):
+        event = dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='PreToolUse', tool_name=tool,
+                     tool_input={'command': command, 'description': 'Claude\'s own words', 'timeout': 30000})
+        return claude.handle(event, self.data).get('hookSpecificOutput') or {}
+
+    def running(self, request):
+        from operations import follow_path
+        follow_path(self.store(), request).write_text(str(os.getpid()), encoding='ascii')  # A live process.
+
+    def test_a_d_turn_posts_the_passing_line_starts_one_follow_and_ends(self):
+        import presentation
+        text, request = self.start()
+        follow = '`' + self.command('follow', '--request', request) + '`'
+        self.assertIn(follow, text)
+        self.assertIn('`' + self.command('relay', '--request', request) + '`', text)
+        self.assertLess(text.index(presentation.strong('Passing to Antigravity...', True)), text.index(follow))
+        for phrase in ('nothing posted after the opening line', 'background tasks', 'whatever the follow\'s exit code',
+                       'exactly as printed', 'nothing added', 'Agent tool stays unused', '30000 ms'):
+            self.assertIn(phrase, text)
+        self.assertNotIn('up to 25 seconds', text)  # Nothing waits in the turn.
+        self.assertLess(len(text), 10000)
+
+    def test_a_follow_runs_in_the_background_labelled_with_the_agent_and_prompt(self):
+        _, request = self.start()
+        command = self.command('follow', '--request', request)
+        for tool in ('Bash', 'PowerShell'):
+            with self.subTest(tool=tool):
+                output = self.pre_tool_use(command, tool)
+                self.assertEqual(output['permissionDecision'], 'allow')
+                # Claude Code replaces the whole input: the checked command, unchanged, plus the two fields.
+                self.assertEqual(output['updatedInput'], dict(command=command, timeout=30000, run_in_background=True,
+                                                              description=self.LABEL))
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'completed'
+        Controller(self.store(), self.backend).mode('passthrough')
+        self.prompt('Fix\n\nthe   bug')
+        short = self.store().read()['turnRoute']['requestId']
+        output = self.pre_tool_use(self.command('follow', '--request', short))
+        self.assertEqual(output['updatedInput']['description'], 'Antigravity · Fix the bug')
+
+    def test_one_follow_per_request_and_none_for_requests_of_other_sessions(self):
+        _, request = self.start()
+        self.running(request)
+        denied = self.pre_tool_use(self.command('follow', '--request', request))
+        self.assertEqual(denied['permissionDecision'], 'deny')
+        self.assertIn('already following', denied['permissionDecisionReason'])
+        for words in (('follow', '--request', 'f' * 32), ('follow', '--request', request, '--request', request),
+                      ('follow',)):
+            with self.subTest(words=words):
+                self.assertNotIn('permissionDecision', self.pre_tool_use(self.command(*words)))
+
+    def test_resume_and_compaction_never_start_a_second_follow(self):
+        from operations import follow_path
+        _, request = self.start()
+        follow_path(self.store(), request).write_text('999999999', encoding='ascii')  # It died without a wake-up.
+        self.assertIn(self.command('follow', '--request', request),
+                      self.context(self.event('SessionStart', source='compact')))
+        self.running(request)
+        for text in (self.context(self.event('SessionStart', source='compact')), self.context(self.prompt('/cli resume'))):
+            self.assertIn('already running', text)
+            self.assertIn('one line', text)
+            self.assertNotIn(' follow --request', text)
+            self.assertIn(self.command('relay', '--request', request), text)
+
+    def test_a_finished_request_is_relayed_at_once_without_a_follow(self):
+        _, request = self.start()
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'completed'
+        text = self.context(self.prompt('/cli resume'))
+        self.assertNotIn(' follow --request', text)
+        self.assertIn(self.command('relay', '--request', request), text)
+
+    def test_without_background_tasks_the_relay_waits_in_the_turn(self):
+        with no_background:
+            text, _ = self.start()
+        self.assertNotIn(' follow --request', text)
+        self.assertIn('up to 25 seconds', text)
+
+    def test_a_turn_ends_freely_while_its_follow_runs(self):
+        _, request = self.start()
+        follow = self.command('follow', '--request', request)
+        task = dict(id='b1', type='shell', status='running', description=self.LABEL, command=follow)
+        self.assertEqual(self.event('Stop', stop_hook_active=False, background_tasks=[task]), {})
+        self.assertNotIn('relayNudges', self.store().read())  # Ending here is the plan, not a missed relay.
+        # Claude ended the turn without starting it: the guard gives the follow, then the relay after it.
+        nudged = self.context(self.event('Stop', stop_hook_active=False, background_tasks=[dict(task, status='completed')]))
+        self.assertLess(nudged.index('`' + follow + '`'), nudged.index(self.command('relay', '--request', request)))
+        self.running(request)  # An older Claude Code sends no task list: the follow's own process file decides.
+        self.assertEqual(self.event('Stop', stop_hook_active=False), {})
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'completed'
+        woken = self.context(self.event('Stop', stop_hook_active=False, background_tasks=[]))
+        self.assertIn(self.command('relay', '--request', request, '--cursor', '0'), woken)  # The wake-up's relay.
 
 
 class Approval(ClaudeHook):

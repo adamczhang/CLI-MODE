@@ -64,6 +64,7 @@ def build_parser():
     p = sub.add_parser('relay'); p.add_argument('--request', required=True, action='append')
     p.add_argument('--cursor', type=int, default=0); p.add_argument('--wait', type=float)
     p.add_argument('--view-dir')
+    p = sub.add_parser('follow'); p.add_argument('--request', required=True)
     p = sub.add_parser('pump', help=argparse.SUPPRESS); p.add_argument('--token', required=True)
     p = sub.add_parser('choose'); p.add_argument('number', type=int)
     p = sub.add_parser('navigate'); p.add_argument('action', choices=['b', 'r', '>', '<'])
@@ -126,6 +127,10 @@ def run(args, control=None):
             result = control.relay(args.request[0], args.cursor, wait, args.view_dir)
         else:
             raise ValueError('relay takes one --request on a host with inline views.')
+    elif command == 'follow':
+        if views:
+            raise ValueError('follow is for a host without inline views (Claude Code).')
+        result = control.follow(args.request, write=lambda line: print(line, flush=True))
     elif command == 'pump': result = control.pump(args.token)
     elif command == 'activation-message':
         if views and not args.message_output:
@@ -232,6 +237,9 @@ def main():
         # Git Bash gives Python a legacy code page; never fail on a character.
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     result = run(args)
+    if args.command == 'follow':
+        # Its lines are already printed (a background task's row); the exit code says how the turn ended.
+        sys.exit(0 if result['status'] == 'completed' else 1)
     if args.command == 'relay' and not host.views(args.host):
         # Claude Code shows this tool output to anyone who opens it: plain words, not JSON.
         print(relay_plain(result), flush=True)

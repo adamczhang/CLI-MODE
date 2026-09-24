@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Claude Code: an agent turn runs as a background task. Claude posts "Passing to …" and ends its turn; the agent's work shows as a row in Claude Code's background tasks (named after the agent and the prompt, one line per step), and when the agent finishes, Claude posts its whole output. Claude no longer spends a short turn every 25 seconds checking on the agent. With `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` the previous behaviour stays.
+
 ## 0.3.1 — Hooks that run on current Codex — 2026-09-24
 
 - Codex: CLI-MODE's hooks run again. Codex 0.155 runs Windows hook commands through PowerShell, where the previous `python -c __import__(...)` command was a parse error, so every hook exited with an error and Codex fell back to reading the skill. The command is now one double-quoted `python -c "..."` argument that works in cmd.exe, PowerShell 7 and Windows PowerShell 5.1. Codex asks to trust the updated hooks once.

@@ -639,6 +639,119 @@ class Colour(ClaudeControl):
         self.assertEqual(chat_menu(block, False), block)
 
 
+class Follow(ClaudeControl):
+    """`follow`: a background task whose row in Claude Code shows the agent's work, one line per step, and
+    whose end wakes Claude for one relay (the P1-P4 probes, 2026-09-24)."""
+    def follow(self, request, **options):
+        lines = []
+        result = self.control.follow(request, lines.append, poll=.05, **options)
+        return result, lines
+
+    def test_one_line_per_step_then_how_the_turn_ended(self):
+        request = self.send([
+            dict(type='message', text='I will look.\n'),
+            dict(type='plan', entries=[dict(content='Inspect', status='completed'), dict(content='Fix', status='pending')]),
+            activity('a'), activity('a', status='completed'), activity('b', kind='edit', status='failed', title='Edit'),
+            dict(type='message', text='Secret answer words.\n')])
+        result, lines = self.follow(request)
+        self.assertEqual(result, dict(requestId=request, status='completed', done=True))
+        self.assertEqual(lines, [
+            'Antigravity is writing.', 'Antigravity: plan 1 of 2 steps done',
+            'Antigravity: Read source — src/app.py:3', 'Antigravity: Edit — src/app.py:3',
+            'Antigravity: failed: Edit — src/app.py:3', 'Antigravity is writing.', 'Antigravity finished.'])
+        self.assertNotIn('Secret answer', ''.join(lines))  # The agent's words come only through the relay.
+        self.assertNotIn('relayProgress', self.store.read())  # Following never moves the relay.
+
+    def test_it_waits_for_a_queued_then_running_turn_and_keeps_a_process_file_meanwhile(self):
+        from operations import follow_path, following
+        request = self.send([dict(type='message', text='Done.\n')])
+        statuses = iter(['captured', 'captured', 'submitting', 'submitting', 'completed'])
+        seen = []
+
+        def observe(request_id, position, limit=100, **_):
+            seen.append(following(self.store, request))
+            status = next(statuses)
+            events = ([activity('a'), dict(type='error', message='Rate\x1b[31m limited')]
+                      if status == 'submitting' and position == 0 else [])
+            return dict(events=events, cursor=position + 100 * len(events), receipt=dict(status=status))
+        with patch.object(self.control, 'observe', side_effect=observe):
+            result, lines = self.follow(request)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(lines, ['Antigravity is finishing an earlier turn; this one is queued.',
+                                 'Antigravity: Read source — src/app.py:3', 'Antigravity: error: Rate limited',
+                                 'Antigravity finished.'])
+        self.assertTrue(all(seen))  # The hook can tell that a follow runs, so it never starts a second one.
+        self.assertFalse(follow_path(self.store, request).exists())
+        self.assertFalse(following(self.store, request))
+
+    def test_a_dead_follows_process_file_does_not_count_and_long_lines_are_cut(self):
+        from operations import follow_path, following
+        request = self.send([activity('a', title='x' * 400), dict(type='message', text='Done.\n')])
+        follow_path(self.store, request).write_text('999999999', encoding='ascii')  # No such process.
+        self.assertFalse(following(self.store, request))
+        _, lines = self.follow(request)
+        self.assertEqual(len(lines[0]), self.control.FOLLOW_LINE)
+        self.assertTrue(lines[0].endswith('…'))
+
+    def test_the_exit_code_says_whether_the_turn_completed(self):
+        request = self.send([dict(type='message', text='Done.\n')])
+        argv = ['controller.py', '--host', host.CLAUDE, '--thread', 'claude-session', '--workspace', str(self.root),
+                '--data-root', str(self.store.root), 'follow', '--request', request]
+        for status, code in (('completed', 0), ('canceled', 1), ('rejected', 1), ('uncertain', 1)):
+            with self.subTest(status=status), patch.object(sys, 'argv', argv), \
+                    patch.object(controller_module, 'run', return_value=dict(status=status)), \
+                    self.assertRaises(SystemExit) as ended:
+                controller_module.main()
+            self.assertEqual(ended.exception.code, code)
+
+    def test_its_lines_survive_a_legacy_code_page(self):
+        # A background task's output went through cp1252 in the P1 probe ("·" became "?").
+        request = self.send([activity('a', title='Read café · notes'), dict(type='message', text='Done.\n')])
+        argv = ['controller.py', '--host', host.CLAUDE, '--thread', 'claude-session', '--workspace', str(self.root),
+                '--data-root', str(self.store.root), 'follow', '--request', request]
+        raw = io.BytesIO()
+        legacy = io.TextIOWrapper(raw, encoding='cp1252')
+        with patch.object(sys, 'argv', argv), patch.object(sys, 'stdout', legacy), \
+                patch.object(controller_module, 'Controller', lambda store: self.control), \
+                self.assertRaises(SystemExit) as ended:
+            controller_module.main()
+        legacy.flush()
+        self.assertEqual(ended.exception.code, 0)
+        self.assertIn('Read café · notes', raw.getvalue().decode('utf-8'))
+
+    def test_codex_never_follows(self):
+        request = self.send([dict(type='message', text='Done.\n')])
+        codex = build_parser().parse_args(['--host', host.CODEX, '--thread', 'claude-session', '--workspace',
+                                           str(self.root), '--data-root', str(self.store.root), 'follow',
+                                           '--request', request])
+        with self.assertRaises(ValueError):
+            run(codex, self.control)
+
+
+class OverlappingRelays(ClaudeControl):
+    """Background turns overlap: a relay can post a request after another relay command naming it was given."""
+    relay = Chains.relay
+
+    def test_a_request_posted_since_is_skipped_even_at_the_start_of_the_stream(self):
+        earlier = self.send([dict(type='message', text='First answer.\n')])
+        latest = self.send([dict(type='message', text='Second answer.\n')])
+        self.relay([earlier])  # The earlier follow's wake-up posted it.
+        final = self.relay([earlier, latest])  # The command given before that, run now.
+        self.assertTrue(final['done'])
+        self.assertNotIn('First answer.', final['text'])
+        self.assertIn('Second answer.', final['text'])
+
+    def test_a_relay_whose_requests_are_all_posted_posts_nothing(self):
+        from presentation import relay_plain
+        earlier = self.send([dict(type='message', text='First answer.\n')])
+        latest = self.send([dict(type='message', text='Second answer.\n')])
+        self.relay([earlier, latest])
+        again = self.relay([latest])  # A late wake-up for a request the chain already posted.
+        self.assertEqual((again['done'], again['text'], again['markdown']), (True, '', ''))
+        self.assertEqual(relay_plain(again), 'Antigravity\'s answer is already posted above, so there is nothing '
+                                             'more to post.')
+
+
 class CommandLine(unittest.TestCase):
     def test_claude_output_survives_a_legacy_code_page(self):
         with tempfile.TemporaryDirectory() as temp:
