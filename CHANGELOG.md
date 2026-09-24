@@ -2,33 +2,95 @@
 
 ## Unreleased
 
-- Passthrough mode is removed, on Claude Code and Codex. Only a message that starts with `/d` (or `$d`) reaches the agent; everything else stays with the host. `/cli mode` now explains this, and the routing choice is gone from the activation and Agent Settings menus (Toggle activity progress is now 4). A conversation saved in Passthrough mode opens in Direct mode; a request it already queued is still sent.
-- Claude Code: a background task's notification is never treated as a prompt. When it is the end of CLI-MODE's own follow, the new turn is given the exact relay to run, and an open menu no longer takes it as a reply.
-- Claude Code: during an agent's turn, Claude's own wake-up, scheduling and monitor tools are refused; the follow's end already wakes the conversation.
-- Claude Code: an agent turn runs as a background task. Claude posts "Passing to …" and ends its turn; the agent's work shows as a row in Claude Code's background tasks (named after the agent and the prompt, one line per step), and when the agent finishes, Claude posts its whole output. Claude no longer spends a short turn every 25 seconds checking on the agent. With `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` the previous behaviour stays.
-- Claude Code: activating an agent (`/cli bind`, the activation menu, `/cli model`, `/cli effort` and narrower access) runs inside CLI-MODE's hook, so it no longer shows up as a background task of its own, and it costs no Claude turn to run. Raising access still goes through Claude Code's permission prompt.
+### Routing
+- **Passthrough mode is removed, on both hosts.** Only a message that starts with `/d` (or `$d`) reaches the agent; everything else stays with the host. `/cli mode` now says so, and the routing choice is gone from the activation and Agent Settings menus ("Toggle activity progress" is now 4).
+- A conversation saved in Passthrough mode opens in Direct mode; a request it had already queued is still sent.
+
+### Claude Code: agent turns in the background
+- A `/d` turn runs as a background task: Claude starts CLI-MODE's `follow` for the request, posts "Passing to …" and ends its turn. The agent's work shows as one row in Claude Code's background tasks, named `<Agent> · <start of the prompt>`, with one line per step.
+- When the agent finishes, the row ends and wakes Claude, which posts the agent's whole answer. Claude no longer spends a turn every 25 seconds checking on the agent. With `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, the previous behaviour stays.
+- Activating an agent (`/cli bind`, the activation menu, `/cli model`, `/cli effort`, narrower access) runs inside CLI-MODE's hook, so it never becomes a background task of its own and costs no Claude turn. Raising access still goes through Claude Code's permission prompt.
+- The only CLI-MODE commands that can still show as background tasks, raising access and the fallback relay, are named after the agent (`<Agent> · starting`, `<Agent> · answer`).
+
+### Claude Code: reliability
+- A background task's notification is never treated as a prompt. When it is the end of CLI-MODE's own follow, the new turn is given the exact relay to run; an open menu no longer takes it as a reply.
+- During an agent's turn, Claude's own wake-up, scheduling and monitor tools are refused, as subagents already were: the follow's end wakes the conversation.
+- Answers are never posted twice when turns overlap, and a relay with nothing left to post says so.
+
+### Docs
+- The README presents Claude Code as the primary host with first-class support; Codex is supported and tested, and new features may reach it later.
 
 ## 0.3.1 — Hooks that run on current Codex — 2026-09-24
 
-- Codex: CLI-MODE's hooks run again. Codex 0.155 runs Windows hook commands through PowerShell, where the previous `python -c __import__(...)` command was a parse error, so every hook exited with an error and Codex fell back to reading the skill. The command is now one double-quoted `python -c "..."` argument that works in cmd.exe, PowerShell 7 and Windows PowerShell 5.1. Codex asks to trust the updated hooks once.
-- Codex: replies 1 and 2 on an agent's activation menu run their exact controls, and a `/d` task typed while Agent Settings is open closes the menu and is sent, as on Claude Code.
-- Claude Code: raising an agent's access with `/cli access allow` or the settings access menu asks first, as activating with wider access already did. A message that the open settings page cannot take now says it was not sent.
-- Relays: an answer that ends inside a code block no longer turns CLI-MODE's own lines into code, and terminal escape sequences from an agent are removed from chat and views.
-- Errors: a failed ACPX control shows its reason rather than Node's deprecation warning, and Copilot's readiness error says when `GH_TOKEN` (or a similar variable) is set and overrides its own sign-in.
-- The README leads with what CLI-MODE is, what it needs and a short FAQ; internals move to `docs/ARCHITECTURE.md`. New validation tools cover both hosts, all six agents and every renderer (`checks/v0.3.0-full-validation.md`).
+### Codex
+- **CLI-MODE's hooks run again.** Codex 0.155 runs Windows hook commands through PowerShell, where the previous `python -c __import__(...)` command was a parse error, so every hook failed and Codex fell back to reading the skill. The command now works in cmd.exe, PowerShell 7 and Windows PowerShell 5.1. Codex asks to trust the updated hooks once.
+- Replies 1 and 2 on an agent's activation menu run their exact controls.
+- A `/d` task typed while Agent Settings is open closes the menu and is sent, as on Claude Code.
+
+### Claude Code
+- Raising an agent's access with `/cli access allow` or the settings access menu asks first, as activating with wider access already did.
+- A message the open settings page cannot take says it was not sent, instead of disappearing.
+
+### Relays
+- An answer that ends inside a code block no longer turns CLI-MODE's own lines into code.
+- Terminal escape sequences from an agent are removed from chat and views.
+
+### Errors
+- A failed control shows its reason instead of Node's deprecation warning.
+- Copilot's readiness error says when `GH_TOKEN` (or a similar variable) is set and overrides its own sign-in.
+
+### Docs and validation
+- The README leads with what CLI-MODE is, what it needs and a short FAQ; internals move to `docs/ARCHITECTURE.md`.
+- New validation tools cover both hosts, all six agents and every renderer (`checks/v0.3.0-full-validation.md`).
 
 ## 0.3.0 — A fresh start — 2026-09-24
 
-The repository restarts its history at this release: one snapshot of the Codex plugin and its Claude Code port. The entries below summarise the earlier releases.
+The repository's history restarts here, with one snapshot of the Codex plugin and its Claude Code port. This entry describes everything CLI-MODE does at 0.3.0; items marked **(new)** were added in this release. The entries below it summarise the earlier releases.
 
-- `/cli view on|off` (off by default): a read-only PowerShell window (PowerShell 7 when installed) that shows each agent turn live, with the agent's text, tool activity, plans and the result in colour; Markdown tables are drawn and agent escape sequences stripped.
-- Ask before installing an agent or activating it with wider access than Prompt (Claude Code shows its own permission prompt for these commands).
-- Stopping setup cancels a running installer; the next menu appears when a Claude Code install completes.
-- Report a busy or failed control as itself rather than as unreadable state, and show why a request was not sent.
-- After a compaction, a cancel or an off is not repeated, and answers already relayed are not relayed again.
-- Read the hook's input as UTF-8 on every Windows code page; read the state file once per prompt; run the activation usage lookup on a daemon thread.
-- Claude agent: the Opus 5.5 default uses its canonical model ID, stale model caches migrate, Haiku works without an effort selector, and usage scopes have readable labels.
-- Codex views: final answers render headings, nested lists, tables and code blocks; activation uses responsive rows; work groups show workspace-relative paths and safe command labels; "Passing to …" appears once per request.
+### Hosts and install
+- One plugin for two hosts, Codex and Claude Code, from one source tree. Windows only.
+- Codex installs from the GitHub marketplace. Claude Code installs from a release zip (`install-claude.ps1`, which keeps saved data on update) or from GitHub; `/cli shortcuts` adds bare `/cli` and `/d` to autocomplete.
+- Both hosts share CLI-MODE's own pinned ACPX (0.18.0) and each agent's sign-in; conversations and settings stay separate per host.
+
+### Agents
+- Six agents over the Agent Client Protocol: Antigravity, Claude Code, Grok Build, Cursor, GitHub Copilot and Codex CLI, each on its own account and subscription.
+- One persistent agent session per conversation, in the conversation's working folder. Follow-ups and setting changes keep the session.
+- Per-agent defaults for model, effort and access; saved choices take precedence. Access and effort use the same names for every agent, with the agent's own term alongside (`Allow (YOLO)`).
+- Claude agent **(new)**: the Opus 5.5 default uses its canonical model ID, stale model caches migrate, Haiku works without an effort selector, and usage scopes have readable labels.
+
+### Setup and activation
+- `/cli` opens agent selection; a first-time check finds what each agent is missing, and guided installation runs only after you approve it.
+- `/cli bind <agent>` activates with saved defaults; the activation card shows model, effort, access and, where the agent reports it, subscription usage.
+- **(new)** Installing an agent, or activating it with wider access than Prompt, asks first (Claude Code shows its own permission prompt).
+- **(new)** Stopping setup cancels a running installer; on Claude Code the next menu appears when an install completes.
+
+### Routing
+- Direct mode (the default): only `/d` or `$d` prompts go to the agent. Passthrough mode sent every ordinary prompt (removed after 0.3.0).
+- `/cli` controls and help always stay local and are case-insensitive; `$` works in place of `/`.
+
+### Settings and display
+- `/cli menu` opens Agent Settings; `/cli model|effort|access <choice>` matches your wording against the agent's options.
+- `/cli progress activity|quiet` shows or hides tool activity and usage.
+- **(new)** `/cli view on|off`: a read-only PowerShell window that shows each agent turn live, with text, tool activity, plans and the result in colour.
+- Claude Code: `/cli display chat|instant` (replies as chat messages or instant notices), `/cli color on|off` (green titles or plain bold), `/cli help`, `/cli reset`.
+
+### Relaying answers
+- Codex: the agent's words arrive as chat updates during the turn, then one view with the final message and a collapsible work section (plan and tool activity). **(new)** Views render headings, nested lists, tables and code blocks, use workspace-relative paths, and show "Passing to …" once per request.
+- Claude Code: "Passing to …" first, then the agent's whole answer as the turn's last message, with a one-line work summary; very long answers come in parts.
+- Only public output is relayed: never private reasoning or raw tool inputs and outputs.
+
+### Queue and reliability
+- A detached worker per conversation sends prompts in order, even if the host's turn is interrupted; messages sent while the agent is busy queue behind it.
+- `/cli queue`, `/cli cancel` (the running turn only) and `/cli resume` (reattach without resending); `/cli stop` closes the agent and clears the queue.
+- Nothing is ever sent twice: requests are captured once with receipts, and uncertain work must be reconciled before the queue continues. **(new)** After a compaction, a cancel or an off is not repeated, and answers already relayed are not relayed again.
+- **(new)** A busy or failed control is reported as itself rather than as unreadable state, and a request that was not sent says why.
+
+### Provider commands
+- An agent's own slash commands run inside its session. Commands that would sign out or change model, effort or access behind CLI-MODE's back are refused with the `/cli` control to use instead.
+- Antigravity's native commands hand off to its own CLI in a fresh conversation, and CLI-MODE says so.
+
+### Performance
+- **(new)** The hook reads its input as UTF-8 on every Windows code page and reads the state file once per prompt; the activation usage lookup runs on a daemon thread.
 
 ## 0.2.1 — Same result from every Claude Code install — 2026-09-23
 

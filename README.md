@@ -13,8 +13,24 @@ Copilot or Codex CLI, and relays their answers back into the chat you were alrea
 
 - **Claude Code has first-class support.** It is the primary host: new features are designed for it and
   arrive there first, and every change is checked against it.
-- **Codex is supported and tested,** but new features may reach it later, or work differently there. The
-  [Claude Code](#claude-code) section lists what currently differs.
+- **Codex is supported and tested,** but new features may reach it later, or work differently there.
+
+| Feature | Claude Code | Codex |
+|---|:---:|:---:|
+| Six agents, setup, `/d` prompts, Agent Settings | ✓ | ✓ |
+| Queue, cancel, resume, provider slash commands | ✓ | ✓ |
+| Live viewer window (`/cli view`) | ✓ | ✓ |
+| Agent turn as a background-task row; Claude free while the agent works | ✓ | — |
+| Activation with no model turn | ✓ | — |
+| Reply style and colour (`/cli display`, `/cli color`), `/cli reset`, `/cli shortcuts` | ✓ | — |
+| Agent's words shown live during the turn | — | ✓ |
+| Final answer as a view with a collapsible work section (plan, tool activity) | — | ✓ |
+| Menus and results as inline views | — | ✓ |
+| Help | `/cli help` | `/help` |
+| Needs | workspace trust | a Full Access task |
+
+On Claude Code the whole answer arrives when the agent finishes, with a one-line work summary; see
+[Claude Code](#claude-code) for details.
 
 <!-- Screenshot: a Claude Code conversation showing "Passing to Grok...", the agent's row in background
      tasks, then "Grok says..." with its work summary. 1280 px wide, light or dark theme. -->
