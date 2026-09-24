@@ -9,7 +9,7 @@ enable anything in your Claude Code settings.
 closes, so this keeps ONE headless session open (stream-json input) for all
 of its turns, as the desktop app does:
 
-1. /cli bind <agent>: the hook approves the bind; the confirmation comes back.
+1. /cli bind <agent>: activation runs in the hook (no command, no row); its card comes back.
 2. /d <task>: the turn posts "Passing to ...", starts `controller.py follow` and
    ends. The hook must have made the follow a background task, labelled
    "<Agent> · <prompt>". Nothing of the agent's answer is in this turn.
@@ -168,6 +168,13 @@ def run(agent, model, keep):
              'copilot': 'Copilot', 'cursor': 'Cursor'}.get(agent, agent)
     task, wake = steps.get('task'), steps.get('wake')
     request = None
+    bind = steps.get('bind')
+    if bind:
+        # Activation runs in the prompt hook: no command for Claude, so no background-tasks row of its own.
+        if bind['tools'] or any(item['subtype'] == 'task_started' for item in bind['tasks']):
+            problems.append('bind: ran as a command (' + json.dumps(bind['tools'])[:200] + ')')
+        if 'CLI-MODE Activated' not in plain_strong(bind['result']):
+            problems.append('bind: no activation card')
     if task:
         follows = [tool['command'] for tool in task['tools'] if ' follow --request ' in (tool['command'] or '')]
         relays = [tool for tool in task['tools'] if ' relay --request ' in (tool['command'] or '')]

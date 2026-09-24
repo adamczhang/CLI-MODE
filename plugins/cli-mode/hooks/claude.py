@@ -815,9 +815,12 @@ def relay_context(event, root, adapter, requests, lead, worker=None, cursor=0, p
             now = (' ' + adapter.LABEL + ' works in the background, and the user watches it as a row in Claude '
                    'Code\'s background tasks: this turn runs its follow command `' +
                    command(event, root, 'follow', '--request', requests[-1]) + '` once (CLI-MODE makes it a '
-                   'background task) and then ends, ' + ('with nothing posted after the opening line.' if passing else
-                                                        'after one line saying CLI-MODE is following ' +
-                                                        adapter.LABEL + '.'))
+                   'background task) and then ends at once, ' + (
+                       'with nothing posted after the opening line' if passing else
+                       'after one line saying CLI-MODE is following ' + adapter.LABEL) +
+                   '. No other command runs in this turn (no echo, sleep or check on the follow) and no further text '
+                   'is posted: the row already shows the agent working, and anything more is clutter in the '
+                   'user\'s chat.')
         waiting = now + (
             ' The agent\'s output reaches the user only through the relay command ' + relay + ', run when the '
             'follow ends: its task notification starts a new turn, which runs the relay in the Bash or PowerShell '

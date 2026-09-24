@@ -480,7 +480,9 @@ class BackgroundFollow(ClaudeHook):
         self.assertIn(follow, text)
         self.assertIn('`' + self.command('relay', '--request', request) + '`', text)
         self.assertLess(text.index(presentation.strong('Passing to Antigravity...', True)), text.index(follow))
-        for phrase in ('nothing posted after the opening line', 'background tasks', 'whatever the follow\'s exit code',
+        # Live run 2: Claude ran `echo waiting` and posted "still working..." after the follow.
+        for phrase in ('nothing posted after the opening line', 'No other command runs in this turn (no echo',
+                       'no further text', 'background tasks', 'whatever the follow\'s exit code',
                        'exactly as printed', 'nothing added', 'Agent tool stays unused', '30000 ms'):
             self.assertIn(phrase, text)
         self.assertNotIn('up to 25 seconds', text)  # Nothing waits in the turn.
