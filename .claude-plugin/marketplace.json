@@ -64,7 +64,7 @@
         ],
         "PreToolUse": [
           {
-            "matcher": "Agent",
+            "matcher": "Agent|ScheduleWakeup|CronCreate|Monitor",
             "hooks": [
               {
                 "type": "command",

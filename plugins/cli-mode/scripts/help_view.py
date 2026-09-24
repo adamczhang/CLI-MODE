@@ -7,8 +7,8 @@ COMMANDS = (
     ('/cli <agent>', 'Open agy (Antigravity), claude (Claude Code), grok (Grok Build), cursor, '
                      'copilot (GitHub Copilot) or codex (Codex CLI).'),
     ('/cli bind <agent>', 'Activate an agent with its saved settings, or its defaults on first use.'),
-    ('/d <PROMPT>', 'Send a prompt to the active agent in Direct mode (the default).'),
-    ('/cli menu', 'Agent Settings: model, effort, access, routing and progress.'),
+    ('/d <PROMPT>', 'Send a prompt to the active agent. Nothing else reaches it.'),
+    ('/cli menu', 'Agent Settings: model, effort, access and progress.'),
     ('/cli progress <mode>', 'activity shows tool work and usage; quiet shows messages and plans only.'),
     ('/cli view on|off', 'Watch each agent turn live in a PowerShell window. Off by default.'),
     ('/cli queue', 'Show queued, running and completed requests.'),

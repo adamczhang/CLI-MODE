@@ -47,14 +47,11 @@ record in backends.json alone is discovery metadata, not an implementation.
 A conversation binds one backend at a time, and an owned session belonging to
 another backend blocks activation until off/cleanup succeeds.
 
-`mode` opens the single-page routing settings menu independently of activation
-or pending provider settings. `mode --choice direct|passthrough` saves only the
-routing choice; `mode --dismiss` closes only that menu. Neither calls the provider,
-changes its settings, affects activation or cancels current work. The separate
-`modeMenu` flag preserves any other pending menu. `routingMode` defaults to
-`direct` when absent and persists across off/reactivation. Explicitly saved choices are preserved.
+Only a `/d` or `$d` prompt reaches the agent (Passthrough mode was removed;
+a conversation saved in it opens in Direct mode, and a request it already
+captured still sends as captured). `routingMode` is always `direct`.
 
-In Direct mode, the hook queues the captured original message. The worker
+For a `/d` prompt, the hook queues the captured original message. The worker
 rejects unprefixed/empty requests before provider calls, removes the complete
 `/d` or `$d` trigger plus one separator, and preserves the remaining payload.
 Hook restore/compaction remembers host versus delegated turns without putting
@@ -140,7 +137,7 @@ additional identities rather than evicting completion/privacy state. Plan and
 tool statuses are provider reports, not independent verification. Usage is
 context/turn information, not subscription quota.
 
-For ordinary passthrough, follow the public
+For a delegated turn, follow the public
 progress presentation in [handoffs](handoffs.md). Poll/yield while the submitter
 runs so updates reach the chat before completion; do not block until the whole
 response finishes. No extra classifier model is used. Actual chat latency also
@@ -251,11 +248,11 @@ immediately disables routing and instructs the host to finish shutdown. On a
 delegated prompt, it starts a detached worker after committing the capture;
 the hook itself makes no model call and opens no terminal UI. The skill handles
 setup, quota and presentation in the existing Codex chat.
-For mid-turn compaction, hooks retain the current control or passthrough route
+For mid-turn compaction, hooks retain the current control or relay route
 without storing user prose in routing metadata. A fresh user prompt queues
 behind accepted work. Compaction
 during a frontend restores its saved phase instead of opening a new menu.
-Once any passthrough starts, its operation/event path replaces the pending route.
+Once any delegated turn starts, its operation/event path replaces the pending route.
 Compaction resumes observing or relaying that result; it must never resend the
 original task. Completed setup restores active mode instead of a nonexistent menu.
 
@@ -323,9 +320,9 @@ it never dispatches or changes state. Delegated turns use `relay` instead, which
 renders the same voices from the public log itself. See presentation.md.
 
 `settings` opens the bound active agent settings page without provider calls.
-`settings --dismiss` closes it without deactivation. Bare `/cli mode`, `/cli menu`
-and `/cli model` route here while active. Routing choice uses `mode` as a nested
-selector; explicit model/mode choices keep their existing direct behavior.
+`settings --dismiss` closes it without deactivation. Bare `/cli menu` and
+`/cli model` route here while active; explicit model choices keep their existing
+direct behavior. `/cli mode` only explains that prompts reach the agent through `/d`.
 
 
 ## Menu transactions

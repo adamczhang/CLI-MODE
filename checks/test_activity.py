@@ -153,7 +153,7 @@ class Activity(unittest.TestCase):
             before = control.store.read()
             calls = len(backend.calls)
             control.settings_menu()
-            self.assertEqual(route('5', control.store.read()), dict(route='progress', choice='quiet'))
+            self.assertEqual(route('4', control.store.read()), dict(route='progress', choice='quiet'))
             result = control.progress('quiet')
             self.assertIn('Progress: Quiet', result['activationMenu'])
             self.assertEqual(len(backend.calls), calls)
@@ -165,10 +165,9 @@ class Activity(unittest.TestCase):
     def test_progress_controls_and_compaction_never_delegate(self):
         for active in (True, False):
             for prefix in ('/', '$'):
-                for mode in ('direct', 'passthrough'):
-                    state = dict(active=active, routingMode=mode)
-                    self.assertEqual(route(prefix + 'cli progress QUIET', state), dict(route='progress', choice='quiet'))
-                    self.assertEqual(route(prefix + 'cli progress invalid', state)['route'], 'hint')
+                state = dict(active=active, routingMode='direct')
+                self.assertEqual(route(prefix + 'cli progress QUIET', state), dict(route='progress', choice='quiet'))
+                self.assertEqual(route(prefix + 'cli progress invalid', state)['route'], 'hint')
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             event = dict(session_id='progress', cwd=str(root), hook_event_name='UserPromptSubmit', prompt='/cli progress quiet')

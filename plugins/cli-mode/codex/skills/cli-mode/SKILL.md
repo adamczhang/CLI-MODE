@@ -1,6 +1,6 @@
 ---
 name: cli-mode
-description: Handle /cli or $cli menus, binding, model/effort/access tuning and shutdown; /help (Codex) or /cli help (Claude Code) shows help. Choose Passthrough or Direct routing with /cli mode; Direct sends only /d or $d prompts. Route to one persistent agent (Antigravity CLI, Claude Code CLI, Grok Build CLI, Cursor CLI, GitHub Copilot CLI or Codex CLI) after explicit activation.
+description: Handle /cli or $cli menus, binding, model/effort/access tuning and shutdown; /help (Codex) or /cli help (Claude Code) shows help. Only a /d or $d prompt goes to the agent; every other message stays with the host. Route to one persistent agent (Antigravity CLI, Claude Code CLI, Grok Build CLI, Cursor CLI, GitHub Copilot CLI or Codex CLI) after explicit activation.
 ---
 
 # CLI-MODE controls and routing
@@ -28,9 +28,9 @@ ordinary text.
 | `/cli` | Agent selection menu (setup when prerequisites are missing). |
 | `/cli <agent>` | That agent's setup or activation menu. `grok` = `grok-build`. |
 | `/cli bind <agent>` | Activate with this conversation's saved defaults (or the agent's initial defaults), after the same readiness checks. No extra confirmation. |
-| `/cli menu`, `/cli mode`, `/cli model` | Active Agent Settings page. When no agent is active, reply exactly `CLI-MODE: Agent not activated. /CLI to setup`. |
+| `/cli menu`, `/cli model` | Active Agent Settings page. When no agent is active, reply exactly `CLI-MODE: Agent not activated. /CLI to setup`. |
 | `/cli model\|effort\|access\|permissions <choice>` | The controller matches the choice against the agent's advertised options and applies a unique match; otherwise it shows the menu. |
-| `/cli mode passthrough\|direct` | Change routing only. |
+| `/cli mode` | Explains that prompts reach the agent only through `/d` (Passthrough mode was removed). |
 | `/cli progress activity\|quiet` | Show or hide tool activity in relayed views. |
 | `/cli view on\|off` | Open or stop the local read-only agent viewer window (off by default). |
 | `/cli queue`, `/cli resume` | Inspect the queue; reattach monitoring to captured turns and restart a stopped worker when safe. |
@@ -69,12 +69,11 @@ relayed update; post it as is. Never change access or resend the task yourself.
 
 ## Routing
 
-- **Passthrough:** ordinary prompts go unchanged to the saved agent session.
-- **Direct** (default): ordinary prompts stay with the host (Codex or Claude Code) even while an agent is
-  active; only a message starting with `/d` or `$d` goes to the agent. The worker
-  strips that token and one separator exactly once.
+Ordinary prompts stay with the host (Codex or Claude Code) even while an agent is
+active; only a message starting with `/d` or `$d` goes to the agent. The worker
+strips that token and one separator exactly once.
 
-On an ordinary Direct-mode turn, work normally in the host. Never forward host work
+On an ordinary turn, work normally in the host. Never forward host work
 just because a session is active.
 
 ## Delegated turns

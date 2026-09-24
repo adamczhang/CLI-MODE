@@ -302,14 +302,8 @@ Create timebox.py with parse_duration(text) -> integer minutes. Accept H:MM or H
         evidence['checks']['acceptance'] = run_acceptance(workspace)
         print(agent, 'independent coding acceptance passed', flush=True)
 
-        controller.mode('passthrough')
-        route, _ = hook_message(controller, 'Reply with exactly PASSTHROUGH_OK. Do not use tools.')
-        require(route['route'] == 'delegate' and route.get('requestId'), 'Passthrough did not capture plain prompt')
-        row = observe_until(controller, route['requestId'], time.monotonic() + 180, evidence, 'passthrough')
-        require('PASSTHROUGH_OK' in row['answer'], 'Passthrough reply incorrect')
-        controller.mode('direct')
         route, _ = hook_message(controller, 'This ordinary host message must stay in Codex.')
-        require(route['route'] == 'host' and not route.get('requestId'), 'Direct mode captured a host prompt')
+        require(route['route'] == 'host' and not route.get('requestId'), 'A plain host prompt was captured')
         evidence['checks']['routingModes'] = 'pass'
 
         route, _ = hook_message(controller, '/cli stop')

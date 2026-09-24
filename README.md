@@ -95,35 +95,30 @@ Release **0.3.1** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.
 2. Run **`/cli`** and choose an agent. Setup checks its dependencies and guides installation and sign-in.
 3. On Codex, if prompted, approve the hooks under **Plugins → CLI-MODE → Hooks → Review / Trust all**, then
    recheck setup.
-4. Accept the defaults or choose the model, effort, access and routing mode.
+4. Accept the defaults or choose the model, effort and access.
 5. Send your prompt. CLI-MODE announces `Passing to Claude...`, for example, and relays the answer under
    `Claude says...`.
 
-## Passthrough or Direct
+## Sending a prompt to the agent
 
-**Direct** is the default and keeps ordinary prompts with your host. Prefix a request with `/d` or `$d` to
-send it to the active agent:
+Only a message that starts with `/d` (or `$d`) goes to the active agent; everything else stays with your
+host, so you decide exactly what each agent is asked:
 
 ```text
-/cli mode direct
 /d Explain how authentication works in this project.
 ```
 
-**Passthrough** forwards every ordinary prompt to the active agent.
-
-Changing routing mode keeps the agent's session and settings. `/d` does not activate an agent on its own.
-Messages sent while the agent is busy queue up and go out in order; see [Architecture](docs/ARCHITECTURE.md)
+`/d` does not activate an agent on its own. Messages sent while the agent is busy queue up and go out in order; see [Architecture](docs/ARCHITECTURE.md)
 for how the queue works.
 
 ## Settings and commands
 
 - **`/cli`** — choose an agent or run setup.
 - **`/cli bind <agent>`** — activate with saved defaults, after readiness checks.
-- **`/cli menu`**, **`/cli mode`** or **`/cli model`** — open the Agent Settings page.
+- **`/cli menu`** or **`/cli model`** — open the Agent Settings page.
 - **`/cli model <choice>`**, **`/cli effort <choice>`**, **`/cli access <choice>`** — change a setting.
   CLI-MODE matches your wording (for example `opus`, `extra high` or `bypass permissions`) against the agent's
   options and applies a unique match; if the choice is unclear it shows the menu.
-- **`/cli mode direct`** or **`/cli mode passthrough`** — change routing.
 - **`/cli progress activity`** or **`/cli progress quiet`** — show tool activity and usage (default), or only
   messages and plans. Applies from the next turn.
 - **`/cli view on`** or **`/cli view off`** — watch each agent turn live in its own PowerShell window: the
@@ -135,8 +130,8 @@ for how the queue works.
 - **`/cli stop`** — stop the agent and return to your host.
 - **`/help`** (Codex) or **`/cli help`** (Claude Code) — show the command card. Reply X to close it.
 
-`$` works in place of `/`, and controls are case-insensitive. Help and controls stay local, even in
-Passthrough. Closing help or settings keeps the agent running.
+`$` works in place of `/`, and controls are case-insensitive. Help and controls always stay local.
+Closing help or settings keeps the agent running.
 
 **Access levels.** Claude supports Allow, Auto-edit and Prompt; Antigravity, Grok and Copilot support Allow
 and Prompt; Cursor and Codex support Allow only. CLI-MODE cannot show you an agent's approval prompt, so
@@ -166,7 +161,7 @@ followed by the agent's own name for it, for example `Allow (Bypass permissions)
 
 ## Claude Code
 
-Claude Code is CLI-MODE's primary host. The agents, setup, menus, settings, routing modes and commands are
+Claude Code is CLI-MODE's primary host. The agents, setup, menus, settings and commands are
 the same on Codex; what is specific to Claude Code:
 
 - **Commands.** After a zip install, `/cli` and `/d` autocomplete as typed. After a GitHub install, Claude

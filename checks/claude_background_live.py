@@ -65,16 +65,42 @@ class Session:
         self.process.stdin.write(json.dumps(message) + '\n')
         self.process.stdin.flush()
 
-    def wait(self, count, timeout):
-        """Wait until the session has posted `count` results in all; False on timeout or exit."""
+    def wait(self, count, timeout, done=None):
+        """Wait until the session has posted `count` results in all (None: ignore), or `done()` is true.
+
+        False on timeout or if Claude Code exits.
+        """
         until = time.monotonic() + timeout
         while time.monotonic() < until:
-            if len(self.results()) >= count:
+            if (count is not None and len(self.results()) >= count) or (done and done()):
                 return True
             if self.process.poll() is not None:
                 return False
             time.sleep(.25)
         return False
+
+    def mark(self):
+        with self.lock:
+            return len(self.events)
+
+    def relay_turn_ended(self):
+        """True once text is posted after the last relay command and a turn result follows that text.
+
+        Other events, such as a late notification, may arrive after the result (live run 4), and a result can
+        arrive between the relay call and the posted answer (live run 5), so neither 'last event is a result'
+        nor 'any result after the relay' is enough.
+        """
+        with self.lock:
+            events = list(self.events)
+        relays = [index for index, event in enumerate(events) if event.get('type') == 'assistant'
+                  and any(' relay --request ' in ((block.get('input') or {}).get('command') or '')
+                          for block in (event.get('message') or {}).get('content') or [])]
+        if not relays:
+            return False
+        texts = [index for index, event in enumerate(events) if index > relays[-1] and event.get('type') == 'assistant'
+                 and any(block.get('type') == 'text' and block.get('text', '').strip()
+                         for block in (event.get('message') or {}).get('content') or [])]
+        return bool(texts) and any(event.get('type') == 'result' for event in events[texts[-1]:])
 
     def close(self):
         try:
@@ -84,15 +110,28 @@ class Session:
             self.process.kill()
 
 
-def turns(events):
-    """Events split at each result: one list per turn, the result last."""
-    split, current = [], []
-    for event in events:
-        current.append(event)
-        if event.get('type') == 'result':
-            split.append(current)
-            current = []
-    return split
+def turns(events, marks):
+    """The events of bind, the /d turn, its wake-up and stop, split by what started each.
+
+    `marks` are the event counts when /d and /cli stop were sent. The /d turn ends at its first result;
+    everything after it, until /cli stop, is the wake-up (empty when no separate turn came).
+    """
+    task_start, stop_start = marks
+    task = events[task_start:stop_start]
+    end = next((index + 1 for index, event in enumerate(task) if event.get('type') == 'result'), len(task))
+    return dict(bind=events[:task_start], task=task[:end], wake=task[end:], stop=events[stop_start:])
+
+
+def relayed(session, workspace):
+    """True once CLI-MODE has shown the latest request's whole answer, whichever turn relayed it."""
+    sys.path.insert(0, str(DEV / 'scripts'))
+    from state import Store
+    try:
+        state = Store(session, workspace, claude_data()).read()
+        latest = max(state.get('requests') or {}, key=lambda key: state['requests'][key].get('capturedAt') or 0)
+        return bool(((state.get('relayProgress') or {}).get(latest) or {}).get('done'))
+    except (OSError, ValueError, KeyError):
+        return False
 
 
 def summary(events):
@@ -128,31 +167,40 @@ def run(agent, model, keep):
                                          'planting dates and watering reminders.\n', encoding='utf-8')
     report, problems = dict(agent=agent, workspace=str(workspace)), []
     host = Session(workspace, model)
-    session = None
+    session, marks, ended, woken, task_mark = None, None, None, None, None
     try:
         host.send('/cli bind ' + agent)
         if not host.wait(1, 300):
             raise RuntimeError('bind: no result')
         with host.lock:
             session = next(event.get('session_id') for event in host.events if event.get('session_id'))
-        started = time.monotonic()
+        started, task_mark = time.monotonic(), host.mark()
         host.send('/d ' + PROMPT)
         if not host.wait(2, 300):
             raise RuntimeError('/d: no result')
         ended = time.monotonic()
-        if not host.wait(3, 900):  # The agent's turn, then the wake-up.
-            raise RuntimeError('no wake-up turn after the follow')
+        # Done when CLI-MODE has shown the answer, however it got there (not after a fixed number of turns),
+        # and the turn that showed it has ended.
+        if not host.wait(None, 900, done=lambda: relayed(session, workspace)):
+            raise RuntimeError('the answer was never relayed')
         woken = time.monotonic()
+        if not host.wait(None, 120, done=host.relay_turn_ended):  # The turn that posted it has ended.
+            raise RuntimeError('the turn that relayed the answer never ended')
+        marks = (task_mark, host.mark())
         host.send('/cli stop')
-        host.wait(4, 120)
+        host.wait(len(host.results()) + 1, 120)
     except RuntimeError as exc:
         problems.append(str(exc))
+        if task_mark is not None and marks is None:
+            marks = (task_mark, host.mark())  # Keep the turns apart in the report.
     finally:
         host.close()
     with host.lock:
-        split = turns(host.events)
-    names = ['bind', 'task', 'wake', 'stop']
-    steps = {name: summary(events) for name, events in zip(names, split)}
+        events = list(host.events)
+    # The raw stream, for diagnosing a failed run (kept with --keep).
+    (workspace / 'host-events.jsonl').write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
+    split = turns(events, marks or (len(events), len(events)))
+    steps = {name: summary(part) for name, part in split.items() if part or name != 'wake'}
     report['turns'] = steps
     for name, step in steps.items():
         if step['error']:
@@ -191,12 +239,14 @@ def run(agent, model, keep):
                             json.dumps(started_tasks))
         if 'Passing to ' + label not in plain_strong(task['result']) and not any(
                 'Passing to ' + label in plain_strong(block.get('text', ''))
-                for event in split[1] if event.get('type') == 'assistant'
+                for event in split['task'] if event.get('type') == 'assistant'
                 for block in (event.get('message') or {}).get('content') or []):
             problems.append('task: no "Passing to ' + label + '" line')
         if MARKER in task['result']:
             problems.append('task: the answer came in the /d turn, not after the wake-up')
         report['taskTurnSeconds'] = round(ended - started, 1)
+    if task and marks and not wake:
+        problems.append('wake: no separate wake-up turn; the end of the follow was handled inside the /d turn')
     if wake:
         notices = [item for item in (steps['task']['tasks'] + wake['tasks']) if item['subtype'] == 'task_notification']
         if not notices:

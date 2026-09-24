@@ -1,6 +1,6 @@
 # Backend contract, version 1 (validated descriptors)
 
-CLI-MODE is the plugin and shared passthrough controls. The only discoverable skill is `cli-mode`. Each provider has an internal
+CLI-MODE is the plugin and its shared controls. The only discoverable skill is `cli-mode`. Each provider has an internal
 `backends/<id>/backend.md` guide, selected through the menu or `/cli <id>`.
 Backend guides are supporting resources, not separately invocable skills. The catalog in `backends.json` is a discovery registry
 read by the host; it is not an executable router or a plugin hook.
@@ -17,7 +17,7 @@ Provider adapters own model names, effort IDs, access mapping, quota
 provider, authentication strategy, executable discovery and direct-message banner.
 The shared state/command parser and hooks must not branch on task modality.
 
-Direct is the default routing policy. Direct, Passthrough and controller file
+Only a `/d` or `$d` prompt reaches the agent. Those prompts and controller file
 input converge on the same captured-request admission and dispatch lifecycle.
 ACPX's pinned public runtime owns protocol handling, reconnect and canonical
 completion. Adapters must not add transport retries, fresh-session fallbacks,

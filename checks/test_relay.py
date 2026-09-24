@@ -39,11 +39,10 @@ class Relay(unittest.TestCase):
         self.control = Controller(Store('relay', self.root, self.root / 'state'), self.backend)
         self.control.frontend()
         self.control.activate('gemini-3.8-flash-high', 'allow')
-        self.control.mode('passthrough')
 
     def send(self, events):
         self.backend.events = events
-        return self.control.send('task', output=lambda event: None)['requestId']
+        return self.control.send('/d task', output=lambda event: None)['requestId']
 
     def test_completed_turn_posts_markdown_and_one_final_nested_view(self):
         request = self.send([
@@ -127,7 +126,7 @@ class Batching(unittest.TestCase):
         self.log = folder / (self.request + '.jsonl')
         self.log.write_text('', encoding='utf-8')
         with store.edit() as state:
-            store.capture(state, self.request, 'task')
+            store.capture(state, self.request, '/d task')
             state['requests'][self.request].update(status='submitting', events=str(self.log), submittedAt=time.time())
 
     def append(self, *events):
@@ -268,7 +267,7 @@ class References(unittest.TestCase):
         root = Path(temp.name)
         out = subprocess.run([sys.executable, str(PLUGIN / 'scripts/controller.py'), '--thread', 'refs',
                               '--workspace', str(root), '--data-root', str(root / 'data'),
-                              '--menu-output', str(root / 'menu.html'), 'mode'],
+                              '--menu-output', str(root / 'menu.html'), 'commands'],
                              capture_output=True, text=True, timeout=30)
         view = json.loads(out.stdout)['menuView']
         self.assertEqual(view['reference'], '\ue200visualize\ue202' + json.dumps({'path': str((root / 'menu.html').resolve())}) + '\ue201')
@@ -316,14 +315,13 @@ class Linger(unittest.TestCase):
         control = Controller(Store('linger', root, root / 'state'), FakeBackend())
         control.frontend()
         control.activate('gemini-3.8-flash-high', 'allow')
-        control.mode('passthrough')
         with control.store.edit() as state:
             state['runner'] = dict(pid=os.getpid(), token='t', started=time.time())
 
         def later():
             time.sleep(.5)
             with control.store.edit() as state:
-                control.store.capture(state, 'a' * 32, 'late message')
+                control.store.capture(state, 'a' * 32, '/d late message')
         thread = threading.Thread(target=later)
         thread.start()
         started = time.monotonic()

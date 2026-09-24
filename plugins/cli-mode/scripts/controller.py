@@ -22,7 +22,7 @@ from operations import emit, operation_running, pending_work, status_age  # noqa
 from presentation import chat_menu, menu_block, relay_plain
 from progress import PROGRESS_MODES
 from queue_worker import QueueMixin
-from state import Store, route, ROUTING_MODES
+from state import Store, route
 
 
 class Controller(QueueMixin, MenuMixin, BindingMixin, DispatchMixin):
@@ -71,8 +71,6 @@ def build_parser():
     p = sub.add_parser('settings'); p.add_argument('--dismiss', action='store_true')
     p = sub.add_parser('progress'); p.add_argument('--choice', choices=PROGRESS_MODES)
     p = sub.add_parser('view'); p.add_argument('--choice', choices=('on', 'off'))
-    p = sub.add_parser('mode'); group = p.add_mutually_exclusive_group()
-    group.add_argument('--choice', choices=ROUTING_MODES); group.add_argument('--dismiss', action='store_true')
     p = sub.add_parser('catalog'); p.add_argument('--agent')
     p = sub.add_parser('bind'); p.add_argument('--agent', default='agy')
     p = sub.add_parser('frontend'); p.add_argument('--agent', default='agy'); p.add_argument('--page', type=int, default=1)
@@ -150,7 +148,6 @@ def run(args, control=None):
     elif command == 'settings': result = control.settings_menu(args.dismiss)
     elif command == 'progress': result = control.progress(args.choice)
     elif command == 'view': result = control.view(args.choice)
-    elif command == 'mode': result = control.mode(args.choice, args.dismiss)
     elif command == 'catalog':
         result = control.use(args.agent or control.agent_of(control.store.read())).catalog(control.store.root)
     elif command == 'commands':

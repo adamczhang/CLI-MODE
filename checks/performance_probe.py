@@ -40,9 +40,8 @@ def run(agent, folder, rounds):
         result['activation_operations'] = [dict(x) for x in timings]
         print(agent,'activation',round(result['activation_s'],3),flush=True)
         for index in range(rounds*2):
-            mode = 'passthrough' if index%2==0 else 'direct'
-            c.mode(mode)
-            text = ('/d ' if mode=='direct' else '') + 'Reply with exactly OK. Do not use tools or edit files.'
+            mode = 'direct'
+            text = '/d Reply with exactly OK. Do not use tools or edit files.'
             route_start = time.perf_counter(); decision=route(text,c.store.read()); route_s=time.perf_counter()-route_start
             start_count=len(timings)
             active={'mode':mode,'start':time.perf_counter(),'route_s':route_s,'route':decision['route']}

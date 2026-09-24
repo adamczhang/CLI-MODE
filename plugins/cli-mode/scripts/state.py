@@ -134,6 +134,11 @@ class Store:
         if value.get('schema') != 1 or value.get('thread') != self.thread:
             raise ValueError('Unsupported or mismatched CLI-MODE state; do not dispatch.')
         value.setdefault('routingMode', DEFAULT_ROUTING_MODE)
+        if value['routingMode'] == 'passthrough':
+            # Passthrough was removed: a prompt reaches the agent only through /d. A saved Passthrough
+            # conversation opens in Direct mode; a request it captured still sends as captured.
+            value['routingMode'] = DEFAULT_ROUTING_MODE
+        value.pop('modeMenu', None)  # The routing-mode menu went with it.
         value.setdefault('progressMode', DEFAULT_PROGRESS_MODE)
         value.setdefault('helpMenu', None)
         if value['helpMenu'] in ('index', 'start', 'routing', 'settings', 'activity', 'setup', 'defaults'):
@@ -259,7 +264,9 @@ INACTIVE_HINT = '/cli to activate.  Say /help to see options'
 PREFIXES = ('/', '$')
 # Claude Code also names a plugin's commands by plugin: /cli-mode:cli, /cli-mode:d.
 NAMESPACE = '/cli-mode:'
-ROUTING_MODES = ('passthrough', 'direct')
+ROUTING_MODES = ('direct',)  # A prompt reaches the agent only through /d (Passthrough was removed).
+MODE_REMOVED = ('Prompts reach the agent only through /d <prompt>; every other message stays with {host}. '
+                'Passthrough mode was removed.')
 
 
 def inactive_hint():
@@ -273,6 +280,8 @@ def help_hint():
 
 def routing_mode(state):
     mode = state.get('routingMode', DEFAULT_ROUTING_MODE)
+    if mode == 'passthrough':
+        return DEFAULT_ROUTING_MODE  # Removed; Store.read() also rewrites it.
     if mode not in ROUTING_MODES:
         raise ValueError('Unsupported CLI-MODE routing mode; inspect state before dispatch.')
     return mode
@@ -298,7 +307,7 @@ def is_command(word, name):
 
 
 def route(message, state):
-    mode = routing_mode(state)
+    routing_mode(state)  # Fail closed on corrupt routing policy.
     parts = message.lstrip().split(None, 1)
     command_word = parts[0].casefold() if parts else ''
     rest = parts[1].strip() if len(parts) > 1 else ''
@@ -306,8 +315,6 @@ def route(message, state):
         return {'route': 'help', 'text': help_view.render()}
     if command_word == 'x' and not rest and (state.get('helpMenu') or state.get('turnRoute', {}).get('route') == 'help'):
         return {'route': 'help-dismiss'}
-    if command_word == 'x' and not rest and state.get('modeMenu'):
-        return {'route': 'mode-dismiss'}
     if command_word == 'x' and not rest and ((state.get('pending') or {}).get('phase') == 'settings' or (state.get('pending') or {}).get('tuning')):
         return {'route': 'settings-dismiss'}
     if command_word == 'x' and not rest and (state.get('pending') or state.get('turnRoute', {}).get('route') == 'help'):
@@ -348,25 +355,19 @@ def route(message, state):
             if not choice or choice.casefold() in ('on', 'off'):
                 return {'route': 'view', 'choice': choice.casefold()}
             return {'route': 'hint', 'text': 'Use /cli view on or /cli view off.'}
-        if verb in ('mode', 'menu', 'model') and not state['active']:
-            return {'route': 'hint', 'text': 'CLI-MODE: Agent not activated. /CLI to setup'}
-        if verb in ('mode', 'menu', 'model') and not choice and state['active']:
-            return {'route': 'settings'}
         if verb == 'mode':
-            if not choice or choice.casefold() in ROUTING_MODES:
-                return {'route': 'mode', 'choice': choice.casefold()}
-            return {'route': 'hint', 'text': 'Use /cli mode passthrough or /cli mode direct.'}
+            return {'route': 'hint', 'text': MODE_REMOVED.format(host=host.name())}
+        if verb in ('menu', 'model') and not state['active']:
+            return {'route': 'hint', 'text': 'CLI-MODE: Agent not activated. /CLI to setup'}
+        if verb in ('menu', 'model') and not choice and state['active']:
+            return {'route': 'settings'}
         if verb in ('model', 'effort', 'access', 'permissions') and state['active']:
             return {'route': 'tune', 'phase': 'access' if verb == 'permissions' else verb, 'text': choice}
         return {'route': 'hint', 'text': inactive_hint() if not state['active'] else help_hint()}
     if state.get('helpMenu'):
-        # A complete Direct trigger remains an explicit task command. All other
-        # unprefixed replies stay in help instead of reaching Passthrough.
-        if not (mode == 'direct' and direct_payload(message) is not None):
+        # A complete Direct trigger remains an explicit task command. All other replies stay in help.
+        if direct_payload(message) is None:
             return {'route': 'help-invalid'}
-    if state.get('modeMenu'):
-        choice = {'1': 'passthrough', '2': 'direct'}.get(message.strip().casefold(), message.strip().casefold())
-        return {'route': 'mode', 'choice': choice if choice in ROUTING_MODES else ''}
     if state.get('pending') and message.strip().casefold() in ('b', 'r', '>', '<') and (message.strip().casefold() != 'r' or state['pending'].get('phase') == 'model'):
         return {'route': 'navigate', 'action': message.strip().casefold()}
     if state.get('pending'):
@@ -379,24 +380,18 @@ def route(message, state):
                      '3':'access', 'access':'access'}.get(choice)
             if phase:
                 return {'route':'tune', 'phase':phase, 'text':''}
-            if choice in ('4', 'mode', 'routing', 'passthrough'):
-                return {'route':'mode', 'choice':''}
             if choice == 'done':  # X closes settings; "done" still does too.
                 return {'route':'settings-dismiss'}
-            if choice in ('5', 'progress'):
+            if choice in ('4', 'progress'):
                 return {'route': 'progress', 'choice': 'quiet' if progress_mode(state) == 'activity' else 'activity'}
             return {'route':'settings'}
-        if (pending.get('phase') == 'activation' and pending.get('stage') == 'menu'
-                and not pending.get('onboarding') and message.strip().casefold() in ('3', 'change routing mode')):
-            return {'route': 'mode', 'choice': ''}
         return {'route': 'setup'}
-    if mode == 'direct':
-        payload = direct_payload(message)
-        if payload is not None:
-            if not state['active']:
-                return {'route': 'hint', 'text': inactive_hint()}
-            if not payload.strip():
-                return {'route': 'hint', 'text': 'Add a task after /d or $d. Nothing was sent.'}
-            return {'route': 'direct'}
-        return {'route': 'host'}
-    return {'route': 'delegate' if state['active'] else 'host'}
+    # Only an explicit /d or $d reaches the agent; everything else is the host's.
+    payload = direct_payload(message)
+    if payload is not None:
+        if not state['active']:
+            return {'route': 'hint', 'text': inactive_hint()}
+        if not payload.strip():
+            return {'route': 'hint', 'text': 'Add a task after /d or $d. Nothing was sent.'}
+        return {'route': 'direct'}
+    return {'route': 'host'}

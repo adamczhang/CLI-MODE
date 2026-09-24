@@ -117,7 +117,6 @@ def main():
     os.environ['CLAUDE_PLUGIN_DATA'] = str(data)  # Activation checks the host's data folder.
     control.frontend()
     control.activate('gemini-3.8-flash-high', 'allow')
-    control.mode('direct')
     for key, prompt, what in (('cli.help', '/cli help', 'Help card'),
                               ('cli.menu', '/cli menu', 'Agent Settings of the active agent'),
                               ('cli.queue', '/cli queue', 'Queue'),

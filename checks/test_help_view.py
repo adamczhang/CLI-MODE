@@ -27,7 +27,7 @@ class CardHelp(unittest.TestCase):
             self.assertIn(agent, text)
         for mode in ('activity', 'quiet'):
             self.assertIn(mode, text)
-        self.assertIn('Direct mode (the default)', text)
+        self.assertIn('Nothing else reaches it.', text)  # Only /d reaches the agent.
         self.assertIn('$ works in place of /', text)
 
 

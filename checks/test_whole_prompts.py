@@ -19,35 +19,34 @@ from state import Store, route
 import agy
 
 
-class Passthrough(unittest.TestCase):
+class WholePrompts(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.store = Store('passthrough', self.root, self.root / 'data')
+        self.store = Store('whole-prompts', self.root, self.root / 'data')
         self.backend = FakeBackend()
         self.control = Controller(self.store, self.backend)
-        self.control.mode('passthrough')  # This fixture exercises unprefixed forwarding.
         self.control.frontend()
         self.control.activate('gemini-3.8-flash-high', 'allow')
 
     def event(self, **fields):
-        return dict(hook_event_name='UserPromptSubmit', session_id='passthrough', cwd=str(self.root), **fields)
+        return dict(hook_event_name='UserPromptSubmit', session_id='whole-prompts', cwd=str(self.root), **fields)
 
     def test_whole_requests_share_one_session_and_cannot_replay_after_compaction(self):
         initial = self.store.read()['main']
         for text in ('  Create a complete 3D Rubik\'s cube game.\r\n  Keep indentation.\n',
                      'Please orchestrate this project in parallel using many workers.',
                      '$CLI-MODE-UNKNOWN leave this whole message alone'):
-            self.assertEqual(route(text, self.store.read())['route'], 'delegate')
-            hook.handle(self.event(prompt=text), self.store.root)
+            self.assertEqual(route('/d ' + text, self.store.read())['route'], 'direct')
+            hook.handle(self.event(prompt='/d ' + text), self.store.root)
             output = []
             self.control.send_request(self.store.read()['turnRoute']['requestId'], output=output.append)
             self.assertEqual(''.join(e['text'] for e in output if e['type'] == 'message'), text)
             restored = hook.handle(dict(self.event(), hook_event_name='SessionStart', source='compact'), self.store.root)
             self.assertIn('already dispatched', restored['hookSpecificOutput']['additionalContext'])
             with self.assertRaisesRegex(RuntimeError, 'already dispatched'):
-                self.control.send(text)
+                self.control.send('/d ' + text)
             self.assertEqual(self.store.read()['main'], initial)
             self.assertEqual(len(self.store.read()['owned']), 1)
 
@@ -58,7 +57,7 @@ class Passthrough(unittest.TestCase):
             state['owned'].append(worker)
         before = len(self.backend.calls)
         with self.assertRaisesRegex(RuntimeError, 'Legacy'):
-            self.control.send('do work')
+            self.control.send('/d do work')
         self.control.frontend()
         with self.assertRaisesRegex(RuntimeError, 'Unfinished session cleanup'):
             self.control.activate('gemini-3.8-flash-high', 'allow')
@@ -97,7 +96,7 @@ class Passthrough(unittest.TestCase):
         payload = '  text\r\n    indented\n$literal\r\n '
         source = self.root / 'prompt.txt'
         source.write_bytes(payload.encode('utf-8'))
-        argv = ['controller', '--thread', 'passthrough', '--workspace', str(self.root), 'send', '--file', str(source)]
+        argv = ['controller', '--thread', 'whole-prompts', '--workspace', str(self.root), 'send', '--file', str(source)]
         with patch.object(sys, 'argv', argv), patch.object(controller, 'Controller') as factory, contextlib.redirect_stdout(io.StringIO()):
             factory.return_value.send.return_value = {}
             controller.main()
@@ -134,7 +133,7 @@ class Passthrough(unittest.TestCase):
             state['owned'][0]['acpxRuntime'] = dict(node=shutil.which('node'), package=str(package), version='0.18.0')
         env = dict(os.environ, CLI_MODE_DATA=str(self.store.root), TEST_ACPX_LOG=str(log),
                    TEST_ACPX_METADATA=str(metadata), PATH=str(binary) + os.pathsep + os.environ['PATH'])
-        result = subprocess.run([sys.executable, str(PLUGIN / 'scripts/controller.py'), '--thread', 'passthrough',
+        result = subprocess.run([sys.executable, str(PLUGIN / 'scripts/controller.py'), '--thread', 'whole-prompts',
             '--workspace', str(self.root), 'refresh'], env=env, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = log.read_text(encoding='utf-8')

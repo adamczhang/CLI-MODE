@@ -7,7 +7,7 @@ import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from state import Store, route, routing_mode
+from state import Store, route
 
 PLUGIN = Path(__file__).resolve().parents[1]
 
@@ -17,8 +17,7 @@ SUBAGENT_TOOLS = re.compile(r'(?:functions\.)?(?:collaboration\.)?(?:spawn_agent
 
 def delegated_turn(state):
     """True while this turn belongs to the agent, so host subagents stay off."""
-    return state['active'] and (routing_mode(state) == 'passthrough' or
-                                state.get('turnRoute', {}).get('route') in ('direct', 'direct-result'))
+    return state['active'] and state.get('turnRoute', {}).get('route') in ('direct', 'direct-result')
 
 
 def task_through_settings(state, prompt):
@@ -27,7 +26,7 @@ def task_through_settings(state, prompt):
     pending = state.get('pending') or {}
     return bool(state.get('active') and pending.get('stage') == 'menu'
                 and (pending.get('phase') == 'settings' or pending.get('tuning'))
-                and routing_mode(state) == 'direct' and (direct_payload(prompt) or '').strip())
+                and (direct_payload(prompt) or '').strip())
 
 
 def activation_reply(state, prompt):
@@ -86,11 +85,9 @@ def decide(event, root=None, workspace=None, capture=None):
                 state['helpMenu'] = None
         state['hookSeen'] = dict(event=name, time=time.time(), plugin=str(PLUGIN), data=str(store.root))
         if name == 'UserPromptSubmit':
-            if decision['route'] in ('home', 'frontend', 'bind', 'tune', 'settings', 'settings-dismiss'):
-                state['modeMenu'] = False
             # Remember the route, never user prose. Compaction may happen while a control is being handled.
             state['turnRoute'] = {'route': decision['route'], 'id': uuid.uuid4().hex}
-            if decision['route'] in ('direct', 'delegate'):
+            if decision['route'] == 'direct':
                 request_id = state['turnRoute']['id']
                 try:
                     store.capture(state, request_id, event.get('prompt', '') if capture is None else capture)
@@ -127,7 +124,7 @@ def decide(event, root=None, workspace=None, capture=None):
         # on every message, and only an off turn needs the controller.
         from controller import Controller
         state = Controller(store).disable()
-    elif decision['route'] in ('direct', 'delegate') and state['active']:
+    elif decision['route'] == 'direct' and state['active']:
         from controller import Controller
         try:
             worker = Controller(store).ensure_pump()
@@ -140,7 +137,7 @@ def codex_output(event, store, state, decision, worker, cancellation):
     """What Codex reads for this turn: the exact commands to run and the rules for them."""
     name = event['hook_event_name']
     if (not state['active'] and not state.get('pending') and not state.get('helpMenu')
-            and not state.get('modeMenu') and decision['route'] in ('host', 'restore')
+            and decision['route'] in ('host', 'restore')
             and not (name == 'SessionStart' and event.get('source') != 'compact')):
         # Ordinary Codex work with no agent: nothing to inject, and no need to
         # load every adapter on each prompt.
@@ -153,13 +150,12 @@ def codex_output(event, store, state, decision, worker, cancellation):
     except ValueError:
         adapter = adapters.module('agy')
     label, passing = adapter.LABEL, adapter.PASSING
-    if (state['active'] and routing_mode(state) == 'direct' and
-            (decision['route'] == 'host' or decision['route'] == 'restore' and not state.get('pending') and not state.get('modeMenu') and not state.get('helpMenu'))):
+    if (state['active'] and
+            (decision['route'] == 'host' or decision['route'] == 'restore' and not state.get('pending') and not state.get('helpMenu'))):
         return {'hookSpecificOutput': dict(hookEventName=name, additionalContext=
-            'CLI-MODE routing is Direct. Handle this turn normally in Codex; do not forward it to any CLI. '
-            'The CLI on/off state and saved session remain unchanged. Only a user message starting with '
-            'the complete /d or $d token is delegated when the CLI is active. /cli controls remain local. '
-            'Passthrough-only restrictions do not apply to this host turn.')}
+            'CLI-MODE is ON: only a user message starting with the complete /d or $d token goes to its agent. '
+            'Handle this turn normally in Codex; do not forward it to any CLI. The CLI on/off state and saved '
+            'session remain unchanged. /cli controls remain local.')}
     kind = decision['route']
     commands = Commands(store, state)
     run = commands.run
@@ -201,7 +197,7 @@ def codex_output(event, store, state, decision, worker, cancellation):
                     'Supported provider slash commands are expanded by the agent inside the same ACP session: the session is not closed and history is kept. '))
     ref = commands.ref
     menu_rules = (view_rule + commands.legend() +
-                  'X on the routing-mode menu only dismisses that menu; X on active Settings or tuning pages runs ' +
+                  'X on active Settings or tuning pages runs ' +
                   ref('settings --dismiss', menu=True) + ' and keeps the CLI active; X on activation menus runs ' +
                   ref('off') + '. Default the agent workspace to the exact thread cwd, including its worktree. '
                   'When a command returns activation.messageView, display it as the activation confirmation; never '
@@ -235,7 +231,7 @@ def codex_output(event, store, state, decision, worker, cancellation):
         instruction = ('Run ' + run('settings' + (' --dismiss' if kind == 'settings-dismiss' else ''), menu=True) +
             '. Display the returned Agent Settings menuView. '
             'Opening or closing settings preserves activation, session and accepted settings. '
-            'Choices 1/2/3 tune model/effort/access; 4 opens the routing mode menu; 5 toggles activity progress; X closes only this page. '
+            'Choices 1/2/3 tune model/effort/access; 4 toggles activity progress; X closes only this page. '
             'Do not activate again or forward any menu reply to the CLI.')
     elif kind == 'choose':
         instruction = ('Run ' + run('choose ' + str(decision['number']), menu=True, message=True) +
@@ -245,26 +241,14 @@ def codex_output(event, store, state, decision, worker, cancellation):
         instruction = 'Run ' + run('navigate ' + json.dumps(decision['action']), menu=True) + '. Display the returned menu and any refresh message; never forward navigation.'
     elif kind == 'settings-result':
         instruction = 'The settings menu was closed; CLI remains active. Do not replay the closing control or dispatch it.'
-    elif kind in ('mode', 'mode-menu') or (kind == 'restore' and state.get('modeMenu') and not state.get('helpMenu')):
-        choice = decision.get('choice')
-        instruction = ('Run ' + run('mode' + (' --choice ' + choice if choice else ''), menu=True) +
-            '. Display the returned menuView. With no choice it shows the single-page routing settings menu. '
-            'After a choice display any returned Agent Settings menu and wait for selection (Yes only for initial activation). '
-            'Do not activate, deactivate, reconfigure or close any provider. Preserve other pending settings. X only dismisses this menu. '
-            'Passthrough delegates ordinary prompts; Direct delegates only /d or $d prompts. Never send this control to the CLI.')
-    elif kind == 'mode-dismiss':
-        instruction = ('Run ' + run('mode --dismiss', menu=True) + '. Display any returned Agent Settings menu and wait for Yes. '
-                       'Close only the routing-mode menu; preserve CLI on/off status, session and all other settings.')
-    elif kind == 'mode-result':
-        instruction = 'The routing-mode control has completed. Report the saved routingMode; do not rerun it, activate a CLI or dispatch task text.'
     elif kind == 'help' or kind == 'restore' and state.get('helpMenu'):
         instruction = ('Run ' + run('commands', menu=True) + ' and print its menuView reference line. X closes help. '
-                       'Preserve pending setup, routing mode and the active agent; do not dispatch this help turn.')
+                       'Preserve pending setup and the active agent; do not dispatch this help turn.')
     elif kind == 'help-invalid':
         instruction = ('Help is showing the command table. Reply: Type X to close help, or use a /cli command. '
                        'Do not forward the reply or change the saved help page.')
     elif kind == 'help-dismiss':
-        instruction = ('Help closed. The prior menu, routing mode and agent on/off state are unchanged. '
+        instruction = ('Help closed. The prior menu and agent on/off state are unchanged. '
                        'If a setup or settings menu was open, its displayed choices remain valid. '
                        'Do not run controller off, activate or dispatch an agent task for this X.')
     elif kind == 'bind':
@@ -337,7 +321,7 @@ def codex_output(event, store, state, decision, worker, cancellation):
                        'Follow onboarding when present. Wait for selection; do not activate yet.')
     elif kind == 'direct-result':
         request_id = decision.get('requestId')
-        instruction = ('This passthrough turn was already dispatched. Do not dispatch the original task again. ' +
+        instruction = ('This turn was already dispatched. Do not dispatch the original task again. ' +
                        ('Continue relaying it with ' + run('relay --request ' + request_id + ' --cursor <last cursor, or 0>') + '. '
                         if request_id else 'Read its saved public events and relay the existing result. ') +
                        'Inspect uncertain completion instead of retrying. Dispatch record: ' +
@@ -359,7 +343,7 @@ def codex_output(event, store, state, decision, worker, cancellation):
         instruction = 'A setup menu is pending. Restore its saved phase/draft and treat the user reply as setup, not agent work. Do not forward it.'
     elif kind == 'direct' and state['active']:
         request_id = decision.get('requestId')
-        instruction = ('CLI-MODE is ON in Direct mode. This message explicitly targets the CLI. ' +
+        instruction = ('CLI-MODE is ON. This message explicitly targets the CLI. ' +
             ('The hook queued the exact original message as request ' + request_id + ', and the queue worker forwards it '
              'to the one main ' + label + ' session (removing the /d or $d trigger exactly once). Relay it with ' +
              run('relay --request ' + request_id) + '. ' if request_id else
@@ -413,18 +397,18 @@ class Commands:
 
 
 # Turns that relay provider output rather than render CLI-MODE menus.
-RELAY_ROUTES = ('direct', 'delegate', 'direct-result', 'cancel', 'queue', 'resume')
+RELAY_ROUTES = ('direct', 'direct-result', 'cancel', 'queue', 'resume')
 HELP_ROUTES = ('help', 'help-invalid', 'help-dismiss')
 # Relay turns need only these saved fields; menus need the pending transaction.
 RELAY_STATE = ('active', 'routingMode', 'progressMode', 'backend', 'main')
-MENU_STATE = ('active', 'routingMode', 'modeMenu', 'helpMenu', 'progressMode', 'pending', 'backend', 'settings', 'main')
+MENU_STATE = ('active', 'routingMode', 'helpMenu', 'progressMode', 'pending', 'backend', 'settings', 'main')
 
 
 def context(kind, state, instruction, core, relay_rules, menu_rules, setup_rules, help_rules):
     pending = state.get('pending') or {}
     helping = kind in HELP_ROUTES or (kind == 'restore' and state.get('helpMenu'))
     relaying = not helping and (kind in RELAY_ROUTES or (kind == 'restore' and state['active']
-                                and not pending and not state.get('modeMenu')))
+                                and not pending))
     if helping:
         rules, fields = help_rules, MENU_STATE
     elif relaying:

@@ -17,7 +17,6 @@ class Commands(unittest.TestCase):
         self.store = Store('commands', self.root, self.root / 'data')
         self.backend = FakeBackend()
         self.control = Controller(self.store, self.backend)
-        self.control.mode('passthrough')  # This fixture exercises unprefixed forwarding.
 
     def event(self, prompt=None, compact=False):
         return dict(session_id='commands', cwd=str(self.root),
@@ -40,8 +39,7 @@ class Commands(unittest.TestCase):
     def test_help_replies_stay_local_and_survive_compaction(self):
         self.bind()
         before = len(self.backend.calls)
-        for mode in ('passthrough', 'direct'):
-            self.control.mode(mode)
+        for _ in range(2):  # Help opens and closes cleanly, twice.
             hook.handle(self.event('/help'), self.store.root)
             with self.assertRaisesRegex(RuntimeError, 'menu is pending'):
                 self.control.send('not a help selection')
@@ -68,7 +66,6 @@ class Commands(unittest.TestCase):
         self.assertEqual(route('/cli queue', self.store.read())['route'], 'queue')
         hook.handle(self.event('/cli queue'), self.store.root)
         self.assertIsNone(self.store.read()['helpMenu'])
-        self.control.mode('direct')
         hook.handle(self.event('/help'), self.store.root)
         self.assertEqual(route('/d do work', self.store.read())['route'], 'direct')
 
@@ -81,14 +78,13 @@ class Commands(unittest.TestCase):
         self.control.frontend('home')
         hook.handle(self.event('X'), self.store.root)
         self.assertIsNone(self.store.read()['pending'])
-        self.assertEqual(route('x', dict(active=True, pending=None, routingMode='passthrough'))['route'], 'delegate')
+        self.assertEqual(route('x', dict(active=True, pending=None, routingMode='direct'))['route'], 'host')
         self.assertEqual(route('/cli off extra', dict(active=True))['route'], 'hint')
 
     def test_help_exit_preserves_agent_and_pending_menu(self):
         self.bind()
         original = self.store.read()['main']
-        for mode in ('passthrough', 'direct'):
-            self.control.mode(mode)
+        for _ in range(2):
             hook.handle(self.event('/help'), self.store.root)
             self.assertEqual(route('x', self.store.read())['route'], 'help-dismiss')
             context = hook.handle(self.event('x'), self.store.root)['hookSpecificOutput']['additionalContext']
@@ -96,7 +92,7 @@ class Commands(unittest.TestCase):
             state = self.store.read()
             self.assertTrue(state['active'])
             self.assertEqual(state['main'], original)
-            self.assertEqual(state['routingMode'], mode)
+            self.assertEqual(state['routingMode'], 'direct')
             self.assertEqual(state['turnRoute']['route'], 'help-dismiss')
             self.assertIsNone(state['helpMenu'])
 
@@ -105,17 +101,6 @@ class Commands(unittest.TestCase):
         hook.handle(self.event('X'), self.store.root)
         self.assertEqual(self.store.read()['pending'], settings)
         self.assertEqual(route('done', self.store.read())['route'], 'settings-dismiss')
-
-        self.control.mode()
-        hook.handle(self.event('/help'), self.store.root)
-        startup = self.event()
-        startup['hook_event_name'] = 'SessionStart'
-        restored = hook.handle(startup, self.store.root)['hookSpecificOutput']['additionalContext']
-        self.assertIn('-menu.html" commands`', restored)
-        hook.handle(self.event('X'), self.store.root)
-        self.assertTrue(self.store.read()['modeMenu'])
-        self.assertEqual(self.store.read()['pending'], settings)
-        self.assertEqual(route('X', self.store.read())['route'], 'mode-dismiss')
 
     def test_help_exit_preserves_inactive_setup(self):
         self.control.frontend('home')
@@ -248,7 +233,7 @@ class Commands(unittest.TestCase):
             if event['type'] == 'dispatched':
                 with self.assertRaisesRegex(RuntimeError, 'Settle current work'):
                     self.control.tune('effort')
-        self.control.send('task', output=during_work)
+        self.control.send('/d task', output=during_work)
         self.control.tune('effort')
         before = len(self.backend.calls)
         with self.assertRaises(ValueError):
@@ -274,9 +259,8 @@ class Commands(unittest.TestCase):
                 decision = route('/cli ' + phase + ' ' + choice, self.store.read())
                 self.assertEqual(decision, {'route':'settings'} if phase == 'model' and not choice else
                                  dict(route='tune', phase='access' if phase == 'permissions' else phase, text=choice))
-        for word in ('commands', 'help'):
-            self.assertEqual(route(word, self.store.read())['route'], 'delegate')
-        self.assertEqual(route('/cliX', self.store.read())['route'], 'delegate')
+        for word in ('commands', 'help', '/cliX'):  # Only /d reaches the agent.
+            self.assertEqual(route(word, self.store.read())['route'], 'host')
 
 
 if __name__ == '__main__': unittest.main()

@@ -31,7 +31,7 @@ class DispatchMixin:
         observed_session = None
         try:
             with self.store.edit() as state:
-                if request_id is None and routing_policy is not None and (routing_mode(state) != routing_policy or state.get('modeMenu')):
+                if request_id is None and routing_policy is not None and routing_mode(state) != routing_policy:
                     raise RuntimeError('Routing mode changed during dispatch; nothing was sent.')
                 if request_id is not None:
                     record = state['requests'][request_id]
@@ -54,7 +54,7 @@ class DispatchMixin:
             with self.store.edit() as state:
                 if (not self.valid(state, generation, pending) or state['inflight'].get(op, {}).get('closed')
                         or (pending is None and state.get('pending'))
-                        or (request_id is None and routing_policy is not None and (routing_mode(state) != routing_policy or state.get('modeMenu')))
+                        or (request_id is None and routing_policy is not None and routing_mode(state) != routing_policy)
                         or (request_id and (state['requests'][request_id].get('cancelRequested')
                             or state['requests'][request_id]['settings'] != state['settings']
                             or state['requests'][request_id]['session'] != state['main']))):
@@ -67,7 +67,7 @@ class DispatchMixin:
                 state['inflight'][op].update(pid=process.pid, uncertain=True, running=True)
                 if request_id is not None:
                     state['requests'][request_id].update(events=str(events_path))
-                if (owned['role'] == 'main' and state.get('turnRoute', {}).get('route') in ('direct', 'delegate')
+                if (owned['role'] == 'main' and state.get('turnRoute', {}).get('route') == 'direct'
                         and (request_id is None or state['turnRoute'].get('requestId') == request_id)):
                     state['turnRoute'] = dict(route='direct-result', requestId=request_id,
                                               operation=op, events=str(events_path))
@@ -260,7 +260,7 @@ class DispatchMixin:
     def _send(self, text, output=emit, timeout=86400, request_id=None):
         state = self.store.read()
         if request_id is None and state.get('turnRoute', {}).get('route') == 'direct-result':
-            raise RuntimeError('This passthrough turn was already dispatched; inspect its saved events instead of replaying it.')
+            raise RuntimeError('This turn was already dispatched; inspect its saved events instead of replaying it.')
         if request_id is None and state.get('turnRoute', {}).get('requestId'):
             raise RuntimeError('This turn has captured input. Observe its request ID instead of submitting it again.')
         if request_id is not None:
@@ -268,7 +268,7 @@ class DispatchMixin:
             if record['generation'] != state['generation']:
                 raise RuntimeError('Captured request binding changed; nothing was sent.')
         self.use(self.agent_of(state))
-        if not state['active'] or state['pending'] or (request_id is None and (state.get('modeMenu') or state.get('helpMenu'))):
+        if not state['active'] or state['pending'] or (request_id is None and state.get('helpMenu')):
             raise RuntimeError('Mode is off or a menu is pending; no task was sent.')
         policy = record['routingMode'] if request_id is not None else routing_mode(state)
         direct = policy == 'direct'
@@ -341,7 +341,7 @@ class DispatchMixin:
         model = native_agy.prepare(owned['settings'])
         transition = uuid.uuid4().hex
         with self.store.edit() as state:
-            if request_id is None and routing_policy is not None and (routing_mode(state) != routing_policy or state.get('modeMenu')):
+            if request_id is None and routing_policy is not None and routing_mode(state) != routing_policy:
                 raise RuntimeError('Routing mode changed during dispatch; nothing was sent.')
             if not self.valid(state, generation) or state['pending'] or pending_work(state, request_id, include_queue=False):
                 raise RuntimeError('Settle current work before switching to native Antigravity commands.')

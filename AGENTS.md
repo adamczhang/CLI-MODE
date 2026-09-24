@@ -13,9 +13,9 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
 
 - **Two hosts, one plugin folder.** `plugins/cli-mode` serves Codex and Claude Code. Most code is shared;
   each host has a thin layer of its own.
-- **Codex's behaviour is pinned by a golden record** (`checks/fixtures/codex-golden.json`, 138 steps),
+- **Codex's behaviour is pinned by a golden record** (`checks/fixtures/codex-golden.json`, 118 steps),
   recorded before the port and re-recorded only for intended Codex changes (the Agent Settings "Done" row,
-  the skill path, Claude's default model and the final relay HTML).
+  the skill path, Claude's default model, the final relay HTML and the removal of Passthrough mode).
 - **Shared pieces added by the port:** `scripts/host.py` (the host switch), `route.decide()` (split out of
   the Codex hook) and text versions of menus and confirmations for a host without inline views.
 - **Codex's skill lives under `plugins/cli-mode/codex/skills/`** (the manifest's `skills` path), so Claude
@@ -29,7 +29,7 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
                     Codex                                     Claude Code
   prompt ─► hooks/hooks.json ─► hooks/route.py      prompt ─► claude/hooks.json ─► hooks/claude.py
                     │  decide()  (shared)  ◄──────────────────────────┘  (fast path: nothing_to_do)
-                    │  records turnRoute, captures /d or passthrough text, starts the worker
+                    │  records turnRoute, captures /d text, starts the worker
                     ▼                                                  ▼
           codex_output(): additionalContext          instant reply (controller run in process), or
           naming exact controller commands           context naming the exact controller command
@@ -42,8 +42,9 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
 ```
 
 - **Routing** (shared): `state.route()` turns a prompt into a route: `/cli …` controls, `/d` (Direct),
-  passthrough text, help, setup replies. `route.decide()` records it in the conversation state and, for
-  `direct` or `delegate`, captures the exact text as a request and ensures the worker runs.
+  help, setup replies; any other text is the host's (Passthrough mode was removed). `route.decide()` records
+  it in the conversation state and, for `direct`, captures the exact text as a request and ensures the worker
+  runs.
 - **Codex reply path** (Codex only): `route.codex_output()` returns additionalContext telling the model
   which controller commands to run. Menus and results come back as inline HTML views (`menuView` or
   `messageView` with a `reference` line; `menu_view.py`, `relay_view.render`). A relay loops

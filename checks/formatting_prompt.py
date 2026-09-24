@@ -119,7 +119,6 @@ def run(agent, folder, with_viewer=False, model=None):
             control.activate(model, adapters.module(agent).DEFAULTS['access'], agent=agent)
         else:
             control.bind(agent, require_hooks=False, confirm=not host.views())
-        control.mode('passthrough')
         if with_viewer:
             viewer.save(control.store.root, 'on')
         began = time.monotonic()
@@ -141,7 +140,7 @@ def run(agent, folder, with_viewer=False, model=None):
             import threading
             thread = threading.Thread(target=closer, daemon=True)
             thread.start()
-        sent = control.send(PROMPT, output=lambda event: None)
+        sent = control.send('/d ' + PROMPT, output=lambda event: None)
         done['yes'] = True
         result['turnSeconds'] = round(time.monotonic() - began, 1)
         result['status'] = (control.store.read().get('requests') or {}).get(sent['requestId'], {}).get('status')

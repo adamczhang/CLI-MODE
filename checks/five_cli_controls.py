@@ -15,7 +15,7 @@ from five_cli_live import adapters, Controller, Store, save
 import frontends
 
 
-def run(agent, folder, skip_model=False, routing_mode="direct"):
+def run(agent, folder, skip_model=False):
     folder.mkdir(parents=True, exist_ok=True)
     work = folder / 'workspace'
     work.mkdir(exist_ok=True)
@@ -23,8 +23,7 @@ def run(agent, folder, skip_model=False, routing_mode="direct"):
     class ShortIdle(adapter.Backend):
         owner_ttl = 5
     c = Controller(Store('controls-' + uuid.uuid4().hex, work, folder / 'state'), ShortIdle(), agent)
-    c.mode(routing_mode)
-    evidence = dict(agent=agent, routingMode=routing_mode, hostIntegrationVerified=False, checks={})
+    evidence = dict(agent=agent, routingMode='direct', hostIntegrationVerified=False, checks={})
     def record(name, value):
         evidence['checks'][name] = value
         save(folder / 'evidence.json', evidence)
@@ -33,7 +32,7 @@ def run(agent, folder, skip_model=False, routing_mode="direct"):
             raise AssertionError(name + ' failed')
     def send(prompt, name):
         events = []
-        result = c.send(('/d ' if routing_mode == 'direct' else '') + prompt, output=events.append, timeout=120)
+        result = c.send('/d ' + prompt, output=events.append, timeout=120)
         save(folder / (name + '-events.json'), events)
         answer = ''.join(e['text'] for e in events if e['type'] == 'message')
         return answer, result
@@ -124,14 +123,14 @@ def run(agent, folder, skip_model=False, routing_mode="direct"):
             record('nativeCommand', 'NOT RUN: no safe read-only command advertised')
         before = c.store.read()
         try:
-            c.send(('/d ' if routing_mode == 'direct' else '') + '/model')
+            c.send('/d ' + '/model')
         except RuntimeError as exc:
             record('hostOwnedCommandRejected', str(exc))
         else:
             raise AssertionError('Provider model command bypassed CLI-MODE settings.')
         if commands or agent == 'agy':
             try:
-                c.send(('/d ' if routing_mode == 'direct' else '') + '/definitely-unavailable-cli-validation-command')
+                c.send('/d ' + '/definitely-unavailable-cli-validation-command')
             except RuntimeError as exc:
                 record('unknownCommandRejected', str(exc))
             else:
@@ -177,20 +176,19 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--agents', nargs='+', choices=adapters.implemented(), default=adapters.implemented())
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--routing-mode', choices=['passthrough', 'direct'], default='direct')
     parser.add_argument('--skip-model-for', nargs='*', choices=adapters.implemented(), default=[])
     args = parser.parse_args()
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=True)
     if len(args.agents) == 1:
-        results = [run(args.agents[0], root / args.agents[0], args.agents[0] in args.skip_model_for, args.routing_mode)]
+        results = [run(args.agents[0], root / args.agents[0], args.agents[0] in args.skip_model_for)]
     else:
         # Fresh imports per backend make an interrupted development run resumable
         # without keeping an obsolete controller loaded for subsequent agents.
         results = []
         for agent in args.agents:
             subprocess.run([sys.executable, str(Path(__file__).resolve()), '--agents', agent,
-                            '--output', str(root), '--routing-mode', args.routing_mode, '--skip-model-for', *args.skip_model_for], check=False)
+                            '--output', str(root), '--skip-model-for', *args.skip_model_for], check=False)
             results.append(json.loads((root / agent / 'evidence.json').read_text(encoding='utf-8')))
     save(args.output.resolve() / 'summary.json', results)
     sys.exit(1 if any('error' in r or 'shutdownError' in r for r in results) else 0)

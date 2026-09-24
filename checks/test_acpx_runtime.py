@@ -139,9 +139,8 @@ class SharedRuntime(unittest.TestCase):
             self.assertEqual(usage[0]['used'], 2048)
             self.assertEqual(usage[0]['breakdown'], {'inputTokens': 120, 'outputTokens': 40})
             control.progress('quiet')
-            control.mode('passthrough')
             output = []
-            result = control.send('activity', output=output.append)
+            result = control.send('/d activity', output=output.append)
             self.assertEqual([e['type'] for e in output], ['dispatched', 'message', 'done'])
             self.assertNotIn('activity', Path(result['events']).read_text(encoding='utf-8'))
             self.assertEqual(control.store.read()['owned'][0]['providerSession'], identity)
@@ -154,7 +153,6 @@ class SharedRuntime(unittest.TestCase):
         try:
             control.frontend()
             control.activate('gemini-3.8-flash-high', 'allow')
-            control.mode('passthrough')
             identity = control.store.read()['owned'][0]['providerSession']
             count_before = json.loads((self.workspace / 'fixture-state.json').read_text())[identity]['count']
             def submit(text):
@@ -168,9 +166,9 @@ class SharedRuntime(unittest.TestCase):
                 return control.store.read()['turnRoute']['requestId']
             with patch.dict(os.environ, {'CLI_MODE_TEST_DISABLE_AUTORUN': '0'}):
                 started = time.monotonic()
-                first = submit('slow')
+                first = submit('/d slow')
                 self.assertLess(time.monotonic() - started, 1.5)
-                second = submit('count')
+                second = submit('/d count')
                 self.assertEqual(control.store.read()['requests'][second]['status'], 'captured')
                 until = time.monotonic() + 25
                 while time.monotonic() < until:
@@ -192,7 +190,6 @@ class SharedRuntime(unittest.TestCase):
         try:
             control.frontend()
             control.activate('gemini-3.8-flash-high', 'allow')
-            control.mode('passthrough')
             identity = control.store.read()['owned'][0]['providerSession']
             count_before = json.loads((self.workspace / 'fixture-state.json').read_text())[identity]['count']
             def submit(text):
@@ -200,7 +197,7 @@ class SharedRuntime(unittest.TestCase):
                                  cwd=str(self.workspace), prompt=text), control.store.root)
                 return control.store.read()['turnRoute'].get('requestId')
             with patch.dict(os.environ, {'CLI_MODE_TEST_DISABLE_AUTORUN': '0'}):
-                first = submit('hold')
+                first = submit('/d hold')
                 until = time.monotonic() + 20
                 while time.monotonic() < until:
                     state = control.store.read()
@@ -210,7 +207,7 @@ class SharedRuntime(unittest.TestCase):
                     time.sleep(.1)
                 else:
                     self.fail('hold turn did not start')
-                second = submit('count')
+                second = submit('/d count')
                 self.assertEqual(control.store.read()['requests'][first]['status'], 'submitting')
                 self.assertEqual(control.store.read()['requests'][second]['status'], 'captured')
                 submit('/cli cancel')
@@ -281,8 +278,7 @@ class SharedRuntime(unittest.TestCase):
             direct = []
             control.send('/d recover-terminal', output=direct.append)
             self.assertEqual([e['text'] for e in direct if e['type'] == 'message'], ['Recovered from terminal error.'])
-            control.mode('passthrough')
-            control.send('ordinary followup', output=lambda e: None)
+            control.send('/d ordinary followup', output=lambda e: None)
             control.tune('model')
             control.activate('gemini-3.8-flash-low', 'prompt')
             state = control.store.read()
@@ -299,10 +295,9 @@ class SharedRuntime(unittest.TestCase):
         try:
             control.frontend()
             control.activate('gemini-3.8-flash-high', 'prompt')
-            control.mode('passthrough')
             events = []
             with self.assertRaises(RuntimeError):
-                control.send('request-permission', output=events.append)
+                control.send('/d request-permission', output=events.append)
             errors = [event for event in events if event['type'] == 'error']
             self.assertEqual([event.get('code') for event in errors], ['PERMISSION_PROMPT_UNAVAILABLE'])
             self.assertIn('/cli access', errors[0]['message'])
@@ -311,7 +306,7 @@ class SharedRuntime(unittest.TestCase):
             self.assertEqual([record['status'] for record in state['requests'].values()], ['failed'])
             self.assertFalse(state['inflight'])
             after = []
-            control.send('after denial', output=after.append)
+            control.send('/d after denial', output=after.append)
             self.assertEqual([e['text'] for e in after if e['type'] == 'message'], ['after denial'])
         finally:
             self.assertTrue(control.off()['shutdownComplete'])
@@ -366,10 +361,9 @@ class SharedRuntime(unittest.TestCase):
         control = Controller(Store('killed-submitter', self.workspace, self.root / 'killed'), self.backend)
         control.frontend()
         control.activate('gemini-3.8-flash-high', 'allow')
-        control.mode('passthrough')
         owned = control.store.read()['owned'][0]
         prompt = self.root / 'hold.txt'
-        prompt.write_text('hold', encoding='utf-8')
+        prompt.write_text('/d hold', encoding='utf-8')
         submitter = subprocess.Popen([sys.executable, str(PLUGIN / 'scripts/controller.py'), '--thread', 'killed-submitter',
                                       '--workspace', str(self.workspace), '--data-root', str(self.root / 'killed'),
                                       'send', '--file', str(prompt)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

@@ -17,7 +17,7 @@ lands in one of three zones below; know which before editing.
 - `scripts/controller.py`: CLI entry and `run()`. It combines `menus.py` (setup and Agent Settings),
   `binding.py` (owned sessions), `dispatch.py` (one provider turn) and `queue_worker.py` (captured requests,
   FIFO worker, receipts, `observe`, `resume_monitoring`).
-- `scripts/state.py`: `Store` plus `route()`, the prompt → route decision (Passthrough/Direct, `/d`, `/cli …`).
+- `scripts/state.py`: `Store` plus `route()`, the prompt → route decision (`/d`, `/cli …`, help, setup; everything else is the host's).
 - `hooks/route.py`: `decide()` and `task_through_settings()` (shared), `codex_output()` and
   `activation_reply()` (Codex only).
 - Menus, text and labels: `frontends.py`, `presentation.py` (`menu_block`, `menu_frame`, `options_menu`,
@@ -68,7 +68,7 @@ files) and `dist/cli-mode-claude-<v>.zip` (without the `CODEX_ONLY` files).
 
 | Guard | Protects | Fails when |
 |---|---|---|
-| `checks/test_codex_golden.py` with `checks/fixtures/codex-golden.json` (138 steps, 29 route kinds) | every hook response and controller result **Codex** receives | a shared or Claude change alters anything Codex sees |
+| `checks/test_codex_golden.py` with `checks/fixtures/codex-golden.json` (118 steps, 24 route kinds) | every hook response and controller result **Codex** receives | a shared or Claude change alters anything Codex sees |
 | `test_claude_package.py` with `checks/fixtures/codex-package-files.txt` | the Codex zip's exact file list; the Claude zip's contents; the root marketplace in sync; Claude's hook rules | a file leaks into the wrong package, or the marketplace or hooks drift |
 | `test_host.py`, `test_claude_hook.py` | Claude routing, relay, colour, menus, the Stop guard, the fast path | a Codex or shared change breaks Claude behaviour |
 | `test_package_reproducibility.py` | identical zips from LF and CRLF checkouts | packaging depends on line endings |

@@ -39,7 +39,7 @@ unavailable interactive approval.
 
 ## Requests, the queue and relaying
 
-The routing hook captures delegated text exactly, queues it in arrival order,
+The routing hook captures a `/d` prompt exactly, queues it in arrival order,
 and starts a detached worker for the active conversation. The worker forwards
 one message at a time to the saved ACPX session even if the host's response is
 interrupted by a new message. The host reads each receipt and public events
@@ -49,7 +49,7 @@ active turn; `/cli stop` discards queued follow-ups and closes the session. The
 host relays public output into chat while its response is active; the worker
 cannot independently post new chat messages after that response ends.
 
-Both routing modes and file-based submissions use one controller request lifecycle.
+`/d` prompts and file-based submissions use one controller request lifecycle.
 Follow-up turns require the original provider conversation to resume successfully.
 
 After a turn, the conversation's worker stays idle for up to five minutes so the

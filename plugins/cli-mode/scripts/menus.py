@@ -10,7 +10,6 @@ import menu_view
 from operations import pending_work
 from presentation import menu_block
 from progress import PROGRESS_MODES, progress_mode
-from state import ROUTING_MODES, routing_mode
 import viewer
 
 
@@ -100,11 +99,10 @@ class MenuMixin:
                 state['pending'] = dict(id=uuid.uuid4().hex, stage='menu', phase='settings',
                     backend=state['backend'], entrypoint=state['backend'], draft={})
                 state['turnRoute'] = dict(route='settings')
-            state['modeMenu'] = False
         if dismiss:
             return dict(state, message='Settings closed. CLI remains active.')
         return dict(state, activationMenu=frontends.active_settings_menu(
-            state['backend'], state['settings'], routing_mode(state), progress_mode(state)))
+            state['backend'], state['settings'], progress_mode(state)))
 
     def progress(self, choice=None):
         """A host display preference; never reconfigure or prompt the provider."""
@@ -118,7 +116,7 @@ class MenuMixin:
             '. Use /cli progress activity for tool activity and usage, or /cli progress quiet for messages and plans. Changes apply to the next turn.')
         if (state.get('pending') or {}).get('phase') == 'settings':
             result['activationMenu'] = frontends.active_settings_menu(
-                state['backend'], state['settings'], routing_mode(state), progress_mode(state))
+                state['backend'], state['settings'], progress_mode(state))
         return result
 
     def view(self, choice=None):
@@ -141,40 +139,6 @@ class MenuMixin:
         return dict(state, view='on', message=message + ' Closing the window is safe; the next turn reopens it. '
                     'Use /cli view off to stop.')
 
-    def mode(self, choice=None, dismiss=False):
-        """Change host routing only; never start, reconfigure or close the CLI."""
-        if choice is not None:
-            choice = choice.casefold()
-            if choice not in ROUTING_MODES:
-                raise ValueError('Choose Passthrough or Direct.')
-        with self.store.edit() as state:
-            if dismiss:
-                state['modeMenu'] = False
-                state['turnRoute'] = dict(route='mode-result')
-            elif choice is None:
-                state['modeMenu'] = True
-                state['turnRoute'] = dict(route='mode-menu')
-            else:
-                state['routingMode'] = choice
-                state['modeMenu'] = False
-                state['turnRoute'] = dict(route='mode-result')
-        pending = state.get('pending') or {}
-        if (dismiss or choice is not None) and pending.get('phase') == 'settings':
-            return dict(state, activationMenu=frontends.active_settings_menu(
-                state['backend'], state['settings'], routing_mode(state), progress_mode(state)))
-        if (dismiss or choice is not None) and pending.get('phase') == 'activation' and not pending.get('onboarding'):
-            agent = pending.get('backend') or pending['entrypoint']
-            return dict(state, activationMenu=frontends.menu(self.store.root, agent,
-                self.saved_settings(state, agent), frontends.routing_readiness(state),
-                frontends.access_readiness(), routing_mode=routing_mode(state)))
-        if dismiss:
-            return dict(state, message='Routing mode menu closed. CLI activation and settings are unchanged.')
-        if choice is None:
-            return dict(state, activationMenu=frontends.routing_mode_menu(routing_mode(state)))
-        return dict(state, message='CLI-MODE routing: ' + choice.title() + '. ' + (
-            'Only prompts starting with /d or $d go to the active CLI; other prompts stay with ' + host.name() + '.'
-            if choice == 'direct' else 'Ordinary prompts go to the active CLI.'))
-
     def frontend(self, agent='agy', page=1):
         if agent != 'home':
             self.use(agent)
@@ -183,8 +147,7 @@ class MenuMixin:
             return self.setup_status()
         routing = frontends.routing_readiness(current)
         access = frontends.access_readiness()
-        menu = frontends.menu(self.store.root, agent, self.saved_settings(current, agent), routing, access, page,
-                             routing_mode=routing_mode(current))
+        menu = frontends.menu(self.store.root, agent, self.saved_settings(current, agent), routing, access, page)
         if not access['ready']:
             # Display onboarding without writing outside the workspace or asking to escalate.
             return dict(current, activationMenu=menu, routingReadiness=routing, hostAccess=access)
@@ -231,8 +194,7 @@ class MenuMixin:
                 if not ready:
                     pending['onboarding'] = 'check'
         target = (state['pending'] or {}).get('entrypoint', agent)
-        menu = (frontends.menu(self.store.root, target, self.saved_settings(state, target), routing,
-                              routing_mode=routing_mode(state)) if ready
+        menu = (frontends.menu(self.store.root, target, self.saved_settings(state, target), routing) if ready
                 else frontends.setup_menu(result, routing, access))
         return dict(result, setupReady=ready, routingReadiness=routing, hostAccess=access, activationMenu=menu)
 

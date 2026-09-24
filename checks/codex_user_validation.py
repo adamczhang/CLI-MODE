@@ -261,7 +261,7 @@ class Session:
             if not REFERENCE.search(final):
                 turn['problems'].append('a relayed turn did not end with a view reference')
             # A new request is announced once; /cli resume continues ones already announced.
-            if turn['route'] in ('direct', 'delegate') and not any('Passing to' in text for text in texts):
+            if turn['route'] == 'direct' and not any('Passing to' in text for text in texts):
                 turn['problems'].append('no mid-turn "Passing to" update before the view')
         (self.evidence / ('%s-%02d-turn.json' % (self.name, len(self.turns) + 1))).write_text(
             json.dumps(turn, indent=1, ensure_ascii=False), encoding='utf-8')

@@ -133,8 +133,8 @@ class AuditRegressions(unittest.TestCase):
         for agent in backend_ids():
             # Settings pages are built from structured fields for every agent.
             self.assertFalse(hasattr(adapters.module(agent), 'activation_menu'), agent)
-            menu = frontends.active_settings_menu(agent, None, 'direct')
-            for label in ('Model:', 'Effort:', 'Access:', 'Mode: Direct'):
+            menu = frontends.active_settings_menu(agent, None)
+            for label in ('Model:', 'Effort:', 'Access:', 'Progress: Activity'):
                 self.assertIn(label, menu)
 
     def test_refresh_without_owned_session_is_explicit_and_does_not_launch(self):

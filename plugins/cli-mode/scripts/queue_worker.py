@@ -653,12 +653,12 @@ class QueueMixin:
         request_id = uuid.uuid4().hex
         with self.store.edit() as state:
             if state.get('turnRoute', {}).get('route') == 'direct-result':
-                raise RuntimeError('This passthrough turn was already dispatched; inspect its saved events instead of replaying it.')
+                raise RuntimeError('This turn was already dispatched; inspect its saved events instead of replaying it.')
             if state.get('turnRoute', {}).get('requestId'):
                 raise RuntimeError('This turn has captured input. Observe its request ID instead of submitting it again.')
             if pending_work(state):
                 raise RuntimeError('Session has pending/uncertain work. Inspect or cancel it before submitting.')
-            if not state['active'] or state.get('pending') or state.get('modeMenu') or state.get('helpMenu'):
+            if not state['active'] or state.get('pending') or state.get('helpMenu'):
                 raise RuntimeError('Mode is off or a menu is pending; no task was sent.')
             self.store.capture(state, request_id, text)
             state['requests'][request_id]['source'] = 'file'

@@ -12,7 +12,7 @@ import acpx
 import adapters
 import host
 import installer
-from state import DEFAULT_ROUTING_MODE, backend_records, lock
+from state import backend_records, lock
 from presentation import access_display, access_note, effort_display, effort_key, effort_rank, menu_block, options_menu
 from progress import DEFAULT_PROGRESS_MODE
 
@@ -124,7 +124,7 @@ def setup_menu(result, routing, access=None):
     return menu_block('\n'.join(lines))
 
 
-def menu(root, agent, settings=None, routing=None, access=None, page=1, routing_mode=DEFAULT_ROUTING_MODE):
+def menu(root, agent, settings=None, routing=None, access=None, page=1):
     blocked = routing is not None and not routing['ready']
     if agent != 'home':
         receipt_path(root, agent)
@@ -145,9 +145,8 @@ def menu(root, agent, settings=None, routing=None, access=None, page=1, routing_
         return menu_block(built['text'])
     receipt_path(root, agent)
     text = settings_text(agent, settings)
-    text += '\nMode: ' + routing_mode.title()
     text += '\n\n1. Recheck routing' if blocked else '\n\n1. Yes - use these defaults'
-    text += '\n2. Change defaults\n3. Change routing mode'
+    text += '\n2. Change defaults'
     if blocked:
         text += '\n\nHook check pending.\nActivation is unavailable.'
     return menu_block(text + '\nB. Back to agents')
@@ -178,19 +177,10 @@ def selected_key(root, backend, phase, settings, snapshot=None):
     return selected.get('effortValue') if family.get('modelId') else model
 
 
-def routing_mode_menu(current=DEFAULT_ROUTING_MODE):
-    labels = [name.title() + ('  (current)' if name == current else '')
-              for name in ('passthrough', 'direct')]
-    built = options_menu('Routing Mode', labels, lead=[
-        'Passthrough sends ordinary prompts.',
-        'Direct sends only /d or $d prompts.', ''])
-    return menu_block(built['text'] + '\nX. Back')
-
-
-def active_settings_menu(agent, settings, routing_mode, progress=DEFAULT_PROGRESS_MODE):
+def active_settings_menu(agent, settings, progress=DEFAULT_PROGRESS_MODE):
     text = settings_text(agent, settings)
-    return menu_block(text + '\nMode: ' + routing_mode.title() + '\nProgress: ' + progress.title() +
-        '\n\n1. Change model\n2. Change effort\n3. Change access\n4. Change routing mode\n5. Toggle activity progress\nX. Close settings')
+    return menu_block(text + '\nProgress: ' + progress.title() +
+        '\n\n1. Change model\n2. Change effort\n3. Change access\n4. Toggle activity progress\nX. Close settings')
 
 
 def phase_options(root, backend, phase, settings=None, snapshot=None):

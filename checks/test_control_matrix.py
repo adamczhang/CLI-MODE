@@ -9,7 +9,7 @@ import frontends
 from state import PREFIXES, route, backend_ids
 
 OFF = {'active': False}
-ON = {'active': True, 'routingMode': 'passthrough'}
+ON = {'active': True, 'routingMode': 'direct'}
 
 
 def control_words(backend_id):
@@ -29,7 +29,7 @@ class Prefixes(unittest.TestCase):
 
     def test_no_other_prefix_is_a_control(self):
         for text in ('?cli', '?help', '!cli', 'cli', 'help', '#cli'):
-            self.assertIn(route(text, OFF)['route'], ('host', 'delegate'), text)
+            self.assertEqual(route(text, OFF)['route'], 'host', text)
 
     def test_a_partial_token_is_ordinary_text(self):
         for text in ('/client', '$client', '/clip art', '/helper', '$helpme'):
@@ -94,9 +94,12 @@ class SharedControls(unittest.TestCase):
             self.assertEqual(route('/cli ' + verb, OFF)['route'], 'hint')
 
     def test_ordinary_text_is_never_captured(self):
-        self.assertEqual(route('fix the bug', ON)['route'], 'delegate')
-        self.assertEqual(route('fix the bug', OFF)['route'], 'host')
-        self.assertEqual(route('"/cli stop" is the control', ON)['route'], 'delegate')
+        # Only an explicit /d or $d reaches the agent (Passthrough was removed).
+        for state in (ON, OFF):
+            self.assertEqual(route('fix the bug', state)['route'], 'host')
+            self.assertEqual(route('"/cli stop" is the control', state)['route'], 'host')
+        self.assertEqual(route('/d fix the bug', ON)['route'], 'direct')
+        self.assertEqual(route('$d fix the bug', ON)['route'], 'direct')
 
 
 class AgentCapabilities(unittest.TestCase):

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Passthrough mode is removed, on Claude Code and Codex. Only a message that starts with `/d` (or `$d`) reaches the agent; everything else stays with the host. `/cli mode` now explains this, and the routing choice is gone from the activation and Agent Settings menus (Toggle activity progress is now 4). A conversation saved in Passthrough mode opens in Direct mode; a request it already queued is still sent.
+- Claude Code: a background task's notification is never treated as a prompt. When it is the end of CLI-MODE's own follow, the new turn is given the exact relay to run, and an open menu no longer takes it as a reply.
+- Claude Code: during an agent's turn, Claude's own wake-up, scheduling and monitor tools are refused; the follow's end already wakes the conversation.
 - Claude Code: an agent turn runs as a background task. Claude posts "Passing to …" and ends its turn; the agent's work shows as a row in Claude Code's background tasks (named after the agent and the prompt, one line per step), and when the agent finishes, Claude posts its whole output. Claude no longer spends a short turn every 25 seconds checking on the agent. With `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` the previous behaviour stays.
 - Claude Code: activating an agent (`/cli bind`, the activation menu, `/cli model`, `/cli effort` and narrower access) runs inside CLI-MODE's hook, so it no longer shows up as a background task of its own, and it costs no Claude turn to run. Raising access still goes through Claude Code's permission prompt.
 

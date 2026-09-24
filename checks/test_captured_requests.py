@@ -42,9 +42,9 @@ class CapturedRequests(unittest.TestCase):
         self.assertEqual(len(attempts), 1)
         self.assertTrue(self.store.read()['transientWriteProbe'])
 
-    def test_two_passthrough_messages_keep_both_captures_in_order(self):
-        first, _ = self.capture('first long-running request')
-        second, _ = self.capture('follow-up while the first is running')
+    def test_two_messages_keep_both_captures_in_order(self):
+        first, _ = self.capture('/d first long-running request')
+        second, _ = self.capture('/d follow-up while the first is running')
         state = self.store.read()
         self.assertEqual(state['requests'][first]['status'], 'captured')
         self.assertEqual(state['requests'][second]['status'], 'captured')
@@ -58,11 +58,12 @@ class CapturedRequests(unittest.TestCase):
         self.assertEqual(self.control.observe(second)['events'][0]['text'], 'follow-up while the first is running')
         self.assertEqual(result['stopReason'], 'end_turn')
 
-    def test_queued_direct_payload_uses_mode_at_capture(self):
-        self.control.mode('direct')
+    def test_a_request_captured_before_passthrough_was_removed_sends_as_captured(self):
         first, _ = self.capture('/d first')
-        self.control.mode('passthrough')
-        second, _ = self.capture('second')
+        second = 'b' * 32
+        with self.store.edit() as state:  # Saved by an older version, in Passthrough mode.
+            self.store.capture(state, second, 'second')
+            state['requests'][second]['routingMode'] = 'passthrough'
         first_events, second_events = [], []
         self.control.send_request(first, output=first_events.append)
         self.control.send_request(second, output=second_events.append)
@@ -70,7 +71,7 @@ class CapturedRequests(unittest.TestCase):
         self.assertEqual([e['text'] for e in second_events if e['type'] == 'message'], ['second'])
 
     def test_observe_cursor_never_resubmits(self):
-        request_id, _ = self.capture('one observable turn')
+        request_id, _ = self.capture('/d one observable turn')
         self.control.send_request(request_id, output=lambda event: None)
         before = len(self.backend.calls)
         first = self.control.observe(request_id, limit=1)
@@ -81,7 +82,7 @@ class CapturedRequests(unittest.TestCase):
         self.assertEqual(len(self.backend.calls), before)
 
     def test_observe_reports_wait_age_without_claiming_provider_progress(self):
-        request_id, _ = self.capture('a silent turn')
+        request_id, _ = self.capture('/d a silent turn')
         before = len(self.backend.calls)
         with self.store.edit() as state:
             state['requests'][request_id]['capturedAt'] = time.time() - 70
@@ -105,8 +106,8 @@ class CapturedRequests(unittest.TestCase):
         self.assertEqual(len(self.backend.calls), before)
 
     def test_dead_worker_blocks_replay_until_explicit_reconciliation(self):
-        first, _ = self.capture('possibly delivered')
-        second, _ = self.capture('must wait')
+        first, _ = self.capture('/d possibly delivered')
+        second, _ = self.capture('/d must wait')
         operation = 'c' * 32
         with self.store.edit() as state:
             state['requests'][first].update(status='submitting', operation=operation,
@@ -130,7 +131,7 @@ class CapturedRequests(unittest.TestCase):
         with self.store.edit() as state:
             for _ in range(32):
                 self.store.capture(state, uuid.uuid4().hex, 'queued')
-        _, result = self.capture('private over capacity')
+        _, result = self.capture('/d private over capacity')
         state = self.store.read()
         self.assertEqual(sum(record['status'] == 'captured' for record in state['requests'].values()), 32)
         self.assertEqual(state['turnRoute']['route'], 'hint')
@@ -138,7 +139,7 @@ class CapturedRequests(unittest.TestCase):
         self.assertNotIn('private over capacity', str(result))
 
     def test_queue_controls_do_not_supersede_waiting_request(self):
-        request_id, _ = self.capture('waiting input')
+        request_id, _ = self.capture('/d waiting input')
         _, queue_context = self.capture('/cli queue')
         _, resume_context = self.capture('/cli resume')
         self.assertIn(' queue`', str(queue_context))
@@ -149,8 +150,8 @@ class CapturedRequests(unittest.TestCase):
 
     def test_resume_monitors_existing_receipts_without_resubmitting(self):
         from state import route
-        first, _ = self.capture('first request')
-        second, _ = self.capture('second request')
+        first, _ = self.capture('/d first request')
+        second, _ = self.capture('/d second request')
         before = len(self.backend.calls)
         with patch.object(self.control, 'ensure_pump', return_value={'worker': 'running'}):
             result = self.control.resume_monitoring()
@@ -176,7 +177,7 @@ class CapturedRequests(unittest.TestCase):
         self.assertEqual(len(self.backend.calls), before)
 
     def test_resume_reports_worker_launch_failure_without_replaying(self):
-        request_id, _ = self.capture('waiting request')
+        request_id, _ = self.capture('/d waiting request')
         before = len(self.backend.calls)
         with patch.object(Controller, 'ensure_pump', side_effect=OSError('worker launch denied')):
             result = self.control.resume_monitoring()
@@ -190,14 +191,14 @@ class CapturedRequests(unittest.TestCase):
         self.assertEqual(len(self.backend.calls), before)
 
     def test_cancel_when_idle_does_not_affect_queued_followup(self):
-        request_id, _ = self.capture('waiting')
+        request_id, _ = self.capture('/d waiting')
         with patch.object(self.backend, 'control', side_effect=AssertionError('session-wide cancel')):
             result = self.control.cancel()
         self.assertFalse(result['canceled'])
         self.assertEqual(self.store.read()['requests'][request_id]['status'], 'captured')
 
     def test_observe_keeps_cursor_before_incomplete_event_line(self):
-        request_id, _ = self.capture('cursor fixture')
+        request_id, _ = self.capture('/d cursor fixture')
         path = self.store.request_path(request_id).parent / 'operations' / (uuid.uuid4().hex + '.jsonl')
         path.parent.mkdir(parents=True, exist_ok=True)
         first = json.dumps({'type': 'message', 'text': 'first'}).encode() + b'\n'
@@ -219,7 +220,6 @@ class CapturedRequests(unittest.TestCase):
         self.store = Store('capture-test', self.root, self.root / 'data')
         self.backend = FakeBackend()
         self.control = Controller(self.store, self.backend)
-        self.control.mode('passthrough')  # This fixture exercises unprefixed forwarding.
         self.control.frontend()
         self.control.activate('gemini-3.8-flash-high', 'allow')
 
@@ -230,14 +230,14 @@ class CapturedRequests(unittest.TestCase):
 
     def test_exact_input_and_completed_receipt_survive_new_turn(self):
         text = '\ufeff  Literal $HOME `code` 🐈\r\n\tkeep\n\n' + 'long prompt ' * 500
-        request_id, context = self.capture(text)
+        request_id, context = self.capture('/d ' + text)
         self.assertNotIn('long prompt', str(context))
         self.assertNotIn('long prompt', self.store.path.read_text())
         events = []
         result = self.control.send_request(request_id, output=events.append)
         self.assertEqual(''.join(e['text'] for e in events if e['type'] == 'message'), text)
         self.assertFalse(self.store.request_path(request_id).exists())
-        self.capture('next prompt')
+        self.capture('/d next prompt')
         before = len(self.backend.calls)
         receipt = Controller(self.store, self.backend).send_request(request_id)
         self.assertEqual(receipt['status'], 'completed')
@@ -245,7 +245,6 @@ class CapturedRequests(unittest.TestCase):
         self.assertEqual(len(self.backend.calls), before)
 
     def test_direct_prefix_removed_once_and_no_file_bypass(self):
-        self.control.mode('direct')
         text = ' \t$d\r\n /d literal\r\n\t'
         request_id, _ = self.capture(text)
         with self.assertRaisesRegex(RuntimeError, 'captured input'):
@@ -258,19 +257,19 @@ class CapturedRequests(unittest.TestCase):
         self.assertEqual(''.join(e['text'] for e in events if e['type'] == 'message'), ' /d literal\r\n\t')
 
     def test_local_control_preserves_queued_payload_and_off_discards_it(self):
-        request_id, _ = self.capture('send after help')
+        request_id, _ = self.capture('/d send after help')
         self.capture('/help')
         self.assertTrue(self.store.request_path(request_id).exists())
         before = len(self.backend.calls)
         self.control.send_request(request_id, output=lambda event: None)
         self.assertGreater(len(self.backend.calls), before)
         self.capture('X')  # Close help before capturing another ordinary task.
-        request_id, _ = self.capture('also do not send')
+        request_id, _ = self.capture('/d also do not send')
         self.control.off()
         self.assertFalse(self.store.request_path(request_id).exists())
 
     def test_two_submitters_share_one_admission(self):
-        request_id, _ = self.capture('once')
+        request_id, _ = self.capture('/d once')
         admitted, release = threading.Event(), threading.Event()
         real_send = self.control._send
         def delayed(*args, **kwargs):
@@ -292,7 +291,7 @@ class CapturedRequests(unittest.TestCase):
                 first.result(timeout=10)
 
     def test_failed_submission_is_not_retried_and_payload_is_removed(self):
-        request_id, _ = self.capture('uncertain work')
+        request_id, _ = self.capture('/d uncertain work')
         def lost_after_dispatch(*args, **kwargs):
             with self.store.edit() as state:
                 state['inflight'][state['requests'][request_id]['operation']]['phase'] = 'dispatching'
@@ -303,13 +302,13 @@ class CapturedRequests(unittest.TestCase):
         self.assertFalse(self.store.request_path(request_id).exists())
         before = len(self.backend.calls)
         self.assertEqual(self.control.send_request(request_id)['status'], 'uncertain')
-        following, _ = self.capture('new work')
+        following, _ = self.capture('/d new work')
         with self.assertRaisesRegex(RuntimeError, 'pending/uncertain'):
             self.control.send_request(following)
         self.assertEqual(len(self.backend.calls), before)
 
     def test_invalid_or_cross_conversation_ids_never_read_paths(self):
-        request_id, _ = self.capture('private')
+        request_id, _ = self.capture('/d private')
         other = Controller(Store('other', self.root, self.store.root), self.backend)
         with self.assertRaisesRegex(RuntimeError, 'not found'):
             other.send_request(request_id)
@@ -317,7 +316,7 @@ class CapturedRequests(unittest.TestCase):
             self.control.send_request('../payload')
 
     def test_binding_changes_during_preflight_prevent_dispatch(self):
-        request_id, _ = self.capture('must not launch')
+        request_id, _ = self.capture('/d must not launch')
         original = self.backend.metadata
         def stop_during_metadata(owned):
             self.control.disable()
@@ -330,12 +329,12 @@ class CapturedRequests(unittest.TestCase):
         self.assertFalse(self.store.request_path(request_id).exists())
 
     def test_new_prompt_during_admission_keeps_its_own_route(self):
-        first, _ = self.capture('first')
+        first, _ = self.capture('/d first')
         second = []
         original = self.backend.metadata
         def capture_followup(owned):
             if not second:
-                second.append(self.capture('second')[0])
+                second.append(self.capture('/d second')[0])
             return original(owned)
         with patch.object(self.backend, 'metadata', side_effect=capture_followup):
             self.control.send_request(first, output=lambda e: None)
@@ -345,7 +344,7 @@ class CapturedRequests(unittest.TestCase):
         self.assertEqual(''.join(e['text'] for e in events if e['type'] == 'message'), 'second')
 
     def test_settings_blocked_from_admission_through_final_metadata(self):
-        request_id, _ = self.capture('keep accepted settings')
+        request_id, _ = self.capture('/d keep accepted settings')
         original = self.backend.metadata
         inspections = []
         def inspect(owned):
@@ -364,20 +363,20 @@ class CapturedRequests(unittest.TestCase):
     def test_local_rejection_is_terminal_and_does_not_block_followup(self):
         import native_commands
         self.backend.validate_command = lambda owned, text: native_commands.validate(['help'], text, 'fixture')
-        request_id, _ = self.capture('/unavailable')
+        request_id, _ = self.capture('/d /unavailable')
         before = len(self.backend.calls)
         with self.assertRaisesRegex(RuntimeError, 'Unknown or unavailable'):
             self.control.send_request(request_id)
         self.assertEqual(len(self.backend.calls), before)
         self.assertEqual(self.store.read()['requests'][request_id]['status'], 'rejected')
         self.assertEqual(self.store.read()['inflight'], {})
-        following, _ = self.capture('valid next request')
+        following, _ = self.capture('/d valid next request')
         self.control.send_request(following, output=lambda e: None)
 
     def test_a_rejected_request_says_why_it_was_not_sent(self):
         import native_commands
         self.backend.validate_command = lambda owned, text: native_commands.validate(['help'], text, 'fixture')
-        request_id, _ = self.capture('/unavailable')
+        request_id, _ = self.capture('/d /unavailable')
         with self.assertRaisesRegex(RuntimeError, 'Unknown or unavailable') as raised:
             self.control.send_request(request_id)
         self.assertEqual(self.store.read()['requests'][request_id]['rejectedReason'], str(raised.exception))
@@ -388,7 +387,6 @@ class CapturedRequests(unittest.TestCase):
         self.assertIn('Not sent. Unknown or unavailable', self.control.relay_text(request_id, wait=0)['text'])
 
     def test_file_cannot_bypass_uncertain_request_after_host_turn(self):
-        self.control.mode('direct')
         request_id, _ = self.capture('/d interrupted')
         def interrupted(*args, **kwargs):
             with self.store.edit() as state:
@@ -405,7 +403,7 @@ class CapturedRequests(unittest.TestCase):
         self.control.send('/d after explicit reconciliation', output=lambda e: None)
 
     def test_cancel_during_preflight_never_sends_prompt(self):
-        request_id, _ = self.capture('cancel before starting')
+        request_id, _ = self.capture('/d cancel before starting')
         original = self.backend.metadata
         def cancel(owned):
             self.assertEqual(self.control.cancel()['method'], 'operation-signal')
@@ -421,7 +419,7 @@ class CapturedRequests(unittest.TestCase):
     def test_failed_capture_commit_removes_payload(self):
         with patch('state.os.replace', side_effect=OSError('checkpoint failed')):
             with self.assertRaisesRegex(OSError, 'checkpoint failed'):
-                self.capture('must not be orphaned')
+                self.capture('/d must not be orphaned')
         folder = self.store.root / 'requests' / self.store.key
         self.assertEqual(list(folder.glob('*.txt')), [])
         self.assertFalse(self.store.read().get('requests'))
@@ -438,16 +436,16 @@ class CapturedRequests(unittest.TestCase):
         self.assertTrue(other.request_path('b' * 32).exists())
 
     def test_failed_supersession_preserves_previously_captured_payload(self):
-        first, _ = self.capture('original')
+        first, _ = self.capture('/d original')
         with patch('state.os.replace', side_effect=OSError('checkpoint failed')):
             with self.assertRaises(OSError):
-                self.capture('replacement')
-        self.assertEqual(self.store.request_path(first).read_text(), 'original')
+                self.capture('/d replacement')
+        self.assertEqual(self.store.request_path(first).read_text(), '/d original')
         self.assertEqual(self.store.read()['requests'][first]['status'], 'captured')
         self.assertEqual(len(list(self.store.request_path(first).parent.glob('*.txt'))), 1)
 
     def test_completed_turn_is_not_uncertain_when_metadata_read_fails(self):
-        request_id, _ = self.capture('completed task')
+        request_id, _ = self.capture('/d completed task')
         original = self.backend.metadata
         calls = []
         def metadata(owned):
@@ -462,7 +460,7 @@ class CapturedRequests(unittest.TestCase):
         self.assertFalse(self.store.read()['inflight'])
 
     def test_routing_change_after_dispatch_checkpoint_preserves_accepted_prompt(self):
-        request_id, _ = self.capture('checkpoint race')
+        request_id, _ = self.capture('/d checkpoint race')
         original = self.store.edit
         switched = []
         @contextmanager
@@ -482,7 +480,7 @@ class CapturedRequests(unittest.TestCase):
         self.assertFalse(self.store.read()['inflight'])
 
     def test_prompt_spawn_failure_remains_reconcilable(self):
-        request_id, _ = self.capture('spawn might have started')
+        request_id, _ = self.capture('/d spawn might have started')
         with patch.object(self.backend, 'start', side_effect=OSError('start failed')):
             with self.assertRaises(OSError):
                 self.control.send_request(request_id)
@@ -494,7 +492,7 @@ class CapturedRequests(unittest.TestCase):
         self.assertFalse(self.store.read()['inflight'])
 
     def test_legacy_uncertain_receipt_gets_an_inspectable_recovery_operation(self):
-        request_id, _ = self.capture('legacy receipt')
+        request_id, _ = self.capture('/d legacy receipt')
         with self.store.edit() as state:
             state['requests'][request_id]['status'] = 'uncertain'
         recovered = self.store.read()

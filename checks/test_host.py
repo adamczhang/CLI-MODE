@@ -151,7 +151,6 @@ class ClaudeControl(unittest.TestCase):
         self.control = Controller(self.store, self.backend)
         self.control.frontend()
         self.control.activate('gemini-3.8-flash-high', 'allow')
-        self.control.mode('passthrough')
 
     def args(self, *words):
         return build_parser().parse_args(['--host', host.CLAUDE, '--thread', 'claude-session',
@@ -159,7 +158,7 @@ class ClaudeControl(unittest.TestCase):
 
     def send(self, events):
         self.backend.events = events
-        return self.control.send('task', output=lambda event: None)['requestId']
+        return self.control.send('/d task', output=lambda event: None)['requestId']
 
 
 class Controllers(ClaudeControl):
@@ -439,9 +438,8 @@ class FinalWords(unittest.TestCase):
             control = Controller(store, ScriptedBackend())
             control.frontend()
             control.activate('gemini-3.8-flash-high', 'allow')
-            control.mode('passthrough')
             control.backend.events = [dict(type='message', text='x\n')]
-            request = control.send('task', output=lambda event: None)['requestId']
+            request = control.send('/d task', output=lambda event: None)['requestId']
             events = [dict(type='activity', toolCallId='a', kind='read', status='completed', title='Read notes'),
                       dict(type='message', text='The answer is 42.\n')]
 
