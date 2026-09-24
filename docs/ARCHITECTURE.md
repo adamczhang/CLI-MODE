@@ -82,8 +82,9 @@ python scripts/package_plugin.py
 python checks/package_smoke.py
 ```
 
-See the [v0.3.0 validation report](../checks/v0.3.0-validation.md) for this
-release and the [ACPX hardening report](../checks/acpx-hardening.md) for its
+See the [v0.3.1 validation report](../checks/v0.3.1-validation.md) for this
+release, the [0.3.0 full validation](../checks/v0.3.0-full-validation.md) across both hosts and six agents, and
+the [ACPX hardening report](../checks/acpx-hardening.md) for its
 implementation evidence. The suite exercises the real pinned ACPX runtime with an
 offline fixture agent when ACPX is installed; those tests report a skip if it is
 unavailable. Live provider tests consume quota; the [validation plan](../checks/five-cli-validation-plan.md)

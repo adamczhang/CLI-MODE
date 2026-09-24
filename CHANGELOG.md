@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1 — Hooks that run on current Codex — 2026-09-24
+
+- Codex: CLI-MODE's hooks run again. Codex 0.155 runs Windows hook commands through PowerShell, where the previous `python -c __import__(...)` command was a parse error, so every hook exited with an error and Codex fell back to reading the skill. The command is now one double-quoted `python -c "..."` argument that works in cmd.exe, PowerShell 7 and Windows PowerShell 5.1. Codex asks to trust the updated hooks once.
+- Codex: replies 1 and 2 on an agent's activation menu run their exact controls, and a `/d` task typed while Agent Settings is open closes the menu and is sent, as on Claude Code.
+- Claude Code: raising an agent's access with `/cli access allow` or the settings access menu asks first, as activating with wider access already did. A message that the open settings page cannot take now says it was not sent.
+- Relays: an answer that ends inside a code block no longer turns CLI-MODE's own lines into code, and terminal escape sequences from an agent are removed from chat and views.
+- Errors: a failed ACPX control shows its reason rather than Node's deprecation warning, and Copilot's readiness error says when `GH_TOKEN` (or a similar variable) is set and overrides its own sign-in.
+- The README leads with what CLI-MODE is, what it needs and a short FAQ; internals move to `docs/ARCHITECTURE.md`. New validation tools cover both hosts, all six agents and every renderer (`checks/v0.3.0-full-validation.md`).
+
 ## 0.3.0 — A fresh start — 2026-09-24
 
 The repository restarts its history at this release: one snapshot of the Codex plugin and its Claude Code port. The entries below summarise the earlier releases.
@@ -11,7 +20,7 @@ The repository restarts its history at this release: one snapshot of the Codex p
 - After a compaction, a cancel or an off is not repeated, and answers already relayed are not relayed again.
 - Read the hook's input as UTF-8 on every Windows code page; read the state file once per prompt; run the activation usage lookup on a daemon thread.
 - Claude agent: the Opus 5.5 default uses its canonical model ID, stale model caches migrate, Haiku works without an effort selector, and usage scopes have readable labels.
-- Codex views: final answers render headings, nested lists, tables and code blocks; activation uses responsive rows; work groups show workspace-relative paths and safe command labels; "Passing to …" appears once per request.. It follows the public events file each turn already writes, so it never reaches the agent; closing it is safe, and the next turn reopens it while the viewer is on. Both hosts.
+- Codex views: final answers render headings, nested lists, tables and code blocks; activation uses responsive rows; work groups show workspace-relative paths and safe command labels; "Passing to …" appears once per request.
 
 ## 0.2.1 — Same result from every Claude Code install — 2026-09-23
 

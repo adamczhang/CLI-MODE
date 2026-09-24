@@ -1,6 +1,6 @@
 # CLI-MODE — working notes for Claude
 
-> **Written for CLI-MODE 0.3.0** (tag `v0.3.0`, 2026-09-24).
+> **Written for CLI-MODE 0.3.1** (tag `v0.3.1`, 2026-09-24).
 > If `plugins/cli-mode/.codex-plugin/plugin.json` shows a different version, parts of this file may be
 > out of date. Verify any file, function or rule named here against the code before relying on it; when
 > they disagree, the code wins. Fix this file in the same change. `checks/test_agent_docs.py` fails
@@ -18,7 +18,8 @@ lands in one of three zones below; know which before editing.
   `binding.py` (owned sessions), `dispatch.py` (one provider turn) and `queue_worker.py` (captured requests,
   FIFO worker, receipts, `observe`, `resume_monitoring`).
 - `scripts/state.py`: `Store` plus `route()`, the prompt → route decision (Passthrough/Direct, `/d`, `/cli …`).
-- `hooks/route.py`: `decide()` (shared) and `codex_output()` (Codex only).
+- `hooks/route.py`: `decide()` and `task_through_settings()` (shared), `codex_output()` and
+  `activation_reply()` (Codex only).
 - Menus, text and labels: `frontends.py`, `presentation.py` (`menu_block`, `menu_frame`, `options_menu`,
   access and effort names), `help_view.py`, `confirmation.py`, `relay_view.markdown`/`render`, `menu_view.py`.
 - Agents and runtime: `adapters.py`, the per-agent modules (`agy.py`, `claude_code.py`, `codex_cli.py`,
@@ -32,7 +33,8 @@ lands in one of three zones below; know which before editing.
   native_commands and queue_worker.
 
 **Codex only:**
-- `hooks/hooks.json`, `hooks/route.py:codex_output`;
+- `hooks/hooks.json`, `hooks/route.py:codex_output`. Codex 0.155 runs `commandWindows` through PowerShell
+  (earlier builds through `cmd.exe /C`), so it must parse in both; `test_features` runs it under each;
 - `codex/skills/cli-mode/` (`SKILL.md`, `codex/skills/cli-mode/agents/openai.yaml` and the references Codex
   reads). It sits under `codex/` so Claude Code, which scans a plugin's root `skills/`, never lists it.
   Exception: `codex/skills/cli-mode/references/backends.json` is the agent registry BOTH hosts load

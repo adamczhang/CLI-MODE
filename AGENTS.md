@@ -1,6 +1,6 @@
 # CLI-MODE — agent guide (read this first)
 
-> **Written for CLI-MODE 0.3.0** (tag `v0.3.0`, 2026-09-24).
+> **Written for CLI-MODE 0.3.1** (tag `v0.3.1`, 2026-09-24).
 > If `plugins/cli-mode/.codex-plugin/plugin.json` shows a different version, parts of this file may be
 > out of date. Verify any file, function or rule named here against the code before relying on it; when
 > they disagree, the code wins. Fix this file in the same change. `checks/test_agent_docs.py` fails
@@ -72,7 +72,8 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
 - `scripts/controller.py`: CLI entry and `run()`. It combines `menus.py` (setup and Agent Settings),
   `binding.py` (owned sessions), `dispatch.py` and `queue_worker.py`.
 - `scripts/state.py`: `Store` and `route()`.
-- `hooks/route.py:decide()`.
+- `hooks/route.py:decide()` and `task_through_settings()` (a `/d` task typed into open settings is sent;
+  both hooks call it).
 - `frontends.py`, `presentation.py` (menu frame and labels), `help_view.py`, `confirmation.py`,
   `relay_view.py` (`markdown`, `render`), `menu_view.py`.
 - `adapters.py`, the per-agent modules (`agy.py`, `claude_code.py`, `codex_cli.py`, `copilot_cli.py`,
@@ -83,7 +84,9 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   follows each turn's public events file.
 
 **Codex only:**
-- `hooks/hooks.json`, `hooks/route.py:codex_output()`;
+- `hooks/hooks.json`, `hooks/route.py:codex_output()` and `activation_reply()`. Codex 0.155 runs the
+  Windows hook command through PowerShell and earlier builds through `cmd.exe /C "<command>"`, so
+  `commandWindows` must parse the same in both (`package_plugin.WINDOWS_HOOK`, checked by `test_features`);
 - `codex/skills/cli-mode/**` (`SKILL.md`, references, `codex/skills/cli-mode/agents/openai.yaml`). It sits
   under `codex/` (the manifest's `"skills": "./codex/skills/"`) so Claude Code, which scans a plugin's
   root `skills/`, never lists it. Exception: `codex/skills/cli-mode/references/backends.json` is the agent
