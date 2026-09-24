@@ -247,8 +247,11 @@ class BindingMixin:
                     output=lambda event: messages.append(event['text']) if event['type'] == 'message' else None)
         response = ''.join(messages)
         if marker not in response:
+            tokens = [name for name in getattr(self.adapter, 'TOKEN_VARIABLES', ()) if os.environ.get(name)]
+            note = (' ' + tokens[0] + ' is set, and ' + self.adapter.LABEL + ' signs in with it before its own login: '
+                    'if it has expired, refresh or remove it.') if tokens else ''
             raise RuntimeError(self.adapter.LABEL + ' did not confirm readiness. '
-                'Check sign-in, subscription/quota, and the provider response: ' + response[:600])
+                'Check sign-in, subscription/quota, and the provider response: ' + response[:600] + note)
 
     def capture_commands(self, owned, record, generation, pending=None):
         names = native_commands.from_record(record)

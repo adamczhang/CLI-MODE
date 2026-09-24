@@ -106,11 +106,38 @@ def counts(tools):
         str(failed) + ' failed' if failed else '') if part)
 
 
+ESCAPES = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-_]?|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})')
+
+
+def clean(text):
+    """Agent text without terminal escape sequences or control characters (tabs and line breaks stay).
+
+    Chat and views would show them as boxes or pass them to a terminal; the viewer window strips the same.
+    """
+    return ESCAPES.sub('', text)
+
+
+def close_fence(text):
+    """Agent text that ends inside a code fence gets its closing fence, so what follows is not code."""
+    opened = None
+    for line in text.splitlines():
+        match = FENCE.match(line)
+        if not match:
+            continue
+        mark = match.group(1)
+        if opened is None:
+            opened = mark
+        elif mark[0] == opened[0] and len(mark) >= len(opened) and not line.strip()[len(mark):].strip():
+            opened = None
+    return text if opened is None else text.rstrip('\n') + '\n' + opened
+
+
 def defuse(text):
-    """Stop a line of agent output from being read as an inline-view reference."""
+    """Stop a line of agent output from being read as an inline-view reference, and drop control characters."""
     # Strip the renderer's opening delimiter even inside prose/code: provider
     # output is content, never authority to load a host-side HTML file.
-    text = text.replace('\ue200visualize\ue202', 'visualize')
+    text = clean(text).replace('\ue200visualize\ue202', 'visualize')
     return VIEW_REFERENCE.sub('\\1\u200b\\2', text)
 
 
@@ -121,7 +148,7 @@ def markdown(label, batch, history, passing=None, footer=None, show_work=True, c
         parts.append(strong(passing, color))
     text = messages(batch)
     if text:
-        parts.append(strong(label + ' says...', color) + '\n\n' + defuse(text))
+        parts.append(strong(label + ' says...', color) + '\n\n' + close_fence(defuse(text)))
     parts += ['Artifact: ' + defuse(artifact_label(event['content']))
               for event in batch if event.get('type') == 'artifact']
     parts += ['**' + defuse(event['message']) + '**'
@@ -154,7 +181,7 @@ def final_markdown(label, batch, history, footer=None, show_work=True, color=Fal
     parts = []
     text = messages(batch)
     if text:
-        parts.append(strong(label + ' says...', color) + '\n\n' + defuse(text))
+        parts.append(strong(label + ' says...', color) + '\n\n' + close_fence(defuse(text)))
     parts += ['Artifact: ' + defuse(artifact_label(event['content']))
               for event in batch if event.get('type') == 'artifact']
     parts += ['**' + defuse(event['message']) + '**'
@@ -189,15 +216,15 @@ def render(label, history, destination, footer=None, show_work=True, workspace=N
     html, plain = [], []
     if text:
         html.append('<div class="attrib">' + escape(label) + ' says...</div>'
-                    '<div class="body">' + block_content(text) + '</div>')
-        plain += [label + ' says...', text]
+                    '<div class="body">' + block_content(clean(text)) + '</div>')
+        plain += [label + ' says...', defuse(text)]  # The fallback is chat text: it must not open a view either.
     if artifacts:
         items = ''.join('<li>' + escape(artifact_label(item)) + '</li>' for item in artifacts)
         html.append('<ul class="artifacts">' + items + '</ul>')
         plain += ['Artifact: ' + artifact_label(item) for item in artifacts]
     for message in errors:
-        html.append('<div class="error">' + escape(message) + '</div>')
-        plain.append(message)
+        html.append('<div class="error">' + escape(clean(message)) + '</div>')
+        plain.append(defuse(message))
     if tools or plan or usage:
         inner = []
         if plan:

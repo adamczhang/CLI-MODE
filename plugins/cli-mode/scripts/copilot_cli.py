@@ -23,6 +23,8 @@ PASSING = 'Passing to ' + LABEL + '...'
 DEFAULTS = dict(model='provider-default', access='allow')
 # Copilot expands its own slash commands in-session; no transport switch.
 NATIVE_HANDOFF = False
+# Copilot signs in with the first of these that is set, before its own /login: an expired one fails every turn.
+TOKEN_VARIABLES = ('COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN')
 command_request = native_commands.command_request
 
 

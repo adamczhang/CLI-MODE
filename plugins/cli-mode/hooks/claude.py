@@ -241,7 +241,7 @@ def handle(event, root=None):
             saved['helpMenu'] = None
         store, state, decision, worker, cancellation = route.decide(event, root, workspace=workspace(event),
                                                                     capture=capture)
-    if name == 'UserPromptSubmit' and task_through_settings(state, prompt):
+    if name == 'UserPromptSubmit' and route.task_through_settings(state, prompt):
         # An explicit /d task typed while Agent Settings is open is a task, not a menu reply (a user was
         # asked to close the menu and send it again): the menu closes and the task goes to the agent.
         with store.edit() as saved:
@@ -251,15 +251,6 @@ def handle(event, root=None):
     if name == 'SessionStart':
         return session_start(event, root, state, decision)
     return prompt_reply(event, root, state, decision, worker, cancellation)
-
-
-def task_through_settings(state, prompt):
-    """True for a Direct task (/d with text) typed while the active agent's settings menu is open."""
-    from state import direct_payload, routing_mode
-    pending = state.get('pending') or {}
-    return bool(state.get('active') and pending.get('stage') == 'menu'
-                and (pending.get('phase') == 'settings' or pending.get('tuning'))
-                and routing_mode(state) == 'direct' and (direct_payload(prompt) or '').strip())
 
 
 def pre_tool_use(event, root):
@@ -305,8 +296,9 @@ def approve(event, text, root):
             or ' '.join(quote(token) for token in tokens) != text):
         return None
     access = rest[rest.index('--access') + 1:][:1] if '--access' in rest else []
-    if (rest[0] == 'setup-start' and '--approved' in rest) or (rest[0] == 'activate' and access != ['prompt']
-                                                               and '--access' in rest):
+    if ((rest[0] == 'setup-start' and '--approved' in rest) or (rest[0] == 'activate' and access != ['prompt']
+                                                                and '--access' in rest)
+            or (rest[0] in ('tune', 'choose') and widens_access(event, rest, root))):
         # Installing, or letting an agent act without asking: the user's yes comes from Claude Code itself.
         return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'ask',
                                        'permissionDecisionReason': 'CLI-MODE ' + (
@@ -314,6 +306,46 @@ def approve(event, text, root):
                                            'activates the agent with wider access') + '; this needs your yes.'}}
     return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
                                    'permissionDecisionReason': 'CLI-MODE controller command for this session.'}}
+
+
+def widens_access(event, rest, root):
+    """True when a `tune --phase access` or an access-menu `choose` would give the agent wider access than it has.
+
+    `/cli access allow` and the settings access menu reach the controller as these commands, not as
+    `activate --access`, so the target level comes from the saved turn: the typed choice, or the menu row.
+    Unreadable state asks rather than allows.
+    """
+    try:
+        import frontends
+        import route
+        store = route.Store(event['session_id'], workspace(event), root)
+        state = store.read()
+        pending = state.get('pending') or {}
+        if rest[0] == 'tune':
+            if rest[rest.index('--phase') + 1:][:1] != ['access']:
+                return False
+            choice = ((state.get('turnRoute') or {}).get('choice') or '').strip()
+            if not choice:
+                return False  # No choice typed: it only opens the access menu.
+            agent = state.get('backend') or pending.get('backend')
+            options = frontends.phase_options(store.root, agent, 'access', state.get('settings'))
+            matches = frontends.match_choice(options, choice, 'access')
+            if len(matches) != 1:
+                return False  # Ambiguous or unknown: the controller shows the menu instead.
+            target = matches[0]
+        else:
+            if pending.get('phase') != 'access' or not rest[1:2] or not rest[1].isdigit():
+                return False
+            choices = pending.get('choices') or []
+            number = int(rest[1])
+            if not 1 <= number <= len(choices):
+                return False
+            target = choices[number - 1]['value']
+        current = (state.get('settings') or {}).get('access') if state.get('active') else 'prompt'
+        order = frontends.ACCESS_ORDER  # Widest first.
+        return target in order and (current not in order or order.index(target) < order.index(current))
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, IndexError):
+        return True
 
 
 def state_path(event, root):
@@ -432,6 +464,16 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
         return instant(event, root, 'frontend', '--agent', 'home')
     if kind == 'frontend':
         return instant(event, root, 'frontend', '--agent', adapter.ID)
+    if kind == 'settings' and not re.match(r'(?i)\s*[/$]cli(-mode:cli)?\b', event.get('prompt', '')):
+        # A reply the open settings page does not take (a task typed after a routing change, say): it stays
+        # here, so say so instead of silently showing the page again.
+        try:
+            result = controller(event, root, 'settings')
+        except (OSError, ValueError, KeyError, RuntimeError) as exc:
+            return show_text(event, 'CLI-MODE: ' + str(exc))
+        result['message'] = ('Agent Settings is open, so that message was not sent to ' + adapter.LABEL + '. Reply '
+                             'with a number from the menu, or X to close it, then send your message again.')
+        return show_result(event, result)
     if kind in ('settings', 'settings-dismiss'):
         return instant(event, root, 'settings', *(['--dismiss'] if kind == 'settings-dismiss' else []))
     if kind == 'mode':

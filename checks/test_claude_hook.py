@@ -345,6 +345,15 @@ class Relay(ClaudeHook):
     def test_a_d_task_goes_through_an_open_setting_list(self):
         self.task_through('/cli menu', '1')  # The model list reached from the settings page.
 
+    def test_a_message_the_open_settings_page_does_not_take_is_reported_not_dropped(self):
+        """After a routing change Agent Settings stays open; a task typed then was silently lost (validation)."""
+        self.activate('passthrough')
+        self.prompt('/cli menu')
+        reply = self.prompt('Reply with only the word early.')['reason']
+        self.assertIn('Agent Settings', reply)
+        self.assertIn('Agent Settings is open, so that message was not sent to Antigravity', reply)
+        self.assertNotIn('not sent', self.prompt('/cli menu')['reason'])  # Its own controls get no note.
+
     def test_settings_replies_still_answer_the_menu(self):
         self.activate('direct')
         self.prompt('/cli menu')
@@ -428,6 +437,29 @@ class Approval(ClaudeHook):
                 output = claude.handle(event, self.data)['hookSpecificOutput']
                 self.assertEqual(output['permissionDecision'], 'ask')
                 self.assertIn('CLI-MODE', output['permissionDecisionReason'])
+
+    def decision(self, text):
+        event = dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='PreToolUse', tool_name='Bash',
+                     tool_input={'command': text})
+        return claude.handle(event, self.data).get('hookSpecificOutput', {}).get('permissionDecision')
+
+    def test_widening_access_from_settings_asks_and_narrowing_does_not(self):
+        """C7: /cli access allow and the access menu reach the controller as tune/choose, not activate."""
+        control = Controller(self.store(), self.backend)
+        control.frontend()
+        control.activate('gemini-3.8-flash-high', 'prompt')
+        tune = self.command('tune', '--phase', 'access', '--apply')
+        self.prompt('/cli access allow')
+        self.assertEqual(self.decision(tune), 'ask')
+        self.prompt('/cli access prompt')
+        self.assertEqual(self.decision(tune), 'allow')  # Same level: nothing widens.
+        self.prompt('/cli access')  # No choice typed: it only opens the access menu.
+        self.assertEqual(self.decision(tune), 'allow')
+        self.prompt('/cli menu')
+        self.prompt('3')  # Change access: the numbered access list.
+        choices = [item['value'] for item in self.store().read()['pending']['choices']]
+        self.assertEqual(self.decision(self.command('choose', str(choices.index('allow') + 1))), 'ask')
+        self.assertEqual(self.decision(self.command('choose', str(choices.index('prompt') + 1))), 'allow')
 
     def test_anything_else_keeps_claude_codes_normal_permissions(self):
         good = self.command('queue')

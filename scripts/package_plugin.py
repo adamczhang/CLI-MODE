@@ -21,11 +21,12 @@ import sys
 import zipfile
 
 
-# Codex runs Windows hooks as `cmd.exe /C "<command>"`. This command has no
-# quotes, spaces or %VARIABLES% for cmd.exe to mangle: Python reads PLUGIN_ROOT
-# itself, so plugin paths with spaces or '&' work, without starting PowerShell.
-WINDOWS_HOOK = ("python -c __import__('runpy').run_path(__import__('os').environ['PLUGIN_ROOT']"
-                "+'/hooks/route.py',run_name='__main__')")
+# Codex has run Windows hooks through cmd.exe (`cmd.exe /C "<command>"`) and, from 0.155, through
+# PowerShell. The command parses the same in both: one double-quoted Python argument, with no $, %,
+# backtick or double quote inside it. Python reads PLUGIN_ROOT itself, so plugin paths with spaces or
+# '&' work.
+WINDOWS_HOOK = ('python -c "import os,runpy;runpy.run_path(os.environ[\'PLUGIN_ROOT\']'
+                '+\'/hooks/route.py\',run_name=\'__main__\')"')
 # Claude Code runs the hook directly (exec form), so a path needs no quoting.
 CLAUDE_HOOK = dict(type='command', command='python', args=['${CLAUDE_PLUGIN_ROOT}/hooks/claude.py'])
 CLAUDE_EVENTS = {'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Stop'}

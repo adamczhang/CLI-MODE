@@ -259,14 +259,16 @@ Once any passthrough starts, its operation/event path replaces the pending route
 Compaction resumes observing or relaying that result; it must never resend the
 original task. Completed setup restores active mode instead of a nonexistent menu.
 
-Windows uses the documented JSON `commandWindows` override. Codex runs it as
-`cmd.exe /C "<command>"`; the command is a quote-free `python -c` that reads
-`PLUGIN_ROOT` from the environment and runs `hooks/route.py` as `__main__`, so no
-quoting, spaces or `&` in the plugin path can break it and no PowerShell starts on
-each prompt. Hook stdin passes through and the exit code propagates. The builder
-verifies the exact command. Wrapper tests run it as Codex does and under other
-`cmd.exe` forms, with spaces and `&` in the plugin path; they do not establish
-installed Desktop hook execution or trust. See the official hooks documentation below.
+Windows uses the documented JSON `commandWindows` override. Codex has run it as
+`cmd.exe /C "<command>"` and, from 0.155, through PowerShell; the command is one
+`python -c "..."` argument with no `$`, `%` or inner double quote, so both shells
+pass it unchanged. Python reads `PLUGIN_ROOT` from the environment and runs
+`hooks/route.py` as `__main__`, so spaces or `&` in the plugin path cannot break it.
+Hook stdin passes through and the exit code propagates. The builder verifies the
+exact command. Wrapper tests run it under `cmd.exe` forms (including Codex's) and
+under PowerShell 7 and 5.1, with spaces and `&` in the plugin path; they do not
+establish installed Desktop hook execution or trust. See the official hooks
+documentation below.
 
 Installation and hook trust are separate user actions. Before activation verify
 Full Access via hostAccess and a fresh hookSeen from this plugin/task. Review and

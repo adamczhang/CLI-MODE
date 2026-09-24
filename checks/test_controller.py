@@ -252,6 +252,34 @@ class Tests(unittest.TestCase):
                 self.assertFalse(state['active'])
                 self.assertFalse(state['owned'])
 
+    def test_copilot_readiness_failure_names_a_token_that_overrides_its_login(self):
+        def refusal(*args, **kwargs):
+            kwargs['output']({'type': 'message', 'text': 'Error: Authorization error. Your credentials may be expired.'})
+            return {'stopReason': 'end_turn'}
+        for present, expected in ((True, 'GH_TOKEN is set, and Copilot signs in with it'), (False, None)):
+            with self.subTest(tokenSet=present):
+                self.control.frontend('copilot')
+                clean = {k: v for k, v in os.environ.items() if k not in ('COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN')}
+                with patch.dict(os.environ, dict(clean, **({'GH_TOKEN': 'x'} if present else {})), clear=True), \
+                     patch.object(self.control, 'prompt', side_effect=refusal), \
+                     patch.object(self.backend, 'verify', return_value='readiness-test-provider'):
+                    with self.assertRaises(RuntimeError) as caught:
+                        self.control.activate('provider-default', 'allow', agent='copilot')
+                message = str(caught.exception)
+                self.assertIn('Authorization error', message)
+                if expected:
+                    self.assertIn(expected, message)
+                else:
+                    self.assertNotIn('TOKEN', message)
+
+    def test_node_warnings_never_stand_for_the_error(self):
+        import acpx
+        err = ('(node:8116) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true\n'
+               '(Use `node --trace-deprecation ...` to show where the warning was created)\n'
+               'Error: No authentication information found.')
+        self.assertEqual(acpx.without_node_warnings(err), 'Error: No authentication information found.')
+        self.assertEqual(acpx.without_node_warnings(''), '')
+
     def test_persisted_commands_are_loaded_without_a_stream_update(self):
         original = self.backend.metadata
         def metadata(owned):
@@ -479,6 +507,31 @@ class Tests(unittest.TestCase):
         self.assertIn('-menu.html" commands`', context)
         self.assertEqual(self.store.read()['helpMenu'], 'commands')
         self.assertTrue(self.store.read()['active'])
+
+    def test_activation_menu_replies_get_exact_commands(self):
+        """Codex: 1 and 2 on an agent's activation menu map to their controls, as on Claude Code (Phase 3 finding)."""
+        self.control.first_time_check(check=lambda agent: dict(confirmed=True, checks=[]))
+        hook.handle(self.event(prompt='/cli agy'), self.store.root)
+        self.control.frontend('agy')  # What Codex runs for that turn.
+        self.assertEqual(self.store.read()['pending']['phase'], 'activation')
+        context = hook.handle(self.event(prompt='2'), self.store.root)['hookSpecificOutput']['additionalContext']
+        self.assertIn('options --phase model --agent agy`', context)
+        self.assertNotIn('treat the user reply as setup', context)
+        context = hook.handle(self.event(prompt='yes'), self.store.root)['hookSpecificOutput']['additionalContext']
+        self.assertTrue('activate --agent agy`' in context or 'frontend --agent agy`' in context, context)
+
+    def test_direct_task_typed_in_open_settings_goes_to_the_agent(self):
+        """Codex: /d with Agent Settings open closes the menu and sends the task, as on Claude Code (E6)."""
+        self.activate()
+        self.control.mode('direct')
+        hook.handle(self.event(prompt='/cli menu'), self.store.root)
+        self.control.settings_menu()  # What Codex runs for that turn.
+        self.assertEqual(self.store.read()['pending']['phase'], 'settings')
+        hook.handle(self.event(prompt='/d Reply with only the word menu.'), self.store.root)
+        state = self.store.read()
+        self.assertIsNone(state['pending'])
+        self.assertEqual(state['turnRoute']['route'], 'direct')
+        self.assertIn(state['turnRoute']['requestId'], state['requests'])
 
     def test_pending_setup_is_not_delegated(self):
         self.activate()
