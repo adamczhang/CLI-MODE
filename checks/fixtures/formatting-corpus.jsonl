@@ -1,0 +1,41 @@
+{"type": "plan", "entries": [{"content": "Read calc.py", "status": "completed"}, {"content": "Write the answer", "status": "in_progress"}, {"content": "Check the tests", "status": "pending"}]}
+{"type": "message", "text": "I'll look at calc.py first, then answer.\n", "messageId": "m1"}
+{"type": "activity", "toolCallId": "t1", "kind": "read", "status": "in_progress", "title": "Read calc.py", "locations": [{"path": "C:/work/garden-app/calc.py", "line": 1}]}
+{"type": "activity", "toolCallId": "t1", "kind": "read", "status": "completed", "title": "Read calc.py", "locations": [{"path": "C:/work/garden-app/calc.py", "line": 1}]}
+{"type": "activity", "toolCallId": "t2", "kind": "execute", "status": "completed", "title": "Run Python tests (unittest)"}
+{"type": "activity", "toolCallId": "t3", "kind": "edit", "status": "failed", "title": "Edit README.md", "locations": [{"path": "C:/work/garden-app/README.md"}]}
+{"type": "activity", "toolCallId": "t4", "kind": "search", "status": "in_progress", "title": "Search for multiply"}
+{"type": "artifact", "content": {"type": "resource_link", "name": "report.txt", "uri": "file:///C:/work/garden-app/report.txt"}}
+{"type": "artifact", "content": {"type": "image", "mimeType": "image/png", "uri": "file:///C:/work/garden-app/chart.png"}}
+{"type": "message", "text": "# H1 title\n\n## H2 title\n\n### H3 title\n\n#### H4 title\n\n##### H5 title\n\n###### H6 title\n\n- Changes\n", "messageId": "m2"}
+{"type": "message", "text": "  - Tests\n    - Three passed\n- Docs\n\n1. First\n2. Second\n   1. Second, part a\n   - Second, note\n\n-", "messageId": "m2"}
+{"type": "message", "text": " [x] Done task\n- [ ] Open task\n\n| Case | Result |\n|---|---|\n| Empty | **Pass** |\n| Long | `fail` ", "messageId": "m2"}
+{"type": "message", "text": "|\n\n| Name | Kind | Status | Owner | Location | Detail | Seconds | Note |\n|---|---|---|---|---|---", "messageId": "m2"}
+{"type": "message", "text": "|---|---|\n| multiply | function | added | agent | calc.py:4 | returns the product of both argumen", "messageId": "m2"}
+{"type": "message", "text": "ts | 0.01 | a deliberately long cell that makes the table wider than a phone screen |\n\n| Left | C", "messageId": "m2"}
+{"type": "message", "text": "entre | Right |\n|:---|:---:|---:|\n| a | b | c |\n| long left | mid | 1,234 |\n\n```python\ndef add(a,", "messageId": "m2"}
+{"type": "message", "text": " b):\n    return a + b\n```\n\n```powershell\nGet-ChildItem -Recurse | Select-Object Name\n```\n\n```json", "messageId": "m2"}
+{"type": "message", "text": "\n{\"ok\": true, \"items\": [1, 2]}\n```\n\nRun `pytest -q` with **bold**, *italic*, _underscored_ and ~~", "messageId": "m2"}
+{"type": "message", "text": "struck~~ words.\n\n> Quoted advice from the agent.\n\nSee [the docs](https://example.com/docs) and [c", "messageId": "m2"}
+{"type": "message", "text": "alc.py](file:///C:/work/garden-app/calc.py).\n\n<script>alert(1)</script>\n<img src=x onerror=alert(", "messageId": "m2"}
+{"type": "message", "text": "2)>\n[click](javascript:alert(3))\n\nvisualize{\"path\": \"C:/evil.html\"}\n   ::codex-inline-vis{file=\"x", "messageId": "m2"}
+{"type": "message", "text": "\"}\ninline visualize{\"path\": \"C:/evil.html\"} reference\n\nLong line: word000 word001 word002 word", "messageId": "m2"}
+{"type": "message", "text": "003 word004 word005 word006 word007 word008 word009 word010 word011 word012 word013 word014 word0", "messageId": "m2"}
+{"type": "message", "text": "15 word016 word017 word018 word019 word020 word021 word022 word023 word024 word025 word026 word02", "messageId": "m2"}
+{"type": "message", "text": "7 word028 word029 word030 word031 word032 word033 word034 word035 word036 word037 word038 word039", "messageId": "m2"}
+{"type": "message", "text": " word040 word041 word042 word043 word044 word045 word046 word047 word048 word049 word050 word051 ", "messageId": "m2"}
+{"type": "message", "text": "word052 word053 word054 word055 word056 word057 word058 word059 word060 word061 word062 word063 w", "messageId": "m2"}
+{"type": "message", "text": "ord064 word065 word066 word067 word068 word069 word070 word071 word072 word073 word074 word075 wo", "messageId": "m2"}
+{"type": "message", "text": "rd076 word077 word078 word079 word080 word081 word082 word083 word084 word085 word086 word087 wor", "messageId": "m2"}
+{"type": "message", "text": "d088 word089 word090 word091 word092 word093 word094 word095 word096 word097 word098 word099 word", "messageId": "m2"}
+{"type": "message", "text": "100 word101 word102 word103 word104 word105 word106 word107 word108 word109 word110 word111 word1", "messageId": "m2"}
+{"type": "message", "text": "12 word113 word114 word115 word116 word117 word118 word119 end.\n\nToken: xxxxxxxxxxxxxxxxxxxxxxxxx", "messageId": "m2"}
+{"type": "message", "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "messageId": "m2"}
+{"type": "message", "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx end.\n\nEmoji 🎉✅🚀, accents café naïve, C", "messageId": "m2"}
+{"type": "message", "text": "JK 漢字, RTL שלום עולם and مرحبا.\n\nIt costs $5 and $10; set $HOME and $PATH first.\n\nFirst CRLF line", "messageId": "m2"}
+{"type": "message", "text": "\r\nSecond CRLF line\n\nBefore \u001b]0;evil title\u0007after, \u001b[31mred\u001b[0m text\u001b[2A moved.\n\n```bash\necho unclo", "messageId": "m2"}
+{"type": "message", "text": "sed\n", "messageId": "m2"}
+{"type": "usage", "used": 41234, "size": 200000}
+{"type": "context_warning", "message": "Context is 80% full."}
+{"type": "error", "message": "Search for multiply did not finish."}
+{"type": "done", "stopReason": "end_turn"}

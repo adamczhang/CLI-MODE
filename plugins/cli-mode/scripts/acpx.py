@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -22,6 +23,13 @@ MIN_NODE = (22, 13, 0)
 BRIDGE = Path(__file__).with_name('acpx-runtime.mjs')
 # package.json + package-lock.json that setup installs with `npm ci`.
 RUNTIME_SPEC = Path(__file__).resolve().parents[1] / 'runtime' / 'acpx'
+# Node's own warnings ("(node:1234) [DEP0190] DeprecationWarning: ..." and its "(Use `node --trace-...`" hint).
+NODE_WARNING = re.compile(r'^\((node:\d+\)|Use `node --trace-)')
+
+
+def without_node_warnings(text):
+    """A child's stderr without Node's warning lines, which otherwise stand where the real reason should."""
+    return '\n'.join(line for line in (text or '').strip().splitlines() if not NODE_WARNING.match(line.strip())).strip()
 
 
 def owned_root():
@@ -456,8 +464,8 @@ class AcpxBackend:
                 pass  # A descendant may still hold pipes; do not wait indefinitely.
             raise RuntimeError('ACPX control timed out. Inspect owned status before retrying.')
         if process.returncode:
-            # Controls contain no user prompt or thought stream.
-            raise RuntimeError((err.strip() or out.strip() or 'ACPX failed')[-3000:])
+            # Controls contain no user prompt or thought stream. Node's own warnings would hide the reason.
+            raise RuntimeError((without_node_warnings(err) or out.strip() or 'ACPX failed')[-3000:])
         try:
             return json.loads(out)
         except json.JSONDecodeError:

@@ -7,7 +7,7 @@
             "type": "command",
             "command": "python3 \"${PLUGIN_ROOT}/hooks/route.py\"",
             "timeout": 15,
-            "commandWindows": "python -c __import__('runpy').run_path(__import__('os').environ['PLUGIN_ROOT']+'/hooks/route.py',run_name='__main__')"
+            "commandWindows": "python -c \"import os,runpy;runpy.run_path(os.environ['PLUGIN_ROOT']+'/hooks/route.py',run_name='__main__')\""
           }
         ]
       }
@@ -19,7 +19,7 @@
             "type": "command",
             "command": "python3 \"${PLUGIN_ROOT}/hooks/route.py\"",
             "timeout": 15,
-            "commandWindows": "python -c __import__('runpy').run_path(__import__('os').environ['PLUGIN_ROOT']+'/hooks/route.py',run_name='__main__')"
+            "commandWindows": "python -c \"import os,runpy;runpy.run_path(os.environ['PLUGIN_ROOT']+'/hooks/route.py',run_name='__main__')\""
           }
         ]
       }
@@ -32,7 +32,7 @@
             "type": "command",
             "command": "python3 \"${PLUGIN_ROOT}/hooks/route.py\"",
             "timeout": 15,
-            "commandWindows": "python -c __import__('runpy').run_path(__import__('os').environ['PLUGIN_ROOT']+'/hooks/route.py',run_name='__main__')"
+            "commandWindows": "python -c \"import os,runpy;runpy.run_path(os.environ['PLUGIN_ROOT']+'/hooks/route.py',run_name='__main__')\""
           }
         ]
       }

@@ -21,6 +21,27 @@ def delegated_turn(state):
                                 state.get('turnRoute', {}).get('route') in ('direct', 'direct-result'))
 
 
+def task_through_settings(state, prompt):
+    """True for a Direct task (/d with text) typed while the active agent's settings menu is open."""
+    from state import direct_payload
+    pending = state.get('pending') or {}
+    return bool(state.get('active') and pending.get('stage') == 'menu'
+                and (pending.get('phase') == 'settings' or pending.get('tuning'))
+                and routing_mode(state) == 'direct' and (direct_payload(prompt) or '').strip())
+
+
+def activation_reply(state, prompt):
+    """(agent, answer) for a 1/Yes or 2 reply to an agent's activation menu, else None."""
+    pending = state.get('pending') or {}
+    agent = pending.get('backend') or pending.get('entrypoint')
+    answer = prompt.strip().casefold()
+    answer = '1' if answer in ('1', 'yes', 'y') else answer
+    if (pending.get('phase') == 'activation' and pending.get('stage') == 'menu' and not pending.get('onboarding')
+            and agent and agent != 'home' and answer in ('1', '2')):
+        return agent, answer
+    return None
+
+
 def handle(event, root=None):
     name = event['hook_event_name']
     if name == 'PreToolUse':
@@ -33,6 +54,12 @@ def handle(event, root=None):
     if name not in ('SessionStart', 'UserPromptSubmit'):
         return {}
     store, state, decision, worker, cancellation = decide(event, root)
+    if name == 'UserPromptSubmit' and task_through_settings(state, event.get('prompt', '')):
+        # An explicit /d task typed while Agent Settings is open is a task, not a menu reply: the menu closes
+        # and the task goes to the agent (as on Claude Code).
+        with store.edit() as saved:
+            saved['pending'] = None
+        store, state, decision, worker, cancellation = decide(event, root)
     return codex_output(event, store, state, decision, worker, cancellation)
 
 
@@ -315,6 +342,19 @@ def codex_output(event, store, state, decision, worker, cancellation):
                         if request_id else 'Read its saved public events and relay the existing result. ') +
                        'Inspect uncertain completion instead of retrying. Dispatch record: ' +
                        json.dumps({key: decision.get(key) for key in ('requestId', 'operation', 'events')}))
+    elif kind == 'setup' and activation_reply(state, event.get('prompt', '')):
+        # The activation menu's own choices, mapped to their exact controls (as on Claude Code).
+        agent, answer = activation_reply(state, event.get('prompt', ''))
+        import frontends
+        if answer == '2':
+            instruction = ('Run ' + run('options --phase model --agent ' + agent, menu=True) + ' and display the returned '
+                           'model menu; the user replies with a number. Do not activate yet or forward this reply.')
+        elif frontends.routing_readiness(state)['ready']:
+            instruction = ('Run ' + run('activate --agent ' + agent, message=True) + '. It activates ' + label + ' with the '
+                           'settings on its menu, sending one readiness prompt, which can take a minute: give it a timeout '
+                           'of at least 120 seconds. It returns activation.messageView: show it by its reference line.')
+        else:  # 1 is Recheck routing on this page.
+            instruction = 'Run ' + run('frontend --agent ' + agent, menu=True) + ' and display its returned menu.'
     elif kind == 'setup' or (kind == 'restore' and state.get('pending')):
         instruction = 'A setup menu is pending. Restore its saved phase/draft and treat the user reply as setup, not agent work. Do not forward it.'
     elif kind == 'direct' and state['active']:

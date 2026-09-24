@@ -3,17 +3,24 @@
 Only the installed copy runs. Before starting, the build, the installed marketplace
 folder and Claude Code's cache must be identical. Every turn uses the desktop app's
 own Claude Code with your real configuration (no --plugin-dir, no CLAUDE_CONFIG_DIR,
-no CLI_MODE_* variables). After each turn it asserts:
+no CLI_MODE_* variables) and, like the desktop app, bypassPermissions. After each turn
+it asserts:
 - the hook that answered was the installed copy (state's hookSeen.plugin);
 - every controller command Claude ran points into the installed copy;
 - no permission denials, no subagents, no commands other than CLI-MODE's controller.
 
-It spends real quota: Claude turns on your plan, and the agent's own account.
-Evidence (every turn's events) goes to %TEMP%\\cli-mode-user-validation-<time>.
+The steps are the shared scenario in validation_scenarios.py (the Codex harness runs the
+same ones): --depth full for every step, smoke for bind, one relayed coding turn, a model
+change and stop. --extras adds the Claude-only checks (plan 2d): reset, long, attach,
+permission, viewer, format, compact.
 
-    python checks/claude_user_validation.py [--agent codex] [--keep]
+It spends real quota: Claude turns on your plan, and the agent's own account.
+Evidence (every turn's events, summary.json) goes to %TEMP%\\cmv\\claude-<agent>-<time>.
+
+    python checks/claude_user_validation.py [--agent codex] [--depth full|smoke] [--extras ...] [--keep]
 """
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -26,14 +33,17 @@ import tempfile
 import time
 import uuid
 
+import validation_scenarios as scenarios
+
 PROJECT = Path(__file__).resolve().parents[1]
 INSTALLED = Path(os.path.expandvars(r'%LOCALAPPDATA%\CLI-MODE\claude-marketplace\plugins\cli-mode'))
 CACHE = Path.home() / '.claude' / 'plugins' / 'cache' / 'cli-mode' / 'cli-mode'
 DATA = Path.home() / '.claude' / 'plugins' / 'data' / 'cli-mode-cli-mode'
-OPTION = re.compile(r'^\|?\s*(\d+)\.\s+(.+?)\s*\|?\s*$')
 VERSION = json.loads((PROJECT / 'plugins/cli-mode/.codex-plugin/plugin.json').read_text(encoding='utf-8'))[
     'version'].split('+')[0]
 BUILD = PROJECT / 'dist' / ('cli-mode-claude-' + VERSION) / 'plugins' / 'cli-mode'
+AGENTS = ('codex', 'copilot', 'agy', 'grok-build', 'claude', 'cursor')
+EXTRAS = ('reset', 'long', 'attach', 'permission', 'viewer', 'format', 'compact')
 
 
 def fingerprint(root):
@@ -45,7 +55,11 @@ def fingerprint(root):
 
 
 def desktop_claude():
-    versions = sorted(Path(os.environ['APPDATA'], 'Claude', 'claude-code').glob('*/claude.exe'),
+    # The Store (MSIX) app's %APPDATA% is virtualized: outside the app it lives in the package's LocalCache.
+    roots = [Path(os.environ['APPDATA'], 'Claude', 'claude-code')] + [
+        package / 'LocalCache' / 'Roaming' / 'Claude' / 'claude-code'
+        for package in Path(os.environ['LOCALAPPDATA'], 'Packages').glob('Claude_*')]
+    versions = sorted((found for root in roots for found in root.glob('*/claude.exe')),
                       key=lambda path: [int(part) for part in path.parent.name.split('.') if part.isdigit()])
     return str(versions[-1]) if versions else shutil.which('claude')
 
@@ -55,10 +69,13 @@ def norm(path):
 
 
 class Session:
-    def __init__(self, binary, project, evidence):
+    host = 'claude-code'
+
+    def __init__(self, binary, project, evidence, bypass=True):
         self.binary, self.project, self.evidence = binary, project, evidence
         self.id = str(uuid.uuid4())
         self.started = False
+        self.bypass = bypass
         self.spent = 0.0
         self.turns = []
         self.env = {key: value for key, value in os.environ.items()
@@ -66,19 +83,32 @@ class Session:
 
     def state(self):
         path = DATA / 'sessions' / (hashlib.sha256(self.id.encode()).hexdigest() + '.json')
-        return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
+        try:
+            return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
+        except ValueError:
+            return {}
 
-    def send(self, prompt, scenario, kill_after=None, extra=()):
-        args = [self.binary, '-p', prompt, '--output-format', 'stream-json', '--verbose',
+    def state_file(self):
+        return DATA / 'sessions' / (hashlib.sha256(self.id.encode()).hexdigest() + '.json')
+
+    def send(self, prompt, scenario, kill_after=None, extra=(), content=None):
+        """One `claude -p` turn. `content` sends a full user message (text and images) as stream-json."""
+        args = [self.binary, '-p', *([] if content else [prompt]), '--output-format', 'stream-json', '--verbose',
                 '--resume' if self.started else '--session-id', self.id, *extra]
+        if self.bypass:
+            args += ['--permission-mode', 'bypassPermissions']
+        if content:
+            args += ['--input-format', 'stream-json']
         self.started = True
         began = time.monotonic()
-        process = subprocess.Popen(args, cwd=self.project, env=self.env, stdin=subprocess.DEVNULL,
+        process = subprocess.Popen(args, cwd=self.project, env=self.env,
+                                   stdin=subprocess.PIPE if content else subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                    errors='replace')
         killed = False
+        feed = (json.dumps(dict(type='user', message=dict(role='user', content=content))) + '\n') if content else None
         try:
-            out, err = process.communicate(timeout=kill_after or 900)
+            out, err = process.communicate(feed, timeout=kill_after or 900)
         except subprocess.TimeoutExpired:
             # Simulate the user stopping or closing mid-relay: end Claude Code and its shell children.
             subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True)
@@ -113,7 +143,8 @@ class Session:
         turn = dict(scenario=scenario, prompt=prompt, seconds=round(time.monotonic() - began, 1), killed=killed,
                     modelTurns=final.get('num_turns'), costUsd=round(max(total - self.spent, 0), 4),
                     denials=final.get('permission_denials') or [], tools=tools, texts=texts, errors=errors,
-                    result=final.get('result') or '', problems=[], notes=[])
+                    result=final.get('result') or '', problems=[], notes=[], parts=parts,
+                    controllerCalls=sum(tool['name'] in ('Bash', 'PowerShell') for tool in tools))
         self.spent = max(self.spent, total)
         state = self.state()
         turn['route'] = (state.get('turnRoute') or {}).get('route')
@@ -163,26 +194,15 @@ class Session:
         titles and names (LaTeX in Claude Code's chat) read as the bold words they display."""
         return plain('\n\n'.join(turn['texts']) or turn['result'])
 
+    def words(self, request):
+        return agent_words(self, request)
+
 
 def plain(text):
     """Posted text with the installed plugin's coloured titles turned back into **bold**."""
     sys.path.insert(0, str(INSTALLED / 'scripts'))
     from presentation import plain_strong
     return plain_strong(text)
-
-
-def expect(turn, condition, message):
-    if not condition:
-        turn['problems'].append(message)
-
-
-def options(text):
-    rows = []
-    for line in text.splitlines():
-        match = OPTION.match(line.strip())
-        if match:
-            rows.append((match.group(1), match.group(2).strip()))
-    return rows
 
 
 def agent_words(session, request):
@@ -197,179 +217,227 @@ def agent_words(session, request):
     return relay_view.messages(events, last_only=True).strip()
 
 
+expect = scenarios.expect
+
+
 def verbatim(session, turn, request):
     words = agent_words(session, request)
     turn['notes'].append('agent words: ' + words[:120].replace('\n', ' / '))
     expect(turn, words and words in session.shown(turn), 'agent\'s final words not posted verbatim')
 
 
-def run(agent, keep):
+def agent_label(agent, short=False):
+    return scenarios.LABELS[agent][1 if short else 0]
+
+
+def events_path(session, request):
+    return ((session.state().get('requests') or {}).get(request) or {}).get('events')
+
+
+def viewers(session):
+    """Viewer windows following this session's operations folder."""
+    key = hashlib.sha256(session.id.encode()).hexdigest()
+    script = ("Get-CimInstance Win32_Process -Filter \"Name='pwsh.exe' or Name='powershell.exe'\" | "
+              "Where-Object { $_.CommandLine -like '*viewer.ps1*' } | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }")
+    out = subprocess.run(['powershell', '-NoProfile', '-Command', script], capture_output=True, text=True).stdout
+    return [int(line.split('\t')[0]) for line in out.splitlines() if '\t' in line and key in line]
+
+
+# ---- Plan 2d: Claude-only checks. Each returns result rows for the report.
+
+def row(step, features, turns, extra_problems=()):
+    problems = [p for turn in turns for p in turn['problems']] + list(extra_problems)
+    return dict(step=step, features=features, status='fail' if problems else 'pass', problems=problems,
+                notes=[n for turn in turns for n in turn['notes']])
+
+
+def ensure_active(session, agent):
+    if not session.state().get('active'):
+        session.send('/cli bind ' + agent, 'extras')
+
+
+def extra_reset(session, agent):
+    ensure_active(session, agent)
+    session.state_file().write_text('{not json', encoding='utf-8')
+    a = session.send('/cli menu', 'reset')
+    shown = session.shown(a)
+    scenarios.expect(a, 'could not be read' in shown and '/cli reset' in shown, 'unreadable state not reported with /cli reset')
+    b = session.send('/cli reset', 'reset')
+    scenarios.expect(b, 'set aside' in session.shown(b), 'reset did not set the state aside')
+    scenarios.expect(b, not session.state_file().exists(), 'state file still in place after reset')
+    c = session.send('/cli queue', 'reset')
+    scenarios.expect(c, '/cli to activate' in session.shown(c), 'state after reset is not fresh')
+    for path in session.state_file().parent.glob(session.state_file().name + '.bad-*'):
+        path.unlink()
+    return [row('reset', ['J3'], [a, b, c])]
+
+
+def extra_long(session, agent):
+    ensure_active(session, agent)
+    t = session.send('/d Write a numbered list of 400 short, distinct facts about gardening, one per line, each about '
+                     '15 words. Do not use any tools and do not create files.', 'long answer')
+    request = (session.state().get('turnRoute') or {}).get('requestId')
+    words = agent_words(session, request)
+    shown = session.shown(t)
+    t['notes'].append('answer %d characters; posted %d' % (len(words), len(shown)))
+    scenarios.expect(t, len(words) > 24000, 'answer too short to need parts (%d characters)' % len(words))
+    scenarios.expect(t, t['parts'], 'a long answer did not come in parts')
+    scenarios.expect(t, words[:300] in shown and words[-300:] in shown, 'the long answer was not posted in full')
+    return [row('long', ['F11'], [t])]
+
+
+def extra_attach(session, agent):
+    ensure_active(session, agent)
+    pixel = base64.b64encode(bytes.fromhex(
+        '89504e470d0a1a0a0000000d4948445200000001000000010806000000'
+        '1f15c4890000000d49444154789c6360f8cf00000301010018dd8db00000000049454e44ae426082')).decode()
+    t = session.send('/d Reply with only the word attached.', 'attachment', content=[
+        dict(type='text', text='/d Reply with only the word attached.'),
+        dict(type='image', source=dict(type='base64', media_type='image/png', data=pixel))])
+    shown = session.shown(t)
+    scenarios.expect(t, 'Passing to' in shown, 'the /d with an image was not relayed')
+    scenarios.expect(t, re.search(r'(?i)(did not|didn.t|not) (receive|get|see)', shown), 'no note that the agent did not receive the image')
+    return [row('attach', ['F12'], [t])]
+
+
+def extra_permission(binary, project, evidence, agent):
+    """C7: without bypassPermissions, wider access asks first; headless, the ask is denied."""
+    session = Session(binary, project, evidence / 'permission', bypass=False)
+    session.evidence.mkdir(exist_ok=True)
+    a = session.send('/cli bind ' + agent, 'permission')
+    a['problems'] = [p for p in a['problems'] if not p.startswith('permission denials')]
+    b = session.send('/cli access prompt', 'permission')
+    b['problems'] = [p for p in b['problems'] if not p.startswith('permission denials')]
+    c = session.send('/cli access allow', 'permission')
+    # `/cli access allow` reaches the controller as `tune --phase access --apply`, an access menu as `choose N`.
+    denied = [d for d in c['denials'] if re.search(r'\b(activate|tune --phase access|choose)\b', json.dumps(d))]
+    c['problems'] = [p for p in c['problems'] if not p.startswith('permission denials')]
+    scenarios.expect(c, denied, 'wider access did not ask (no denial headless): ' + json.dumps(c['denials'])[:200])
+    c['notes'].append('bind denials: %d; prompt-access denials: %d' % (len(a['denials']), len(b['denials'])))
+    session.send('/cli stop', 'permission')
+    return [row('permission', ['C7'], [a, b, c])], session
+
+
+def extra_viewer(session, agent):
+    ensure_active(session, agent)
+    a = session.send('/cli view on', 'viewer')
+    scenarios.expect(a, a['modelTurns'] == 0 or 'view' in session.shown(a).casefold(), 'view on not confirmed')
+    b = session.send('/d Reply with only the word view.', 'viewer')
+    time.sleep(2)
+    first = viewers(session)
+    scenarios.expect(b, len(first) == 1, 'a relayed turn opened %d viewer windows' % len(first))
+    c = session.send('/d Reply with only the word again.', 'viewer')
+    second = viewers(session)
+    scenarios.expect(c, len(second) == 1, 'a second turn left %d viewer windows' % len(second))
+    d = session.send('/cli view off', 'viewer')
+    time.sleep(4)
+    left = viewers(session)
+    scenarios.expect(d, not left, 'view off left %d viewer windows' % len(left))
+    for pid in left:
+        subprocess.run(['taskkill', '/PID', str(pid), '/F'], capture_output=True)
+    return [row('viewer', ['L1', 'L2', 'L3', 'L8', 'L9'], [a, b, c, d])]
+
+
+def extra_format(session, agent, evidence):
+    import formatting_prompt
+    ensure_active(session, agent)
+    t = session.send('/d ' + formatting_prompt.PROMPT, 'formatting')
+    request = (session.state().get('turnRoute') or {}).get('requestId')
+    raw = '\n\n'.join(t['texts']) or t['result']
+    words = agent_words(session, request)
+    shown = session.shown(t)
+    scenarios.expect(t, words and words in shown, "agent's final words not posted verbatim")
+    scenarios.expect(t, 'It costs $5 and $10.' in raw, 'the agent\'s "$5 and $10" was changed in the posted text')
+    greens = re.findall(r'\$\\color\{228b22\}[^$]*\$', raw)
+    scenarios.expect(t, greens and all(len(span) - 2 <= 60 for span in greens), 'green spans missing or too long')
+    scenarios.expect(t, '**Passing to' in shown and 'says...**' in shown, 'green title lines do not read back as bold')
+    table = next((line for line in words.splitlines() if line.startswith('|')), None)
+    scenarios.expect(t, not table or table in raw, 'the table was not posted verbatim')
+    capture = formatting_prompt.capture(events_path(session, request), evidence / 'format-capture', agent)
+    t['notes'].append('answer checks: ' + json.dumps(capture['answer']))
+    t['notes'].append('LaTeX-risk pairs in agent text (check in Phase 5): ' + json.dumps(capture['latexRisks']))
+    (evidence / 'format-posted.md').write_text(raw, encoding='utf-8')
+    return [row('format', ['P3', 'P2', 'F10'], [t])]
+
+
+def extra_compact(session, agent):
+    ensure_active(session, agent)
+    a = session.send(scenarios.SHORT_TASK, 'compaction', kill_after=10)
+    request = (session.state().get('turnRoute') or {}).get('requestId')
+    b = session.send('/compact', 'compaction')
+    b['notes'].append('compact result: ' + (b['result'] or '')[:160])
+    scenarios.expect(b, session.state().get('active'), 'compaction turned the agent off')
+    scenarios.expect(b, not re.search(r'controller\.py[^\n]* (off|cancel)\b', json.dumps(b['tools'])),
+                     'compaction repeated a cancel or off')
+    c = session.send('/cli resume', 'compaction')
+    words = agent_words(session, request)
+    scenarios.expect(c, words and words in session.shown(c), 'after compaction the interrupted output was not relayed')
+    return [row('compact', ['J2'], [a, b, c])]
+
+
+def run(agent, depth, extras, keep):
     stamp = time.strftime('%Y%m%d-%H%M%S')
-    evidence = Path(tempfile.gettempdir()) / ('cli-mode-user-validation-' + stamp)
-    evidence.mkdir()
+    evidence = Path(tempfile.gettempdir()) / 'cmv' / ('claude-%s-%s-%s' % (agent, depth, stamp))
+    evidence.mkdir(parents=True)
     project = evidence / 'garden-app'
     project.mkdir()
     (project / 'calc.py').write_text('def add(a, b):\n    return a + b\n', encoding='utf-8')
     (project / 'README.md').write_text('# Garden app\n\nTracks planting dates. `calc.py` holds helpers.\n', encoding='utf-8')
     versions = sorted(CACHE.iterdir())
-    copies = {'build': fingerprint(BUILD),
-              'installed': fingerprint(INSTALLED), 'cache': fingerprint(versions[-1])}
+    copies = {'build': fingerprint(BUILD), 'installed': fingerprint(INSTALLED), 'cache': fingerprint(versions[-1])}
     if len(set(copies.values())) != 1:
         raise SystemExit('The three copies differ; reinstall before validating: ' + json.dumps(copies))
     binary = desktop_claude()
     session = Session(binary, project, evidence)
-    say = session.send
-    sys.path.insert(0, str(INSTALLED / 'scripts'))
-    os.environ['CLI_MODE_HOST'] = 'claude-code'
-    import help_view
-    import presentation
-
-    # 1. Menus, as a first-time user of this agent, in the default chat display.
-    t = say('/cli help', 'menus')
-    card = plain(presentation.chat_menu(help_view.render(), True))  # Its title band in green, in the box.
-    expect(t, card in session.shown(t), 'help card not posted exactly (green title band, fenced frame)')
-    t = say('x', 'menus')
-    expect(t, 'Help closed' in session.shown(t), 'help did not close')
-    t = say('/cli', 'menus')
-    home = options(session.shown(t))
-    number = next((n for n, label in home if agent_label(agent) in label), None)
-    expect(t, number, 'agent not on the home menu: ' + json.dumps(home))
-    t = say(number or '1', 'menus')
-    expect(t, 'Agent Settings' in session.shown(t) or 'Setup CLI Agent' in session.shown(t), 'no activation or setup page')
-    t = say('2', 'menus')
-    models = [(n, label) for n, label in options(session.shown(t)) if 'Refresh' not in label]
-    expect(t, models, 'no model list')
-    pick = next(((n, label) for n, label in models if 'current' not in label), models[0] if models else ('1', ''))
-    t = say(pick[0], 'change models')
-    expect(t, options(session.shown(t)), 'no effort list after choosing a model')
-    t = say('1', 'change models')
-    expect(t, options(session.shown(t)), 'no access list after choosing effort')
-    t = say('1', 'change models')
-    expect(t, 'CLI-MODE Activated' in session.shown(t), 'final access choice did not activate')
-    chosen = pick[1].replace('(current)', '').strip()
-    expect(t, chosen.split()[0] in session.shown(t), 'activation card does not show the chosen model ' + chosen)
-
-    # 2. Changing settings while active.
-    t = say('/cli menu', 'change models')
-    expect(t, 'Agent Settings' in session.shown(t) and 'Model:' in session.shown(t), 'settings page missing')
-    t = say('x', 'change models')
-    other = next((label.replace('(current)', '').strip() for n, label in models
-                  if 'current' in label and label.replace('(current)', '').strip() != chosen), None)
-    if other:
-        t = say('/cli model ' + other, 'change models')
-        expect(t, 'CLI-MODE Activated' in session.shown(t) or 'Select Model' in session.shown(t),
-               'direct model change gave neither a confirmation nor the menu')
-    t = say('/cli effort low', 'change models')
-    expect(t, 'Activated' in session.shown(t) or 'Effort' in session.shown(t), 'effort change not confirmed')
-
-    # 3. Emissions and attribution on a real coding task.
-    label = agent_label(agent, short=True)
-    t = say('/d In calc.py add multiply(a, b), create test_calc.py with unittest tests for add and multiply, '
-            'run the tests, and report the result in two sentences.', 'emissions')
-    shown = session.shown(t)
-    expect(t, 'Passing to' in shown, 'no passing line')
-    expect(t, 'says...**' in shown, 'no attribution line')
-    expect(t, ' work:' in shown or ' work ' in shown, 'no work summary line')
-    verbatim(session, t, session.state()['turnRoute'].get('requestId'))
-    expect(t, (project / 'test_calc.py').is_file(), 'the agent did not create test_calc.py')
-    t = say('/cli progress quiet', 'emissions')
-    t = say('/d Run the tests again and reply with the result in one sentence.', 'emissions')
-    expect(t, ' work:' not in session.shown(t), 'quiet mode still showed work lines')
-    verbatim(session, t, session.state()['turnRoute'].get('requestId'))
-    t = say('/cli progress activity', 'emissions')
-
-    # 4. Formatting in both display styles.
-    t = say('/cli display instant', 'formatting')
-    expect(t, t['modelTurns'] == 0 and 'instant replies' in t['result'], 'instant display not confirmed at $0')
-    t = say('/cli menu', 'formatting')
-    expect(t, t['modelTurns'] == 0 and '| CLI-MODE' in t['result'] and '```' not in t['result'],
-           'instant menu not an unfenced frame at $0')
-    t = say('x', 'formatting')
-    t = say('/cli display chat', 'formatting')
-    expect(t, 'normal chat messages' in session.shown(t), 'chat display not confirmed')
-
-    # 5. Losing control mid-relay, resuming it, and queueing behind a running turn.
-    long_task = ('/d Create five files one.txt to five.txt, each holding its own number written as a word, one file '
-                 'at a time; then list the folder and describe what you made in three sentences.')
-    t = say(long_task, 'queue and resume', kill_after=12)
-    first = session.state()['turnRoute'].get('requestId')
-    t['notes'].append('turn stopped after 12 s, as if the user pressed Esc; request ' + str(first))
-    t = say('/cli queue', 'queue and resume')
-    expect(t, first and first[:8] in session.shown(t), 'queue does not list the interrupted request')
-    t = say('/cli resume', 'queue and resume')
-    verbatim(session, t, first)
-    t = say(long_task.replace('five files one.txt to five.txt', 'three files a.txt to c.txt').replace(
-        'its own number', 'its letter'), 'queue and resume', kill_after=10)
-    running = session.state()['turnRoute'].get('requestId')
-    t = say('/d Reply with only the word queued.', 'queue and resume')
-    queued = session.state()['turnRoute'].get('requestId')
-    shown = session.shown(t)
-    expect(t, 'Queued behind' in shown or 'queued' in shown.casefold(), 'the queued request was not reported as queued')
-    verbatim(session, t, queued)
-    # The interrupted request's output comes first, so nothing the agent did goes unseen.
-    verbatim(session, t, running)
-    t = say('/cli queue', 'queue and resume')
-    t = say('/cli resume', 'queue and resume')
-
-    # 6. Direct mode keeps host questions with Claude.
-    before = len(session.state().get('requests') or {})
-    t = say('What is 7 times 6? Reply with just the number.', 'host turns')
-    expect(t, '42' in t['result'] and not t['tools'], 'host question was not answered by Claude alone')
-    expect(t, len(session.state().get('requests') or {}) == before, 'host question was forwarded to the agent')
-
-    # 7 and 8. Closing, error paths and rebinding.
-    t = say('/cli frobnicate', 'errors')
-    expect(t, 'help' in session.shown(t), 'unknown verb gave no hint')
-    t = say('/cli stop', 'closing')
-    state = session.state()
-    expect(t, 'CLI-MODE is off' in session.shown(t), 'no shutdown message')
-    expect(t, not state.get('active') and not state.get('owned'), 'agent still active or owned after stop')
-    t = say('/cli queue', 'closing')
-    expect(t, '/cli to activate' in session.shown(t), 'no inactive hint after stop')
-    t = say('/d hello', 'closing')
-    expect(t, '/cli to activate' in session.shown(t), '/d after stop was not refused')
-    t = say('/cli bind cursor', 'errors')
-    expect(t, not session.state().get('active'), 'a failed bind left an agent active')
-    t['notes'].append('cursor bind reply: ' + session.shown(t)[:200].replace('\n', ' / '))
-    flat = lambda text: ' '.join(text.split())  # noqa: E731  (Markdown may drop a line's trailing space)
-    expect(t, t['errors'] and all(flat('CLI-MODE: ' + error) in flat(session.shown(t)) for error in t['errors']),
-           'bind error not posted exactly as CLI-MODE: <error>')
-    t = say('/cli bind ' + agent, 'closing')
-    expect(t, 'CLI-MODE Activated' in session.shown(t), 'rebind failed')
-    t = say('/cli stop', 'closing')
-    expect(t, not session.state().get('active'), 'second stop left the agent active')
-
-    report = dict(claudeCode=binary, copies=copies, session=session.id, evidence=str(evidence),
-                  totalCostUsd=round(session.spent, 4), turns=len(session.turns))
-    (evidence / 'summary.json').write_text(json.dumps(dict(report, turns_detail=[
-        {key: turn[key] for key in ('scenario', 'prompt', 'route', 'seconds', 'modelTurns', 'costUsd', 'killed',
-                                    'problems', 'notes')} for turn in session.turns]), indent=1), encoding='utf-8')
+    sessions = [session]
+    results = scenarios.run_steps(session, agent, depth) if depth != 'none' else []
+    for name in extras:
+        try:
+            if name == 'permission':
+                rows, other = extra_permission(binary, project, evidence, agent)
+                sessions.append(other)
+            elif name == 'format':
+                rows = extra_format(session, agent, evidence)
+            else:
+                rows = globals()['extra_' + name](session, agent)
+        except Exception as exc:
+            rows = [dict(step=name, features=[], status='fail', problems=['error: %s: %s' % (type(exc).__name__, exc)])]
+        results += rows
+    if session.state().get('active'):
+        session.send('/cli stop', 'cleanup')
+    turns = [turn for each in sessions for turn in each.turns]
+    report = dict(host='claude-code', agent=agent, depth=depth, extras=list(extras), claudeCode=binary, copies=copies,
+                  session=session.id, evidence=str(evidence), totalCostUsd=round(sum(s.spent for s in sessions), 4),
+                  turns=len(turns))
+    (evidence / 'summary.json').write_text(json.dumps(dict(report, results=results, turns_detail=[
+        {key: turn.get(key) for key in ('step', 'scenario', 'prompt', 'route', 'seconds', 'modelTurns', 'costUsd',
+                                        'killed', 'problems', 'notes')} for turn in turns]), indent=1), encoding='utf-8')
     print(json.dumps(report))
-    for index, turn in enumerate(session.turns, 1):
+    for index, turn in enumerate(turns, 1):
         status = 'FAIL ' + '; '.join(turn['problems']) if turn['problems'] else 'ok'
-        print('%02d %-16s %-44s %s %5ss $%-6s %s' % (index, turn['scenario'], turn['prompt'][:44],
-              'hook ' if turn['modelTurns'] == 0 else 'model', turn['seconds'], turn['costUsd'], status))
+        print('%02d %-16s %-44s %s %5ss %s' % (index, turn['scenario'], turn['prompt'][:44].replace('\n', ' '),
+              'hook ' if turn['modelTurns'] == 0 else 'model', turn['seconds'], status))
         for note in turn['notes']:
             print('     note: ' + note[:170])
+    for item in results:
+        if item['status'] == 'skip':
+            print('skip %-14s %s' % (item['step'], item.get('reason')))
     if not keep:
-        key = hashlib.sha256(session.id.encode()).hexdigest()
-        for path in (DATA / 'sessions').glob(key + '*'):
-            path.unlink(missing_ok=True)
+        for each in sessions:
+            key = hashlib.sha256(each.id.encode()).hexdigest()
+            for path in (DATA / 'sessions').glob(key + '*'):
+                path.unlink(missing_ok=True)
         shutil.rmtree(project, ignore_errors=True)
         mangled = re.sub(r'[^A-Za-z0-9]', '-', str(project))
         shutil.rmtree(Path.home() / '.claude' / 'projects' / mangled, ignore_errors=True)
-    return 1 if any(turn['problems'] for turn in session.turns) else 0
-
-
-def agent_label(agent, short=False):
-    names = {'codex': ('Codex CLI', 'Codex'), 'copilot': ('GitHub Copilot CLI', 'Copilot'), 'agy': ('Antigravity CLI',
-             'Antigravity'), 'grok-build': ('Grok Build CLI', 'Grok'), 'claude': ('Claude Code CLI', 'Claude')}
-    return names[agent][1 if short else 0]
+    return 1 if any(item['status'] == 'fail' for item in results) else 0
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--agent', default='codex', choices=('codex', 'copilot', 'agy', 'grok-build'))
+    parser.add_argument('--agent', default='codex', choices=AGENTS)
+    parser.add_argument('--depth', default='full', choices=('full', 'smoke', 'none'))
+    parser.add_argument('--extras', nargs='*', default=[], choices=EXTRAS)
     parser.add_argument('--keep', action='store_true', help='Keep the test project and session state.')
     args = parser.parse_args()
-    raise SystemExit(run(args.agent, args.keep))
+    raise SystemExit(run(args.agent, args.depth, args.extras, args.keep))

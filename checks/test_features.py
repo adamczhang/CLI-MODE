@@ -67,10 +67,13 @@ class Features(unittest.TestCase):
             command = hooks[event][0]['hooks'][0]['commandWindows']
             payload = json.dumps(dict(session_id='windows-fixture', cwd=str(self.root),
                                      hook_event_name=event, prompt='/cli', tool_name='spawn_agent'))
-            invocations = ([os.environ['COMSPEC'], '/C', command],
-                           [os.environ['COMSPEC'], '/D', '/S', '/C', command],
-                           os.environ['COMSPEC'] + ' /C "' + command + '"',   # Codex: raw quoted argument.
+            # cmd.exe takes the command line as written (Python's list quoting would add \" escapes cmd keeps).
+            invocations = (os.environ['COMSPEC'] + ' /C "' + command + '"',   # Codex: raw quoted argument.
+                           os.environ['COMSPEC'] + ' /D /S /C "' + command + '"',
                            command)                                            # No shell at all.
+            # Codex 0.155 runs Windows hooks through PowerShell, where the old quote-free form was a parse error.
+            invocations += tuple([shell, '-NoLogo', '-NoProfile', '-Command', command]
+                                 for shell in (shutil.which('pwsh'), shutil.which('powershell')) if shell)
             for args in invocations:
                 result = subprocess.run(args, input=payload,
                     env=env, cwd=self.root, capture_output=True, text=True, timeout=20)
@@ -90,7 +93,7 @@ class Features(unittest.TestCase):
     def test_windows_hook_propagates_script_failure(self):
         hooks = json.loads((PLUGIN / 'hooks/hooks.json').read_text())['hooks']
         command = hooks['UserPromptSubmit'][0]['hooks'][0]['commandWindows']
-        result = subprocess.run([os.environ['COMSPEC'], '/C', command], input='{broken',
+        result = subprocess.run(os.environ['COMSPEC'] + ' /C "' + command + '"', input='{broken',
             env=dict(self.env, PLUGIN_ROOT=str(PLUGIN)), cwd=self.root, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 2)
         self.assertIn('state could not be restored', json.loads(result.stdout)['systemMessage'])
