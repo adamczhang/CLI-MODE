@@ -51,12 +51,12 @@ Pick your host and run its block in PowerShell.
 **Codex:**
 
 ```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.0
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.1
 codex plugin add cli-mode@cli-mode
 ```
 
-**Claude Code:** download `cli-mode-claude-0.3.0.zip` from the
-[v0.3.0 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.0), extract it, and run:
+**Claude Code:** download `cli-mode-claude-0.3.1.zip` from the
+[v0.3.1 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.1), extract it, and run:
 
 ```powershell
 .\install-claude.ps1
@@ -65,7 +65,7 @@ codex plugin add cli-mode@cli-mode
 Or install it straight from GitHub:
 
 ```powershell
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.0 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.1 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
@@ -75,7 +75,10 @@ autocomplete; see [Claude Code](#claude-code).
 **Using both?** Install both. They share CLI-MODE's ACPX copy and each agent's sign-in, so an agent set up
 for one host is ready in the other. Conversations and settings stay separate per host.
 
-Release **0.3.0** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
+**Upgrading from 0.3.0?** A GitHub install stays on its tag; the [release notes](RELEASE_NOTES.md#upgrading-from-v030)
+show how to move it to 0.3.1 and keep your settings.
+
+Release **0.3.1** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
 
 ## Get started
 
