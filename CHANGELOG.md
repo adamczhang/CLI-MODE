@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Antigravity
+- **Antigravity no longer fills the temp folder.** Its ACP server unpacks about 1.25 GB into `%TEMP%` every time it starts and deletes that copy only when it exits by itself. Ending it, as CLI-MODE does when an agent closes or its idle timeout passes, skipped that clean-up, so every start left a copy behind. The managed launcher now gives each server a temp folder of its own and, on every start, removes the folders of servers that have ended.
+- Copies left by earlier versions stay in `%TEMP%` as `_MEI…` folders of about 1.25 GB each. They can be deleted while no Antigravity agent is running.
+
 ## 0.3.2 — Several named agents — 2026-09-24
 
 ### Several named agents (both hosts)
