@@ -1,38 +1,34 @@
-# CLI-MODE v0.3.2 — Several named agents
+# CLI-MODE v0.3.3 — Antigravity's temp folder
 
 CLI-MODE drives six coding agents (Antigravity, Claude Code, Grok Build, Cursor,
 GitHub Copilot and Codex CLI) from inside **Claude Code** or **Codex**, over ACPX.
 
-**Run several agents at once, each with a name.** `/cli spawn gro` starts Grok
-Build as `GRO-4K`, for example (or `/cli spawn gro ELON` with a name of your
-own), even while other agents work. Up to four run side by side, each with its
-own queue. `/d gro-4k <prompt>` sends to one, `/d gro-4k,cod-7k <prompt>` to
-several at once, and a plain `/d` goes to the current agent. Each answer arrives
-under its agent's name: `Grok GRO-4K says...`.
+**Antigravity no longer fills your temp folder.** Antigravity's ACP server
+unpacks about 1.25 GB into `%TEMP%` every time it starts, and deletes that copy
+only when it exits by itself. CLI-MODE ends it when an agent closes or its idle
+timeout passes, which skipped that clean-up, so every start left another copy
+behind: regular use reached hundreds of gigabytes.
 
-Also in this release, on both hosts:
+Now each Antigravity server unpacks into a temp folder of its own, and every
+start removes the folders of servers that have ended. At most one copy is kept
+between sessions, and it goes at the next start.
 
-- **Change receipts.** In a git repository, each answer ends with what changed
-  in the folder during the turn: files, lines added in green and removed in red.
-  `/cli diff` shows the full diff. Your staging area is never touched.
-- **Agents from earlier sessions.** An agent you didn't close keeps its
-  conversation: `/cli attach` in a new session in the same folder brings it back.
-- **Agent timeout.** An idle agent now stops after 1 hour (was 30 minutes) and
-  restarts on its next `/d`, in the same conversation. `/cli timeout` changes it.
-- **New commands:** `/cli list`, `/cli use <name>`, `/cli close <name|all>`
-  (asks which when several run), `/cli diff`, `/cli timeout`, `/cli attach`.
-  Agents answer to three-letter tags everywhere: `agy`, `cla`, `cod`, `gro`,
-  `cop`, `cur`.
-- **Passthrough mode is removed.** Only `/d` reaches an agent; a conversation
-  saved in Passthrough opens in Direct mode.
-- **Changed:** `/cli bind` (now also `/cli spawn`) and the activation page start
-  a new agent instead of reconfiguring the running one; change a running agent's
-  settings with `/cli menu` or `/cli model|effort|access`.
+**Clearing copies left by earlier versions.** They stay in `%TEMP%` as `_MEI…`
+folders of about 1.25 GB each. With no Antigravity agent running, this lists
+them and their sizes:
 
-On **Claude Code**, an agent's turn runs as a row in Claude Code's background
-tasks: Claude posts "Passing to …", ends its turn, and posts the whole answer
-when the agent finishes, with no turns spent checking in between. Starting an
-agent runs inside CLI-MODE's hook, so it never adds a row of its own.
+```powershell
+Get-ChildItem $env:TEMP -Directory -Filter '_MEI*' |
+  Select-Object Name, LastWriteTime, @{n='GB';e={[math]::Round((Get-ChildItem $_.FullName -Recurse -File | Measure-Object Length -Sum).Sum / 1GB, 2)}}
+```
+
+Other programs built with PyInstaller use the same `_MEI` names, so check the
+list before deleting; Antigravity's hold a `google3` folder.
+
+**Your own Antigravity launcher.** If `~/.acpx/config.json` points Antigravity
+at a launcher of your own rather than CLI-MODE's, setup leaves it as it is, and
+this fix doesn't reach it: see how `plugins/cli-mode/scripts/acp-login.py` gives
+the server its own `TMP`/`TEMP`.
 
 ## Install
 
@@ -41,11 +37,11 @@ Pick your host and run its block in PowerShell.
 **Codex** (runs in the Codex desktop app):
 
 ```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.2
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.3
 codex plugin add cli-mode@cli-mode
 ```
 
-**Claude Code** (2.1.147 or later): download `cli-mode-claude-0.3.2.zip` from this
+**Claude Code** (2.1.147 or later): download `cli-mode-claude-0.3.3.zip` from this
 release, extract it, and run:
 
 ```powershell
@@ -55,30 +51,29 @@ release, extract it, and run:
 Or install it straight from GitHub, then run `/cli-mode:cli shortcuts` once:
 
 ```powershell
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.2 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.3 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
 **Using both?** Run both. They share CLI-MODE's ACPX copy and each agent's own
 sign-in; conversations and settings stay separate per host.
 
-## Upgrading from v0.3.1 or v0.3.0
+## Upgrading from an earlier 0.3 release
 
 A GitHub install is pinned to its tag, so updating it in place keeps the old version. Move
-it to the new tag instead; your saved CLI-MODE settings are kept. Agents saved by an
-earlier version get a name the first time this one reads them.
+it to the new tag instead; your saved CLI-MODE settings are kept.
 
 **Codex:**
 
 ```powershell
 codex plugin marketplace remove cli-mode
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.2
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.3
 codex plugin add cli-mode@cli-mode
 ```
 
 Coming from v0.3.0, then open **Plugins → CLI-MODE → Hooks** in the Codex
 desktop app and choose **Trust all** (or review the updated definitions); from
-v0.3.1 the hooks are unchanged.
+v0.3.1 or v0.3.2 the hooks are unchanged.
 
 **Claude Code from the zip:** run the new zip's `install-claude.ps1`; it updates
 in place and keeps your data.
@@ -89,15 +84,17 @@ the marketplace otherwise deletes CLI-MODE's saved data:
 ```powershell
 claude plugin uninstall cli-mode@cli-mode --keep-data
 claude plugin marketplace remove cli-mode
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.2 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.3 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
+The fix takes effect the next time an Antigravity agent starts.
+
 ## Validation and artifacts
 
-The [v0.3.2 validation report](checks/v0.3.2-validation.md) records this
-release's checks: the full offline suite, both install smokes, and live runs on
-both hosts with Grok Build and Codex CLI agents.
+The [v0.3.3 validation report](checks/v0.3.3-validation.md) records this
+release's checks: the full offline suite, both install smokes, and live runs of
+the launcher against Antigravity's real ACP server.
 
 Both archives and their SHA256 checksums are attached to the GitHub Release:
-`cli-mode-codex-0.3.2.zip` (Codex) and `cli-mode-claude-0.3.2.zip` (Claude Code).
+`cli-mode-codex-0.3.3.zip` (Codex) and `cli-mode-claude-0.3.3.zip` (Claude Code).

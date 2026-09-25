@@ -1,6 +1,6 @@
 {
   "name": "cli-mode",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Persistent CLI-agent routing through ACPX with queued forwarding and public activity: Antigravity, Claude Code, Grok Build, Cursor, GitHub Copilot and Codex CLI.",
   "author": {
     "name": "CLI-MODE Project"
