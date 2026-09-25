@@ -47,7 +47,8 @@ come back into your conversation. No second app, no second chat window, no termi
 - **Windows 10 or 11.** Setup and the agent runtime are Windows-only for now.
 - **A host:** **Claude Code 2.1.147 or later** (recommended), or the Codex desktop app (the install uses the
   Codex CLI).
-- **Python 3.10+ and Node.js 22.13+.** Setup installs the rest, including CLI-MODE's own copy of ACPX.
+- **Python 3.10+ and Node.js 22.13+.** Setup installs the rest, including a pinned copy of ACPX for CLI-MODE
+  (unless a global `acpx@0.18.0` from npm is already installed, which CLI-MODE then uses).
 - **At least one supported agent CLI,** installed and signed in with its own subscription. You only need the
   ones you plan to use; `/cli` checks each one and guides installation and sign-in.
 
@@ -95,7 +96,7 @@ codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.3
 codex plugin add cli-mode@cli-mode
 ```
 
-**Using both?** Install both. They share CLI-MODE's ACPX copy and each agent's sign-in, so an agent set up
+**Using both?** Install both. They share one ACPX installation and each agent's sign-in, so an agent set up
 for one host is ready in the other. Conversations and settings stay separate per host.
 
 **Upgrading?** A GitHub install stays on its tag; the [release notes](RELEASE_NOTES.md#upgrading-from-an-earlier-03-release)

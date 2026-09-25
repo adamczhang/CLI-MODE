@@ -24,12 +24,19 @@ To add a CLI, start with the
 
 ## ACPX
 
-Setup installs CLI-MODE's own copy of ACPX with `npm ci` from the lockfile in
-`plugins/cli-mode/runtime/acpx`, under `%LOCALAPPDATA%\CLI-MODE\acpx\0.18.0`.
-CLI-MODE uses that copy first. An existing global `acpx@0.18.0` from npm still
-works as a fallback, and a global upgrade to another version never changes
-which ACPX a binding uses. Each binding saves its tested ACPX installation, so a
-PATH change cannot silently switch its runtime.
+CLI-MODE runs ACPX 0.18.0 exactly. When setup finds no ACPX 0.18.0, it installs
+CLI-MODE's own copy with `npm ci` from the lockfile in
+`plugins/cli-mode/runtime/acpx`, under `%LOCALAPPDATA%\CLI-MODE\acpx\0.18.0`. An
+existing global `acpx@0.18.0` from npm counts as installed, so setup then adds no
+copy of its own and CLI-MODE uses the global one. When both exist, CLI-MODE uses
+its own copy first.
+
+Each binding saves the ACPX installation it started with, so a PATH change cannot
+silently switch its runtime. If that installation later stops being 0.18.0 (for
+example, a global `npm install -g acpx@latest`), the binding stops with a repair
+message rather than running another version, and running setup again installs
+CLI-MODE's own copy. Installing that copy next to a global one keeps CLI-MODE independent of
+global npm upgrades: new bindings pick it up.
 
 ACPX 0.18.0's shared runtime does not support injecting `mcpServers` or interactive
 permission callbacks. Configure MCP tools in the provider CLI itself; a nonempty
