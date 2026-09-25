@@ -20,7 +20,7 @@ import frontends
 import help_view
 import host
 from presentation import plain_strong, queue_text, result_text, shutdown_text, strong, unfence
-from state import INACTIVE_HINT, Store, direct_payload, route
+from state import INACTIVE_HINT, Store, agent_label, direct_payload, route
 
 CLAUDE = {'CLI_MODE_HOST': host.CLAUDE}
 
@@ -107,7 +107,7 @@ class Routing(unittest.TestCase):
             os.environ.pop('CLI_MODE_HOST', None)
             self.assertEqual(route('/cli-mode:cli', dict(self.STATE))['route'], 'host')
             self.assertIsNone(direct_payload('/cli-mode:d fix the parser'))
-            self.assertEqual(route('/cli help', dict(self.STATE, active=False))['text'], INACTIVE_HINT)
+            self.assertEqual(route('/cli help', dict(self.STATE, active=False))['route'], 'help')  # = /help.
             self.assertIn('/help', help_view.text())
             self.assertNotIn('/cli help', help_view.text())
 
@@ -151,6 +151,7 @@ class ClaudeControl(unittest.TestCase):
         self.control = Controller(self.store, self.backend)
         self.control.frontend()
         self.control.activate('gemini-3.8-flash-high', 'allow')
+        self.label = agent_label(self.store.read())  # `Antigravity AGY-XY`: the agent and its generated name.
 
     def args(self, *words):
         return build_parser().parse_args(['--host', host.CLAUDE, '--thread', 'claude-session',
@@ -194,10 +195,10 @@ class Controllers(ClaudeControl):
         self.assertEqual(result['markdown'], '')
         self.assertIsNone(result.get('messageView'))
         self.assertIsNone(result.get('reference'))
-        self.assertEqual(result['text'].count(strong('Antigravity says...', True)), 1)
+        self.assertEqual(result['text'].count(strong(self.label + ' says...', True)), 1)
         self.assertLess(result['text'].index('I will look at the parser.'),
                         result['text'].index('Found the bug in the parser.'))  # Every word of the turn, in order.
-        self.assertIn('Antigravity work: 1 done', result['text'])
+        self.assertIn(self.label + ' work: 1 done', result['text'])
         self.assertNotIn('Passing to', plain_strong(result['text']))  # Claude's own first words, before any call.
         self.assertFalse(list(self.root.rglob('*.html')))
         progress = self.store.read()['relayProgress'][request]
@@ -353,7 +354,7 @@ class Chains(ClaudeControl):
         self.assertTrue(result['done'])
         self.assertEqual(result['markdown'], '')
         self.assertLess(result['text'].index('First answer.'), result['text'].index('Second answer.'))
-        self.assertEqual(result['text'].count(strong('Antigravity says...', True)), 2)  # Each under its own heading.
+        self.assertEqual(result['text'].count(strong(self.label + ' says...', True)), 2)  # Each under its own heading.
         progress = self.store.read()['relayProgress']
         self.assertTrue(progress[earlier]['done'] and progress[latest]['done'])
         self.assertNotIn('chain', progress[latest])
@@ -374,7 +375,7 @@ class Chains(ClaudeControl):
         self.assertTrue(final['done'])
         text = plain_strong(final['text'])
         self.assertLess(text.index('First answer.'), text.index('Second answer.'))
-        self.assertEqual(text.count('**Antigravity says...**'), 2)  # Each under its own heading.
+        self.assertEqual(text.count('**' + self.label + ' says...**'), 2)  # Each under its own heading.
         self.assertNotIn('Passing to', text)  # Claude posts it once, before its first call.
         progress = self.store.read()['relayProgress']
         self.assertTrue(progress[earlier]['done'] and progress[latest]['done'])
@@ -532,9 +533,9 @@ class PlainRelay(ClaudeControl):
     def test_a_finished_turn_prints_one_plain_line_then_the_message(self):
         request = self.send([dict(type='message', text='All tests pass — it’s done.\n')])
         lead, post = self.main('relay', '--request', request, '--wait', '1').split('\n\n', 1)
-        self.assertEqual(lead, 'Antigravity has finished. Post everything below this line exactly, as the last '
+        self.assertEqual(lead, self.label + ' has finished. Post everything below this line exactly, as the last '
                                'message of the turn.')
-        self.assertIn(strong('Antigravity says...', True), post)
+        self.assertIn(strong(self.label + ' says...', True), post)
         self.assertIn('All tests pass — it’s done.', post)  # Real characters, not \u escapes.
         for machine in ('"cursor"', '"done"', '\\n', '\\u'):
             self.assertNotIn(machine, lead + post)
@@ -571,10 +572,11 @@ class Colour(ClaudeControl):
     def test_relay_names_are_green_unless_colour_is_off(self):
         text = self.control.relay_chain([self.send([dict(type='message', text='Done.\n')])], 0, wait=1)['text']
         # \small: the desktop draws LaTeX at 1.21 times the text size; this keeps it just above it.
-        self.assertTrue(text.startswith('$\\color{228b22}\\small\\textsf{\\textbf{Antigravity~says...}}$'))
+        self.assertTrue(text.startswith(strong(self.label + ' says...', True)))
+        self.assertTrue(text.startswith('$\\color{228b22}\\small\\textsf{\\textbf{Antigravity~AGY-'))
         self.colour('off')
         text = self.control.relay_chain([self.send([dict(type='message', text='Done.\n')])], 0, wait=1)['text']
-        self.assertTrue(text.startswith('**Antigravity says...**'))
+        self.assertTrue(text.startswith('**' + self.label + ' says...**'))
         self.assertNotIn('\\color', text)
 
     def test_the_activation_title_is_dark_green_unless_colour_is_off(self):
@@ -654,9 +656,9 @@ class Follow(ClaudeControl):
         result, lines = self.follow(request)
         self.assertEqual(result, dict(requestId=request, status='completed', done=True))
         self.assertEqual(lines, [
-            'Antigravity is writing.', 'Antigravity: plan 1 of 2 steps done',
-            'Antigravity: Read source — src/app.py:3', 'Antigravity: Edit — src/app.py:3',
-            'Antigravity: failed: Edit — src/app.py:3', 'Antigravity is writing.', 'Antigravity finished.'])
+            self.label + ' is writing.', self.label + ': plan 1 of 2 steps done',
+            self.label + ': Read source — src/app.py:3', self.label + ': Edit — src/app.py:3',
+            self.label + ': failed: Edit — src/app.py:3', self.label + ' is writing.', self.label + ' finished.'])
         self.assertNotIn('Secret answer', ''.join(lines))  # The agent's words come only through the relay.
         self.assertNotIn('relayProgress', self.store.read())  # Following never moves the relay.
 
@@ -675,9 +677,9 @@ class Follow(ClaudeControl):
         with patch.object(self.control, 'observe', side_effect=observe):
             result, lines = self.follow(request)
         self.assertEqual(result['status'], 'completed')
-        self.assertEqual(lines, ['Antigravity is finishing an earlier turn; this one is queued.',
-                                 'Antigravity: Read source — src/app.py:3', 'Antigravity: error: Rate limited',
-                                 'Antigravity finished.'])
+        self.assertEqual(lines, [self.label + ' is finishing an earlier turn; this one is queued.',
+                                 self.label + ': Read source — src/app.py:3', self.label + ': error: Rate limited',
+                                 self.label + ' finished.'])
         self.assertTrue(all(seen))  # The hook can tell that a follow runs, so it never starts a second one.
         self.assertFalse(follow_path(self.store, request).exists())
         self.assertFalse(following(self.store, request))
@@ -746,7 +748,7 @@ class OverlappingRelays(ClaudeControl):
         self.relay([earlier, latest])
         again = self.relay([latest])  # A late wake-up for a request the chain already posted.
         self.assertEqual((again['done'], again['text'], again['markdown']), (True, '', ''))
-        self.assertEqual(relay_plain(again), 'Antigravity\'s answer is already posted above, so there is nothing '
+        self.assertEqual(relay_plain(again), self.label + '\'s answer is already posted above, so there is nothing '
                                              'more to post.')
 
 

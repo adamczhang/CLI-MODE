@@ -69,7 +69,7 @@ class WholePrompts(unittest.TestCase):
     def test_off_during_reconfiguration_cleans_late_reused_session(self):
         main = self.store.read()['main']
         before = len(self.backend.calls)
-        self.control.frontend()
+        self.control.tune('access')  # Reconfigure the running agent (the activation page would start another).
         live = {main}
         close = self.backend.close
         def tracked_close(owned):

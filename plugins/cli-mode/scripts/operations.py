@@ -57,14 +57,25 @@ def following(store, request_id):
     return operation_running(dict(pid=pid))
 
 
-def pending_work(state, request_id=None, include_queue=True):
-    """One admission gate for prompts, settings, and legacy uncertain receipts."""
-    return (any(op.get('requestId') != request_id or request_id is None
-                for op in state['inflight'].values()) or
-            any(key != request_id and record['status'] in ('submitting', 'uncertain')
-                for key, record in state.get('requests', {}).items()) or
+def pending_work(state, request_id=None, include_queue=True, session=None):
+    """One admission gate for prompts, settings, and legacy uncertain receipts.
+
+    With `session`, only that agent's work counts: agents run side by side, each with its own queue.
+    """
+    operations = [op for op in state['inflight'].values() if session is None or op.get('session') == session]
+    requests = [(key, record) for key, record in state.get('requests', {}).items()
+                if session is None or record.get('session') == session]
+    return (any(op.get('requestId') != request_id or request_id is None for op in operations) or
+            any(key != request_id and record['status'] in ('submitting', 'uncertain') for key, record in requests) or
             (include_queue and any(key != request_id and record['status'] == 'captured'
-                for key, record in state.get('requests', {}).items())))
+                                   for key, record in requests)))
+
+
+def menu_holds(state, session):
+    """True while an open menu is changing this agent (its settings, or the native switch): nothing is sent to it.
+    A menu for another agent, or for a new one, never holds this agent's queue."""
+    pending = state.get('pending') or {}
+    return bool(pending) and (pending.get('session') == session or pending.get('phase') == 'native')
 
 
 def status_age(started, now=None):

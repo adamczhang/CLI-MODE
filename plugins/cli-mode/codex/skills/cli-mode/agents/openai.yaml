@@ -1,7 +1,7 @@
 interface:
   brand_color: "#006400"
   display_name: "CLI-MODE"
-  short_description: "Send /d prompts to one persistent CLI agent"
+  short_description: "Send /d prompts to named, persistent CLI agents"
   default_prompt: "/cli"
 policy:
   allow_implicit_invocation: true

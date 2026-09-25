@@ -8,11 +8,17 @@ import sys
 import time
 import uuid
 
-from operations import _detached_workers, emit, follow_path, operation_running, pending_work, status_age
-import adapters
+from operations import _detached_workers, emit, follow_path, menu_holds, operation_running, pending_work, status_age
 import host
 import menu_view
 import relay_view
+from state import agent_entry, agent_label, passing_line
+
+
+def request_label(state, request_id):
+    """The agent a request went to, as every relay line names it: `Codex COD-7K`."""
+    record = (state.get('requests') or {}).get(request_id) or {}
+    return agent_label(state, record.get('session'), record)
 
 # The worker runs the controller CLI entry point, not this module.
 CONTROLLER = Path(__file__).resolve().with_name('controller.py')
@@ -22,7 +28,7 @@ class QueueMixin:
     def resume_monitoring(self):
         """Reattach to receipts after a host turn ends, without replaying prompts."""
         try:
-            worker = self.ensure_pump()
+            worker = self.ensure_pumps()
         except OSError as exc:
             worker = {'worker': 'start-failed', 'error': str(exc)}
         queue = self.queue_status()
@@ -38,36 +44,53 @@ class QueueMixin:
                     latestStatus=latest['status'] if latest else None,
                     blocked=worker.get('worker') in ('blocked', 'start-failed'))
 
-    def ensure_pump(self):
-        """Start one conversation-owned submitter independent of the host turn."""
+    def ensure_pumps(self):
+        """Every agent's worker, for /cli resume: the first that needs attention, else the current agent's."""
+        state = self.store.read()
+        sessions = [item['name'] for item in state['owned'] if item.get('ready')]
+        sessions.sort(key=lambda session: session != state.get('main'))
+        results = [self.ensure_pump(session) for session in sessions] or [self.ensure_pump()]
+        for kind in ('blocked', 'start-failed'):
+            found = next((result for result in results if result.get('worker') == kind), None)
+            if found:
+                return found
+        return results[0]
+
+    def ensure_pump(self, session=None):
+        """Start an agent's submitter (the current agent's by default), independent of the host turn.
+
+        Each agent has its own worker and queue, so agents work side by side.
+        """
         if os.environ.get('CLI_MODE_TEST_DISABLE_AUTORUN') == '1':
             return {'worker': 'disabled-for-tests'}
         with self.store.edit() as state:
-            captured = [key for key, value in state.get('requests', {}).items()
-                        if value['status'] == 'captured']
-            if not state['active']:
+            session = session or state.get('main')
+            mine = {key: value for key, value in state.get('requests', {}).items() if value.get('session') == session}
+            captured = [key for key, value in mine.items() if value['status'] == 'captured']
+            target = agent_entry(state, session)
+            if not state['active'] or not target or not target.get('ready'):
                 return {'worker': 'idle', 'queued': len(captured)}
-            runner = state.get('runner') or {}
+            runner = (state.get('runners') or {}).get(session) or {}
             if runner and operation_running(runner):
                 return {'worker': 'running', 'pid': runner['pid'], 'queued': len(captured)}
             if runner:
                 # A vanished owner may have reached the provider. Never replay its
                 # admitted prompt merely because the Python process disappeared.
-                for record in state.get('requests', {}).values():
+                for record in mine.values():
                     if record['status'] == 'submitting' and record.get('submitterPid') == runner.get('pid'):
                         record['status'] = 'uncertain'
                         operation = state['inflight'].get(record.get('operation'))
                         if operation:
                             operation['running'] = False
-                state.pop('runner', None)
-            for record in state.get('requests', {}).values():
+                state['runners'].pop(session, None)
+            for record in mine.values():
                 if record['status'] == 'submitting':
                     operation = state['inflight'].get(record.get('operation'))
                     if operation and not operation_running(operation):
                         record['status'] = 'uncertain'
                         operation['running'] = False
-            if any(value['status'] in ('submitting', 'uncertain')
-                   for value in state.get('requests', {}).values()) or state['inflight']:
+            if any(value['status'] in ('submitting', 'uncertain') for value in mine.values()) or any(
+                    operation.get('session') == session for operation in state['inflight'].values()):
                 return {'worker': 'blocked', 'queued': len(captured),
                         'message': 'Inspect and reconcile the earlier operation before resuming the queue.'}
             if not captured:
@@ -75,7 +98,7 @@ class QueueMixin:
             token = uuid.uuid4().hex
             command = [sys.executable, str(CONTROLLER), '--thread', self.store.thread,
                        '--workspace', self.store.workspace, '--data-root', str(self.store.root),
-                       'pump', '--token', token]
+                       'pump', '--token', token, '--session', session]
             options = {'stdin': subprocess.DEVNULL, 'stdout': subprocess.DEVNULL,
                        'stderr': subprocess.DEVNULL, 'close_fds': True}
             if os.name == 'nt':
@@ -85,7 +108,7 @@ class QueueMixin:
             _detached_workers[:] = [child for child in _detached_workers if child.poll() is None]
             process = subprocess.Popen(command, **options)
             _detached_workers.append(process)
-            state['runner'] = dict(pid=process.pid, token=token, started=time.time())
+            state.setdefault('runners', {})[session] = dict(pid=process.pid, token=token, started=time.time())
             state.pop('runnerError', None)
             return {'worker': 'started', 'pid': process.pid, 'queued': len(captured)}
 
@@ -93,10 +116,11 @@ class QueueMixin:
     # new worker process and reuses this process's warm ACPX bridge.
     PUMP_LINGER = float(os.environ.get('CLI_MODE_PUMP_LINGER', 300))
 
-    def pump(self, token):
-        """Drain captured requests in order; stop at any uncertain outcome."""
+    def pump(self, token, session=None):
+        """Drain one agent's captured requests in order; stop at any uncertain outcome."""
         idle_since = None
         seen = None
+        session = session or self.store.read().get('main')
         while True:
             if idle_since is not None:
                 # Lingering: a stat per poll; parse state only after it changes
@@ -111,37 +135,42 @@ class QueueMixin:
                     continue
                 seen = stamp
                 state = self.store.read()
-                runner = state.get('runner') or {}
+                runner = (state.get('runners') or {}).get(session) or {}
                 lingering = (runner.get('token') == token and state['active'] and
-                             not any(record['status'] == 'captured' for record in state.get('requests', {}).values()))
+                             not any(record['status'] == 'captured' and record.get('session') == session
+                                     for record in state.get('requests', {}).values()))
                 if lingering and time.monotonic() - idle_since < self.PUMP_LINGER:
                     time.sleep(.25)
                     continue
             with self.store.edit() as state:
-                runner = state.get('runner') or {}
+                runners = state.get('runners') or {}
+                runner = runners.get(session) or {}
                 if runner.get('token') != token or runner.get('pid') != os.getpid():
                     return {'worker': 'replaced'}
-                if not state['active']:
-                    state.pop('runner', None)
+                target = agent_entry(state, session)
+                if not state['active'] or target is None:
+                    runners.pop(session, None)
                     return {'worker': 'stopped'}
-                if state['inflight'] or any(record['status'] in ('submitting', 'uncertain')
-                    for record in state.get('requests', {}).values()):
-                    # An unrelated live submitter can finish; an uncertain one
-                    # needs deliberate reconciliation before further dispatch.
-                    if any(not operation_running(op) for op in state['inflight'].values()):
-                        state.pop('runner', None)
+                operations = [op for op in state['inflight'].values() if op.get('session') == session]
+                if operations or not target.get('ready') or any(
+                        record['status'] in ('submitting', 'uncertain') and record.get('session') == session
+                        for record in state.get('requests', {}).values()):
+                    # An unrelated live submitter can finish, and a setting change ends; an uncertain
+                    # one needs deliberate reconciliation before further dispatch.
+                    if any(not operation_running(op) for op in operations):
+                        runners.pop(session, None)
                         return {'worker': 'blocked'}
                     wait = True
                     request_id = None
                 else:
                     wait = False
                     request_id = next((key for key, record in state.get('requests', {}).items()
-                                       if record['status'] == 'captured'), None)
+                                       if record['status'] == 'captured' and record.get('session') == session), None)
                     if request_id is None:
                         if idle_since is None and self.PUMP_LINGER > 0:
                             idle_since = time.monotonic()
                             continue
-                        state.pop('runner', None)
+                        runners.pop(session, None)
                         return {'worker': 'drained'}
                     idle_since = None
             if wait:
@@ -158,7 +187,7 @@ class QueueMixin:
                         error.update(errno=exc.errno, path=str(exc.filename) if exc.filename else None)
                     state['runnerError'] = error
                     if state['requests'][request_id]['status'] == 'uncertain':
-                        state.pop('runner', None)
+                        (state.get('runners') or {}).pop(session, None)
                         return {'worker': 'blocked'}
 
     def observe(self, request_id, cursor=0, limit=100, ends=False):
@@ -208,7 +237,7 @@ class QueueMixin:
         status = receipt['status']
         active = status in ('captured', 'submitting', 'uncertain')
         started = receipt.get('capturedAt') if status == 'captured' else receipt.get('submittedAt')
-        runner = state.get('runner')
+        runner = (state.get('runners') or {}).get(record.get('session'))
         now = time.time()
         result = {'requestId': request_id, 'receipt': receipt, 'events': events, 'cursor': cursor,
                   'worker': runner,
@@ -277,7 +306,7 @@ class QueueMixin:
             footer = 'Turn canceled.'
         elif status == 'rejected':
             footer = self._not_sent(request_id)
-        adapter = adapters.module(self.agent_of(self.store.read()))
+        label = request_label(self.store.read(), request_id)
         passing = None
         if cursor == 0 and status != 'captured':
             # Empty polls keep cursor zero; claim the introduction independently,
@@ -286,13 +315,13 @@ class QueueMixin:
                 record = state.get('requests', {}).get(request_id)
                 if record is not None and not record.get('passingAnnounced'):
                     record['passingAnnounced'] = True
-                    passing = adapter.PASSING
+                    passing = passing_line(label)
         show_work = (self.store.read().get('progressMode') or 'activity') != 'quiet'
         history = self._public_history(receipt, position)
         artifacts = [event['content'] for event in public if event['type'] == 'artifact']
         # Mid-turn: a Markdown update the host posts as is. Views only render in
         # a final response, so the turn's one view comes when it is done.
-        update = relay_view.markdown(adapter.LABEL, public, history, passing=passing,
+        update = relay_view.markdown(label, public, history, passing=passing,
                                      footer=None if done else footer, show_work=show_work,
                                      workspace=self.store.workspace)
         result = dict(requestId=request_id, cursor=position, done=done, status=status,
@@ -301,12 +330,12 @@ class QueueMixin:
         if done:
             folder = Path(view_dir) if view_dir else self.store.root / 'views' / self.store.key
             path, text, _ = relay_view.render(
-                adapter.LABEL, [event for event in history if event.get('type') != 'context_warning'],
+                label, [event for event in history if event.get('type') != 'context_warning'],
                 folder / (request_id + '-final-' + uuid.uuid4().hex[:6] + '.html'),
                 footer=footer, show_work=show_work, workspace=self.store.workspace)
             self._prune_views(folder)
             result.update(text=text, reference=menu_view.reference(path), messageView=dict(
-                path=path, format='inline-html', label=adapter.LABEL, kind='relay'))
+                path=path, format='inline-html', label=label, kind='relay'))
         return result
 
     def relay_text(self, request_id, cursor=0, wait=25.0, poll=.25):
@@ -328,8 +357,8 @@ class QueueMixin:
             if status not in ('captured', 'submitting') or time.monotonic() - started >= wait:
                 break
             time.sleep(poll)
-        adapter = adapters.module(self.agent_of(self.store.read()))
-        result = dict(requestId=request_id, cursor=cursor, done=False, status=status, agent=adapter.LABEL,
+        label = request_label(self.store.read(), request_id)
+        result = dict(requestId=request_id, cursor=cursor, done=False, status=status, agent=label,
                       idleSeconds=view.get('withoutPublicUpdateSeconds'), markdown='', text='', artifacts=[])
         if status in ('captured', 'submitting'):
             return result
@@ -356,7 +385,7 @@ class QueueMixin:
         color = host.chat_color(self.store.root)  # Dark green attribution in Claude Code's chat.
         artifacts = [event['content'] for event in public if event['type'] == 'artifact']
         if trimmed:
-            update = relay_view.markdown(adapter.LABEL, public, [], show_work=False, color=color)
+            update = relay_view.markdown(label, public, [], show_work=False, color=color)
             return dict(result, cursor=position, markdown=update, text=update, artifacts=artifacts)
         footer = None
         if status == 'uncertain':
@@ -369,7 +398,7 @@ class QueueMixin:
         history = [event for event in self._public_history(view['receipt'], position)
                    if event.get('type') != 'context_warning']
         return dict(result, cursor=position, done=True, artifacts=artifacts, text=relay_view.final_markdown(
-            adapter.LABEL, public, history, footer=footer, show_work=show_work, color=color))
+            label, public, history, footer=footer, show_work=show_work, color=color))
 
     def relay_chain(self, request_ids, cursor=0, wait=25.0, poll=.25):
         """Relay a turn's requests with one command, for a text host (Claude Code).
@@ -392,7 +421,7 @@ class QueueMixin:
         if all((progress.get(request_id) or {}).get('done') for request_id in request_ids):
             # Background turns overlap: a later relay can post these before this command runs. Never twice.
             return dict(requestId=request_ids[-1], cursor=cursor, done=True, posted=True,
-                        status=records[request_ids[-1]]['status'], agent=adapters.module(self.agent_of(state)).LABEL,
+                        status=records[request_ids[-1]]['status'], agent=request_label(state, request_ids[-1]),
                         idleSeconds=None, markdown='', text='', artifacts=[])
         base, held = 0, []  # Where the current request's log starts in the stream; settled requests' words.
         for index, request_id in enumerate(request_ids):
@@ -464,7 +493,7 @@ class QueueMixin:
         once for the agent's words. So nothing here posts or saves relay progress; the
         process ID file only lets the hook avoid starting a second follow.
         """
-        label = adapters.module(self.agent_of(self.store.read())).LABEL
+        label = request_label(self.store.read(), request_id)
         path = follow_path(self.store, request_id)
         mine = str(os.getpid())
         path.write_text(mine, encoding='ascii')
@@ -577,7 +606,7 @@ class QueueMixin:
     def queue_status(self):
         state = self.store.read()
         now = time.time()
-        runner = state.get('runner')
+        runner = (state.get('runners') or {}).get(state.get('main'))
         receipts = [(key, record) for key, record in state.get('requests', {}).items()
                     if record['generation'] == state['generation']]
         visible = [(key, record) for index, (key, record) in enumerate(receipts)
@@ -585,7 +614,8 @@ class QueueMixin:
                    or index >= len(receipts) - 100]
         return {'worker': runner, 'workerState': ('running' if operation_running(runner) else 'stale') if runner else 'idle',
                 'workerError': state.get('runnerError'), 'totalRequests': len(receipts),
-                'requests': [{'requestId': key, 'status': record['status'],
+                'workers': state.get('runners') or {},
+                'requests': [{'requestId': key, 'status': record['status'], 'agent': request_label(state, key),
                               'operation': record.get('operation'), 'events': record.get('events'),
                               'statusAgeSeconds': status_age(
                                   record.get('capturedAt') if record['status'] == 'captured'
@@ -602,22 +632,22 @@ class QueueMixin:
                 raise RuntimeError('Captured request was not found in this conversation.')
             if record['status'] != 'captured':
                 return dict(requestId=request_id, existing=True, **deepcopy(record))
-            if (not state['active'] or state.get('pending')
-                    or record['generation'] != state['generation']
-                    or record['session'] != state['main']):
+            target = agent_entry(state, record['session'])
+            if (not state['active'] or menu_holds(state, record['session'])
+                    or record['generation'] != state['generation'] or not target or not target.get('ready')):
                 raise RuntimeError('Captured request no longer matches the active binding; nothing was sent.')
             oldest = next((key for key, value in state['requests'].items()
-                           if value['status'] == 'captured'), None)
+                           if value['status'] == 'captured' and value.get('session') == record['session']), None)
             if oldest != request_id:
                 raise RuntimeError('An earlier captured request is queued; wait for it to settle.')
-            if pending_work(state, request_id, include_queue=False):
+            if pending_work(state, request_id, include_queue=False, session=record['session']):
                 raise RuntimeError('Session has pending/uncertain work. Inspect or cancel it before submitting.')
             with path.open(encoding='utf-8', newline='') as source:
                 text = source.read()
             # Claim before any provider call. A crash leaves an inspectable claim, never an automatic retry.
             op = uuid.uuid4().hex
             record.update(status='submitting', submittedAt=time.time(), submitterPid=os.getpid(), operation=op,
-                          settings=deepcopy(state['settings']))
+                          settings=deepcopy(target['settings']))
             state['inflight'][op] = dict(session=record['session'], kind='prompt', phase='admitted',
                                          requestId=request_id, submitterPid=os.getpid(), running=True)
         try:
@@ -656,7 +686,7 @@ class QueueMixin:
                 raise RuntimeError('This turn was already dispatched; inspect its saved events instead of replaying it.')
             if state.get('turnRoute', {}).get('requestId'):
                 raise RuntimeError('This turn has captured input. Observe its request ID instead of submitting it again.')
-            if pending_work(state):
+            if pending_work(state, session=state['main']):
                 raise RuntimeError('Session has pending/uncertain work. Inspect or cancel it before submitting.')
             if not state['active'] or state.get('pending') or state.get('helpMenu'):
                 raise RuntimeError('Mode is off or a menu is pending; no task was sent.')
@@ -664,9 +694,10 @@ class QueueMixin:
             state['requests'][request_id]['source'] = 'file'
         return self.send_request(request_id, output, timeout)
 
-    def cancel(self):
+    def cancel(self, session=None):
+        """Cancel an agent's running turn (the current agent's unless `session`); its queue is unchanged."""
         with self.store.edit() as state:
-            owned = next((x for x in state['owned'] if x['name'] == state['main']), None)
+            owned = agent_entry(state, session)
             if not owned:
                 raise RuntimeError('No owned session found.')
             operations = [entry for entry in state['inflight'].values()

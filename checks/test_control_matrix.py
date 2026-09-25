@@ -66,7 +66,10 @@ class AgentControls(unittest.TestCase):
         for backend in backend_ids():
             for word in control_words(backend):
                 self.assertEqual(route('/cli %s do the thing' % word, OFF)['route'], 'hint')
-                self.assertEqual(route('/cli bind %s now' % word, OFF)['route'], 'hint')
+                # Bind takes one optional word, the new agent's name; anything more, or a bad name, is refused.
+                self.assertEqual(route('/cli bind %s do it now' % word, OFF)['route'], 'hint')
+                self.assertEqual(route('/cli bind %s it!' % word, OFF)['route'], 'hint')
+                self.assertEqual(route('/cli bind %s now' % word, OFF), dict(route='bind', agent=backend, name='NOW'))
 
     def test_near_miss_agent_names_are_never_resolved(self):
         for text in ('/cli gro', '/cli grokbuild', '/cli claud', '/cli agyx',
@@ -235,13 +238,14 @@ class HelpText(unittest.TestCase):
             word = (record.get('aliases') or [record['id']])[0]
             self.assertIn(word, commands)
         self.assertIn('/cli <agent>', commands)
-        self.assertIn('/cli bind <agent>', commands)
+        self.assertIn('/cli bind|spawn <agent> [name]', commands)
 
     def test_help_lists_every_shared_control(self):
         commands = self.help.render()
-        for control in ('/cli', '/cli <agent>', '/cli bind <agent>', '/d <PROMPT>',
-                        '/cli menu', '/cli progress <mode>', '/cli queue',
-                        '/cli resume', '/cli cancel', '/cli stop', '/cli off', '/help'):
+        for control in ('/cli', '/cli <agent>', '/cli bind|spawn <agent> [name]', '/d [name] <PROMPT>',
+                        '/cli list|agents', '/cli use <name>', '/cli menu|settings [name]', '/cli progress <mode>',
+                        '/cli queue', '/cli resume', '/cli cancel [name]', '/cli close|stop [name|all]', '/cli off',
+                        '/help'):
             self.assertIn(control, commands)
 
     def test_help_is_one_commands_table(self):

@@ -101,9 +101,11 @@ own words from the agent's at a glance.
 | CLI-MODE | Activation confirmation, `Passing to <Agent>...` | Accent, whole line | `activation`, `passing` |
 | Agent | Relayed plans, progress and answers | Default chat colour, introduced by one accent attribution line `<Agent> says...` | `agent` (and every `relay` view) |
 
-Every agent has one single-word name, used identically by the passing line and
-the attribution: **Antigravity, Claude, Grok, Cursor, Copilot**. The renderer
-derives both from the adapter, so they cannot drift.
+Every agent kind has one single-word label (**Antigravity, Claude, Grok, Cursor,
+Copilot, Codex**), and every running agent a name (`GRO-4K`, or one the user gave).
+The passing line and the attribution both use label and name, `Grok GRO-4K`: the
+renderer derives them from the request's own agent, so they cannot drift, and an
+answer keeps its label after its agent is closed.
 
 Relayed content keeps the host's default text colour deliberately. Tinting a
 long answer costs readability for no added information once the attribution

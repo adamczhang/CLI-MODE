@@ -39,6 +39,8 @@ class Relay(unittest.TestCase):
         self.control = Controller(Store('relay', self.root, self.root / 'state'), self.backend)
         self.control.frontend()
         self.control.activate('gemini-3.8-flash-high', 'allow')
+        from state import agent_label
+        self.label = agent_label(self.control.store.read())  # `Antigravity AGY-XY`: the kind and its name.
 
     def send(self, events):
         self.backend.events = events
@@ -55,21 +57,21 @@ class Relay(unittest.TestCase):
         self.assertEqual(result['status'], 'completed')
         # The mid-turn update is chat Markdown, ready to post.
         update = result['markdown']
-        self.assertTrue(update.startswith('**Passing to Antigravity...**'))
-        self.assertIn('**Antigravity says...**', update)
+        self.assertTrue(update.startswith('**Passing to ' + self.label + '...**'))
+        self.assertIn('**' + self.label + ' says...**', update)
         self.assertIn('Found the bug', update)
-        self.assertIn('Antigravity work: 1 running', update)
+        self.assertIn(self.label + ' work: 1 running', update)
         # The turn's one view, with the exact line Codex renders.
         path = result['messageView']['path']
         self.assertEqual(result['reference'], '\ue200visualize\ue202' + json.dumps({'path': path}) + '\ue201')
         html = Path(path).read_text(encoding='utf-8')
-        self.assertIn('Antigravity says...', html)
+        self.assertIn(self.label + ' says...', html)
         self.assertNotIn('Passing to', html)
         self.assertIn('&lt;script&gt;', html)
         self.assertNotIn('<script', html.replace('&lt;script', ''))
         self.assertIn('Fix &lt;b&gt;it&lt;/b&gt;', html)
         self.assertLess(html.index('says...'), html.index('<details class="work">'))
-        self.assertRegex(html, r'<details class="work"><summary>Antigravity work · 1 running · 1 done</summary>')
+        self.assertRegex(html, '<details class="work"><summary>' + self.label + ' work · 1 running · 1 done</summary>')
         self.assertEqual(len(re.findall(r'<details', html)), 4)  # Work, plan, reading, commands.
         self.assertIn('<details open><summary>Plan · 1 of 2 done</summary>', html)
         self.assertIn('aria-valuenow="50"', html)

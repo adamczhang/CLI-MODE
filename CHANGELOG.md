@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Several named agents (both hosts)
+- **Up to four agents run at once, in any mix, each with a name.** `/cli spawn <agent> [name]` starts one at any time, even while others work, and it becomes the current agent. A name you give is 1-10 letters and digits; otherwise one is generated from the agent's code and two characters, such as `COD-7K`. Names show in capitals and match in any case.
+- `/d <name> <prompt>` sends to that agent; a plain `/d` goes to the current one. A generated name also matches as `cod7k`, or as `-7K` when only one running agent has that ending. Only the first word after `/d` can name an agent, and a word shaped like a generated name that matches none sends nothing.
+- Each agent has its own queue and worker, so agents work side by side. Answers, "Passing to" lines, background-task rows and the activation card name the agent (`Codex COD-7K says...`).
+- `/cli list` lists the running agents with their settings and what each is doing; `/cli agents max <n>` sets the limit (up to 8). `/cli use <name>` changes the current agent.
+- `/cli close <name>` closes one agent (its turn, queue and session) while the others keep working; `/cli close all` closes them all. With several agents, a bare `/cli close` asks which. Closing the current agent makes the most recently used one current, and closing the last turns CLI-MODE off.
+- `/cli menu`, `/cli model`, `/cli effort`, `/cli access` and `/cli cancel` take an agent's name to act on another agent.
+- Command pairs that do the same thing: `close` = `stop` = `off`, `spawn` = `bind`, `settings` = `menu`, `agents` = `list`, `commands` = `help` (`/cli help` now also works on Codex).
+- `/cli bind` and the activation page start a new agent rather than reconfiguring the running one; settings change through Agent Settings or `/cli model|effort|access`. A `/d` task typed while any menu is open closes the menu and is sent.
+
 ### Routing
 - **Passthrough mode is removed, on both hosts.** Only a message that starts with `/d` (or `$d`) reaches the agent; everything else stays with the host. `/cli mode` now says so, and the routing choice is gone from the activation and Agent Settings menus ("Toggle activity progress" is now 4).
 - A conversation saved in Passthrough mode opens in Direct mode; a request it had already queued is still sent.

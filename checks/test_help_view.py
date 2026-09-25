@@ -12,12 +12,12 @@ class CardHelp(unittest.TestCase):
         self.assertTrue(page.startswith('```text\n+---'))
         rows = [line[2:-2].strip() for line in page.splitlines() if line.startswith('| ')]
         self.assertEqual(rows[:2], ['CLI-MODE', 'Help'])
-        self.assertEqual(len(help_view.COMMANDS), 12)
+        self.assertEqual(len(help_view.COMMANDS), 14)
         for command, _ in help_view.COMMANDS:
             self.assertIn(command, rows)
         self.assertEqual(rows[-1], 'X. Close help')
         html = menu_view.render(page)
-        self.assertIn('class="command">/cli bind &lt;agent&gt;', html)
+        self.assertIn('class="command">/cli bind|spawn &lt;agent&gt; [name]', html)
         self.assertIn('class="exit">Close help', html)
 
     def test_agent_names_and_display_modes_are_explained(self):
@@ -27,7 +27,7 @@ class CardHelp(unittest.TestCase):
             self.assertIn(agent, text)
         for mode in ('activity', 'quiet'):
             self.assertIn(mode, text)
-        self.assertIn('Nothing else reaches it.', text)  # Only /d reaches the agent.
+        self.assertIn('Nothing else reaches an agent.', text)  # Only /d reaches an agent.
         self.assertIn('$ works in place of /', text)
 
 

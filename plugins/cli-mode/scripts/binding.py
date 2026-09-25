@@ -6,9 +6,11 @@ import uuid
 
 import frontends
 import installer
+import names
 import native_agy
 import native_commands
 from operations import operation_running, pending_work
+from state import agent_entry, agent_label, agent_limit, last_used, live_agents
 
 
 class OwnerNotRunning(RuntimeError):
@@ -16,18 +18,26 @@ class OwnerNotRunning(RuntimeError):
 
 
 class BindingMixin:
-    def bind(self, agent='agy', require_hooks=True, message_output=None, confirm=False):
-        # An explicit bind authorizes defaults, but never skips readiness gates.
-        # `confirm` asks for the confirmation as text when there is no view path.
+    def bind(self, agent='agy', require_hooks=True, message_output=None, confirm=False, name=None):
+        """Start a new agent (bind = spawn) with its kind's saved settings; `name` is a custom name.
+
+        An explicit bind authorizes defaults, but never skips readiness gates. `confirm` asks for the
+        confirmation as text when there is no view path.
+        """
         adapter = self.use(agent)
+        if name:
+            error = names.custom_error(name, live_agents(self.store.read(), every=True))
+            if error:
+                raise ValueError(error)
         state = self.frontend(agent)
         if not frontends.confirmed(self.store.root, agent):
             result = self.first_time_check(agent)
             if not result['confirmed']:
                 raise RuntimeError(result['message'])
-        # Saved defaults belong to this backend only; another backend's model
-        # and effort are never carried across.
-        saved = (state.get('settings') or {}) if state.get('backend') in (None, agent) else {}
+        if name:
+            with self.store.edit() as latest:
+                latest['pending']['name'] = name.upper()
+        saved = self.kind_settings(state, agent)
         defaults = adapter.DEFAULTS
         model, access = saved.get('model', defaults['model']), saved.get('access', defaults['access'])
         effort = saved.get('effort', defaults.get('effort'))
@@ -39,12 +49,22 @@ class BindingMixin:
             result = dict(result, activation=self.activation_message(message_output, prefetched))
         return result
 
+    @staticmethod
+    def kind_settings(state, agent):
+        """Saved settings for a new `agent`: its kind's newest running agent's, else the current agent's when it is
+        the same kind. Another kind's model and effort are never carried across."""
+        same = [item for item in state.get('owned') or [] if item.get('backend') == agent and item.get('settings')]
+        if same:
+            return max(same, key=lambda item: last_used(state, item['name']))['settings']
+        return (state.get('settings') or {}) if state.get('backend') in (None, agent) else {}
+
     def disable(self):
         # Admission stops before any slow ACPX operation. Late completions cannot reactivate.
         with self.store.edit() as state:
             self.store.discard_captured(state)
             self.store.signal_cancel(state)
-            state.pop('runner', None)
+            state.pop('runners', None)
+            state.pop('closeMenu', None)
             installer_run = (state.get('pending') or {}).get('installerRun')
             if installer_run:
                 state['stoppedInstallerRun'] = installer_run  # For off(): the routing hook disables first.
@@ -99,6 +119,110 @@ class BindingMixin:
             result['installerCancellation'] = setup_cancel
         return result
 
+    def close(self, name=None):
+        """`/cli close [name|all]` (= stop = off): one agent of several, a chooser, or everything.
+
+        Closing the last agent, or all of them, is `off`. With several and no name, the reply is a chooser;
+        its answer comes back as `close --name`.
+        """
+        state = self.store.read()
+        agents = live_agents(state, every=True)
+        if not name:
+            if len(agents) <= 1:
+                return self.off()
+            with self.store.edit() as latest:
+                latest['closeMenu'] = list(agents.values())
+            return dict(latest, activationMenu=frontends.close_menu(latest))
+        if name.casefold() == 'all':
+            return self.off()
+        found = names.resolve(name, agents)
+        if not found or found[0] != 'match':
+            raise RuntimeError('No running agent is named ' + name.upper() + '. /cli list shows them.')
+        return self.off() if len(agents) == 1 else self.close_one(found[1])
+
+    def close_one(self, session):
+        """Close one agent while the others keep working: its queue, its running turn, its session."""
+        with self.store.edit() as state:
+            owned = agent_entry(state, session)
+            if owned is None:
+                raise RuntimeError('That agent is already closed.')
+            label = agent_label(state, session)
+            for record in state.get('requests', {}).values():
+                if record['session'] == session and record['status'] == 'captured':
+                    record['status'] = 'superseded'
+                elif record['session'] == session and record['status'] in ('submitting', 'uncertain'):
+                    record['cancelRequested'] = True
+            self.store.signal_cancel(state, session)
+            (state.get('runners') or {}).pop(session, None)
+            if (state.get('pending') or {}).get('session') == session:
+                state['pending'] = None  # Its settings menu closes with it.
+            state.pop('closeMenu', None)
+            others = [item for item in state['owned'] if item['name'] != session and item.get('ready')]
+            was_current = state['main'] == session
+            if was_current:
+                # The most recently used of the others becomes the current agent.
+                current = max(others, key=lambda item: last_used(state, item['name'])) if others else None
+                state.update(main=current['name'] if current else None,
+                             backend=current['backend'] if current else state['backend'],
+                             settings=current['settings'] if current else state['settings'])
+            state['active'] = bool(others)
+            for item in state['owned']:
+                if item['name'] == session:
+                    item['ready'] = False  # Nothing more is sent to it.
+            owned = deepcopy(owned)
+            current = agent_label(state) if was_current and state['main'] else None  # Said only when it changed.
+        failure = self.cleanup(owned)
+        latest = self.settle_shutdown(session)
+        closed = not any(item['name'] == session for item in latest['owned'])
+        unwinding = {key: value for key, value in latest['inflight'].items() if value['session'] == session}
+        lines = [label + ' is closed.' if closed and not unwinding else label + ' is closing, but shutdown is not complete.']
+        if failure and not closed:
+            lines.append('Could not close it: ' + failure['error'])
+        if current:
+            lines.append(current + ' is the current agent.')
+        return dict(latest, closed=owned.get('alias'), shutdownComplete=closed and not unwinding,
+                    failures=[failure] if failure and not closed else [], message=' '.join(lines))
+
+    def make_current(self, name):
+        """`/cli use <name>`: plain /d prompts go to this agent from now on."""
+        with self.store.edit() as state:
+            found = names.resolve(name, live_agents(state))
+            if not found or found[0] != 'match':
+                raise RuntimeError('No running agent is named ' + name.upper() + '. /cli list shows them.')
+            owned = agent_entry(state, found[1])
+            state.update(main=owned['name'], backend=owned['backend'], settings=owned['settings'])
+            owned['lastUsedAt'] = time.time()
+            label = agent_label(state)
+        return dict(state, message=label + ' is the current agent: /d prompts without a name go to it.')
+
+    def agents(self, limit=None):
+        """`/cli list` (= agents): every running agent by name; `limit` sets how many may run at once."""
+        if limit is not None:
+            if not 1 <= limit <= 8:
+                raise ValueError('Choose an agent limit from 1 to 8.')
+            with self.store.edit() as state:
+                state['agentLimit'] = limit
+        state = self.store.read()
+        message = frontends.agents_text(state, self.agent_activity(state))
+        if limit is not None:
+            message = 'Up to ' + str(limit) + ' agents can run at once.\n' + message
+        return dict(state, message=message)
+
+    @staticmethod
+    def agent_activity(state):
+        """Each agent's queue at a glance: session -> 'working', 'N queued' or 'idle'."""
+        activity = {}
+        for item in state.get('owned') or []:
+            records = [record for record in (state.get('requests') or {}).values()
+                       if record.get('session') == item['name']]
+            queued = sum(record['status'] == 'captured' for record in records)
+            working = any(record['status'] == 'submitting' for record in records)
+            text = 'working' if working else 'idle'
+            if queued:
+                text += ', ' + str(queued) + ' queued'
+            activity[item['name']] = text if item.get('ready') else 'not ready'
+        return activity
+
     def config_cache(self):
         """Where the bridge may keep `acpx config show` output between processes."""
         folder = self.store.root / 'cache'
@@ -107,9 +231,10 @@ class BindingMixin:
 
     SHUTDOWN_SETTLE = 10.0
 
-    def settle_shutdown(self):
+    def settle_shutdown(self, session=None):
         """Give submitters of closed sessions a moment to unwind, so one `off`
-        reports a settled shutdown instead of the host sleeping and retrying."""
+        reports a settled shutdown instead of the host sleeping and retrying.
+        With `session`, only that closed agent's submitters are waited for."""
         until = time.monotonic() + self.SHUTDOWN_SETTLE
         while True:
             unwinding = False
@@ -122,8 +247,13 @@ class BindingMixin:
                     if value.get('closed') and not alive:
                         continue  # A closed session's submitter that exited has nothing left to report.
                     kept[key] = value
-                    unwinding |= alive
+                    unwinding |= alive and session in (None, value['session'])
                 latest['inflight'] = kept
+            if session is not None:
+                if not unwinding or time.monotonic() >= until:
+                    return latest
+                time.sleep(.25)
+                continue
             remaining = {item['name'] for item in latest['owned']}
             if not remaining and not latest['inflight']:
                 return latest
@@ -145,7 +275,7 @@ class BindingMixin:
         with self.store.edit() as state:
             if not self.valid(state, generation, pending):
                 raise RuntimeError('Operation canceled by mode transition.')
-            if pending_work(state):
+            if pending_work(state, session=owned['name']):
                 raise RuntimeError('Session has pending/uncertain work. Inspect or cancel it before changing settings.')
             # Like prompts, controls can reach the owner before the submitter
             # receives a response. Save custody before any external mutation.
@@ -284,34 +414,52 @@ class BindingMixin:
                 raise RuntimeError('Choose an agent before activating.')
             if require_hooks and not frontends.confirmed(self.store.root, target):
                 raise RuntimeError('Run First Time User Check before activation; install missing prerequisites separately.')
-            if pending_work(state):
+            # Tuning changes the agent it opened on; the activation page, bind and spawn start a new one.
+            session = state['pending'].get('session')
+            old = agent_entry(state, session) if session else None
+            if session and old is None:
+                raise RuntimeError('That agent was closed; no settings were applied.')
+            if old is not None and pending_work(state, session=session):
                 raise RuntimeError('Settle current work before changing settings.')
-            if ((not state['active'] and state['owned']) or len(state['owned']) > 1 or any(
-                    not item['ready'] or item['role'] != 'main' or item['name'] != state['main']
-                    for item in state['owned'])):
+            if ((not state['active'] and state['owned']) or any(
+                    not item['ready'] or item['role'] != 'main' for item in state['owned'])):
                 raise RuntimeError('Unfinished session cleanup remains. Run off successfully before activating.')
+            if old is None and len(state['owned']) >= agent_limit(state):
+                raise RuntimeError(str(len(state['owned'])) + ' agents are running, the limit. Close one first '
+                                   '(/cli close <name>), or raise the limit with /cli agents max <n>.')
+            name = state['pending'].get('name')
+            if old is None and name and any((item.get('alias') or '').casefold() == name.casefold()
+                                            for item in state['owned']):
+                raise RuntimeError('An agent named ' + name + ' is already running.')
             activation_id = state['pending']['id']
             origin_route = deepcopy(state.get('turnRoute'))
             completed_control = state['pending'].get('tuning') or (origin_route or {}).get('route') == 'bind'
             state['pending']['stage'] = 'verifying'
             generation = state['generation']
-            old = next((x for x in state['owned'] if x['name'] == state['main']), None)
             if old is not None and old.get('backend') not in (None, target):
-                raise RuntimeError('This conversation owns a ' + str(old.get('backend')) +
-                                   ' session. Run off successfully before activating another backend.')
+                raise RuntimeError('This agent is ' + str(old.get('backend')) + '; start a ' + target +
+                                   ' agent with /cli spawn instead.')
             reuse = old is not None
             owned = deepcopy(old) if reuse else dict(name='cli-mode-' + self.store.key[:12] + '-' + uuid.uuid4().hex[:12],
                     workspace=self.store.workspace, backend=target, role='main', settings=settings, ready=False)
+            if not reuse:
+                if any(item['name'] == owned['name'] for item in state['owned']):
+                    owned['name'] += '-' + str(len(state['owned']))  # Each agent's session name is its own.
+                if not name:
+                    taken = list(state.get('usedNames') or []) + [item.get('alias') for item in state['owned']]
+                    name = names.generate(target, owned['name'], [alias for alias in taken if alias])
+                    state['usedNames'] = (state.get('usedNames') or []) + [name]  # Never given out again.
+                owned['alias'] = name
             if not reuse and getattr(self.backend, 'profile', None):
                 owned['acpxProfile'] = self.backend.profile
             if hasattr(self.backend, 'prepare'):
                 self.backend.prepare(owned)
             if reuse:
-                # Reconfigure the same session. Partial failure must gate dispatch,
+                # Reconfigure the same session. Partial failure must gate dispatch to it,
                 # since the provider may have accepted only some of the settings.
                 owned.update(settings=settings, ready=False)
-                state['owned'] = [owned]
-                state['active'] = False
+                state['owned'] = [owned if item['name'] == owned['name'] else item for item in state['owned']]
+                state['active'] = any(item['ready'] for item in state['owned'])
             else:
                 state['owned'].append(owned)
         # Activation goes ahead: when this process shows the confirmation, its usage lookup (a local query
@@ -329,15 +477,18 @@ class BindingMixin:
                     raise RuntimeError('Activation canceled; routing remains off.')
                 for item in state['owned']:
                     if item['name'] == owned['name']:
-                        item.update(ready=True, providerSession=provider)
+                        item.update(ready=True, providerSession=provider, lastUsedAt=time.time())
                         if owned.get('transport') == 'native':
                             item['nativeModel'] = owned['nativeModel']
-                state.update(active=True, pending=None, main=owned['name'], settings=settings, backend=target)
+                state.update(active=True, pending=None)
+                if not reuse or owned['name'] == state['main'] or not state['main']:
+                    # A new agent becomes the current one; changing another agent's settings leaves it be.
+                    state.update(main=owned['name'], settings=settings, backend=target)
                 # A new user prompt owns its own route, even if its command is identical.
                 if (completed_control and origin_route and state.get('turnRoute') == origin_route
                         and origin_route['route'] in ('bind', 'tune', 'setup')):
                     state['turnRoute']['route'] = 'control-result'
-            return self.store.read()
+            return dict(self.store.read(), activated=owned['name'])
         except BaseException:
             if not reuse:
                 self.cleanup(owned)

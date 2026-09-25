@@ -10,6 +10,7 @@ import menu_view
 from operations import pending_work
 from presentation import menu_block
 from progress import PROGRESS_MODES, progress_mode
+from state import agent_entry, agent_label
 import viewer
 
 
@@ -21,9 +22,9 @@ class MenuMixin:
         access this runtime never advertised, and its menu may not even be able
         to render them.
         """
-        if agent == 'home' or state.get('backend') not in (None, agent):
+        if agent == 'home':
             return None
-        return state.get('settings')
+        return self.kind_settings(state, agent) or None
 
     def prefetch_usage(self, agent, model, access, effort=None):
         """Start the native usage lookup now, so it overlaps activation.
@@ -49,24 +50,28 @@ class MenuMixin:
         threading.Thread(target=lookup, name='cli-mode-usage', daemon=True).start()
         return agent, model, future
 
-    def activation_message(self, destination, prefetched=None):
+    def activation_message(self, destination, prefetched=None, session=None):
+        """The activation card of `session` (the agent just started or changed), or of the current agent."""
         import confirmation
         state = self.store.read()
-        owned = next((item for item in state['owned'] if item['name'] == state['main']), None)
+        owned = agent_entry(state, session)
         if not state['active'] or state.get('pending') or not owned or not owned.get('ready'):
             raise RuntimeError('No verified active agent to confirm.')
-        agent, settings = state['backend'], state['settings']
+        agent, settings = owned['backend'], owned['settings']
         prefetched, self.prefetched = prefetched or getattr(self, 'prefetched', None), None
         if prefetched and prefetched[:2] == (agent, settings['model']):
             summary = prefetched[2].result()
         else:
             summary = confirmation.usage(agent, settings, self.store.workspace)
         latest = self.store.read()
-        if any(latest.get(key) != state.get(key) for key in ('active', 'generation', 'main', 'backend', 'settings', 'pending')):
+        shown = ('backend', 'settings', 'ready', 'alias')  # What the card shows; /cli use only stamps lastUsedAt.
+        if (any(latest.get(key) != state.get(key) for key in ('active', 'generation', 'pending'))
+                or [(agent_entry(latest, owned['name']) or {}).get(key) for key in shown]
+                != [owned.get(key) for key in shown]):
             raise RuntimeError('Agent changed during usage lookup; activation confirmation was not rendered.')
         # Chat text (no view path) on Claude Code: its title in dark green, unless /cli color off.
         color = destination is None and host.chat_color(self.store.root)
-        text = confirmation.activation(agent, settings, summary, color=color)
+        text = confirmation.activation(agent, settings, summary, color=color, name=owned.get('alias'))
         if destination is None:
             return dict(text=text, usage=summary)  # Text hosts show the confirmation as chat text.
         return dict(text=text, usage=summary, messageView=dict(
@@ -81,12 +86,15 @@ class MenuMixin:
             entry = pending['entrypoint']
         return entry or fallback or self.agent
 
-    def settings_menu(self, dismiss=False):
-        """The active agent's settings page; no provider calls or activation."""
+    def settings_menu(self, dismiss=False, session=None):
+        """An agent's settings page (the current agent's unless `session`); no provider calls or activation."""
         with self.store.edit() as state:
             if not state['active']:
                 raise RuntimeError('Activate a CLI before opening its settings.')
-            if pending_work(state):
+            target = agent_entry(state, session or (state.get('pending') or {}).get('session'))
+            if target is None or not target.get('ready'):
+                raise RuntimeError('That agent is not running.')
+            if pending_work(state, session=target['name']):
                 raise RuntimeError('Settle current work before changing settings.')
             if (state.get('pending') or {}).get('stage') == 'verifying':
                 raise RuntimeError('Settings are being verified; wait before opening the menu.')
@@ -97,12 +105,17 @@ class MenuMixin:
                 state['turnRoute'] = dict(route='settings-result')
             else:
                 state['pending'] = dict(id=uuid.uuid4().hex, stage='menu', phase='settings',
-                    backend=state['backend'], entrypoint=state['backend'], draft={})
+                    backend=target['backend'], entrypoint=target['backend'], draft={}, session=target['name'])
                 state['turnRoute'] = dict(route='settings')
         if dismiss:
             return dict(state, message='Settings closed. CLI remains active.')
-        return dict(state, activationMenu=frontends.active_settings_menu(
-            state['backend'], state['settings'], progress_mode(state)))
+        return dict(state, activationMenu=self.settings_page(state, target['name']))
+
+    @staticmethod
+    def settings_page(state, session):
+        target = agent_entry(state, session)
+        return frontends.active_settings_menu(target['backend'], target['settings'], progress_mode(state),
+                                              target.get('alias'))
 
     def progress(self, choice=None):
         """A host display preference; never reconfigure or prompt the provider."""
@@ -114,9 +127,9 @@ class MenuMixin:
             state['turnRoute'] = dict(route='progress-result')
         result = dict(state, message='Progress: ' + progress_mode(state).title() +
             '. Use /cli progress activity for tool activity and usage, or /cli progress quiet for messages and plans. Changes apply to the next turn.')
-        if (state.get('pending') or {}).get('phase') == 'settings':
-            result['activationMenu'] = frontends.active_settings_menu(
-                state['backend'], state['settings'], progress_mode(state))
+        pending = state.get('pending') or {}
+        if pending.get('phase') == 'settings' and agent_entry(state, pending.get('session')):
+            result['activationMenu'] = self.settings_page(state, pending.get('session'))
         return result
 
     def view(self, choice=None):
@@ -131,7 +144,7 @@ class MenuMixin:
             message = 'Agent viewer: Off. Use /cli view on to watch each turn in a PowerShell window.'
             return dict(state, view='off', message=message if choice is None else
                         'Agent viewer: Off. An open viewer window closes itself.')
-        label = self.adapter.LABEL if state.get('backend') else 'Agent'
+        label = agent_label(state) if state.get('backend') else 'Agent'
         opened = viewer.launch(self.store, label)
         message = {'opened': 'Agent viewer: On. A PowerShell window now shows each turn as it runs.',
                    'running': 'Agent viewer: On. Its window is already open.',
@@ -152,8 +165,7 @@ class MenuMixin:
             # Display onboarding without writing outside the workspace or asking to escalate.
             return dict(current, activationMenu=menu, routingReadiness=routing, hostAccess=access)
         with self.store.edit() as state:
-            if pending_work(state):
-                raise RuntimeError('Settle current work before changing settings.')
+            # A new agent can start while others work: their queues are theirs alone.
             if (state.get('pending') or {}).get('stage') == 'verifying':
                 raise RuntimeError('Activation is already being verified; cancel it with off first.')
             state['pending'] = dict(id=uuid.uuid4().hex, stage='menu',
@@ -236,26 +248,31 @@ class MenuMixin:
                     state['pending']['onboarding'] = 'check'
         return result
 
-    def tune(self, phase):
+    def tune(self, phase, session=None):
+        """Open one setting's menu for an agent: `session`, the agent whose settings are open, or the current one."""
         if phase not in ('model', 'effort', 'access'):
             raise ValueError('Unknown tuning phase.')
-        self.use(self.agent_of(self.store.read()))
+        state = self.store.read()
+        session = session or (state.get('pending') or {}).get('session') or state.get('main')
+        target = agent_entry(state, session)
+        self.use(target['backend'] if target else self.agent_of(state))
         snapshot = self.adapter.catalog(self.store.root)
         with self.store.edit() as state:
-            if not state['active'] or not state['main']:
+            target = agent_entry(state, session)
+            if not state['active'] or not target or not target.get('ready'):
                 raise RuntimeError('No bound agent. /cli to activate. Say ' +
                                    ('/cli help' if host.claude() else '/help') + ' to see options.')
-            if pending_work(state) or (state.get('pending') or {}).get('stage') == 'verifying':
+            if pending_work(state, session=session) or (state.get('pending') or {}).get('stage') == 'verifying':
                 raise RuntimeError('Settle current work before changing settings.')
             state['pending'] = dict(id=uuid.uuid4().hex, stage='menu', phase=phase,
-                entrypoint=self.agent, backend=self.agent, tuning=True,
-                draft=dict(settings=deepcopy(state['settings']), snapshot=snapshot))
+                entrypoint=self.agent, backend=self.agent, tuning=True, session=session,
+                draft=dict(settings=deepcopy(target['settings']), snapshot=snapshot))
             # Only after admission may compaction restore a saved setup phase.
             if state.get('turnRoute', {}).get('route') == 'tune':
                 state['turnRoute']['route'] = 'setup'
         return state['pending']
 
-    def tune_choice(self, phase):
+    def tune_choice(self, phase, session=None):
         """Apply `/cli model|effort|access <text>` against the advertised options.
 
         The hook saved the typed text; the controller matches it, so the host
@@ -263,7 +280,7 @@ class MenuMixin:
         session; otherwise the phase menu is returned for a numbered reply.
         """
         choice = ((self.store.read().get('turnRoute') or {}).get('choice') or '').strip()
-        pending = self.tune(phase)
+        pending = self.tune(phase, session)
         draft = pending['draft']
         options = frontends.phase_options(self.store.root, self.agent, phase, draft['settings'], draft['snapshot'])
         matches = frontends.match_choice(options, choice, phase) if choice else []
@@ -336,7 +353,7 @@ class MenuMixin:
             return self.refresh()
         if action == 'b':
             if pending.get('tuning'):
-                return self.settings_menu()
+                return self.settings_menu(session=pending.get('session'))
             previous = {'access': 'effort', 'effort': 'model'}.get(phase)
             if previous:
                 return self.options(previous)
@@ -394,11 +411,11 @@ class MenuMixin:
         pending = state.get('pending') or {}
         if pending.get('stage') != 'menu' or pending.get('phase') != 'model':
             raise RuntimeError('Open the model menu before refreshing.')
-        if pending_work(state):
+        if pending_work(state, session=pending.get('session') or state.get('main')):
             raise RuntimeError('Wait for the running operation before refreshing.')
         target = self.agent_of(state)
         self.use(target)
-        owned = next((item for item in state['owned'] if item['name'] == state['main']
+        owned = next((item for item in state['owned'] if item['name'] == (pending.get('session') or state['main'])
                       and item['backend'] == target), None)
         if not owned or owned.get('transport') == 'native':
             result = self.options('model')
@@ -412,7 +429,8 @@ class MenuMixin:
             result.update(refreshed=False, catalogStatus='cached', message='Refresh failed; cached choices retained. ' + str(exc))
             return result
         with self.store.edit() as latest:
-            if latest['generation'] != state['generation'] or latest.get('pending') != pending or pending_work(latest):
+            if latest['generation'] != state['generation'] or latest.get('pending') != pending or pending_work(
+                    latest, session=pending.get('session') or latest.get('main')):
                 raise RuntimeError('Menu changed during refresh; catalog was not replaced.')
             catalogs.save(self.store.root, target, data)
             # Reset draft choices explicitly. Accepted runtime settings remain untouched.

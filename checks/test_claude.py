@@ -58,7 +58,7 @@ class Controls(unittest.TestCase):
         commands = help_view.text()
         self.assertIn('claude (Claude Code)', commands)
         self.assertIn('agy (Antigravity)', commands)
-        self.assertIn('/cli bind <agent>', commands)
+        self.assertIn('/cli bind|spawn <agent> [name]', commands)
 
 
 class Catalog(unittest.TestCase):

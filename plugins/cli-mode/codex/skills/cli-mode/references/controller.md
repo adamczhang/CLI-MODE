@@ -16,12 +16,19 @@ python $controller --thread $thread --workspace $project queue
 python $controller --thread $thread --workspace $project relay --request $requestId --cursor 0
 python $controller --thread $thread --workspace $project observe --request $requestId --cursor 0
 python $controller --thread $thread --workspace $project resume
-python $controller --thread $thread --workspace $project bind
-python $controller --thread $thread --workspace $project tune --phase effort
+python $controller --thread $thread --workspace $project bind --agent grok-build --name ELON
+python $controller --thread $thread --workspace $project tune --phase effort --name COD-7K
 python $controller --thread $thread --workspace $project commands
-python $controller --thread $thread --workspace $project cancel
+python $controller --thread $thread --workspace $project agents --max 4
+python $controller --thread $thread --workspace $project use --name COD-7K
+python $controller --thread $thread --workspace $project cancel --name COD-7K
+python $controller --thread $thread --workspace $project close --name COD-7K
 python $controller --thread $thread --workspace $project off
 ```
+
+`--name` takes an agent's name in any case (`COD-7K`, `cod7k`, or `-7K` when only one
+running agent has that id); without it, the current agent is meant. `close` without
+a name returns a chooser menu when several agents run, and is `off` otherwise.
 
 `frontend` records setup pending and returns `activationMenu` using accepted
 settings, or the initial defaults on first use. Display that text and wait.
@@ -34,18 +41,23 @@ Call `activate` after a menu selection or resolved tuning choice. `bind` authori
 lookup alongside activation. It verifies the native
 settings and a read-only response containing a fresh readiness marker before
 marking the mode active. A normal transport completion carrying a refusal or
-paywall message without the marker is not readiness. Repeated
-activation and settings changes reconfigure the same main session. No candidate
-or worker session is created. While applying settings, dispatch is gated; failed
-reconfiguration stays inactive/pending with ownership retained for off/cleanup.
+paywall message without the marker is not readiness. `bind`, and `activate` from an
+agent's activation page, start a NEW agent session (up to the agent limit) that
+becomes current; other agents are untouched. Settings changes (`tune`, the settings
+menu) reconfigure the session they opened on. While applying settings, dispatch to
+that agent is gated; a failed reconfiguration leaves it not ready, with ownership
+retained for close/off.
 Do not claim the old settings are still accepted after a partial failure.
 Runtime adapters are registered in `scripts/adapters.py`; this release
 implements `agy` (Antigravity CLI), `claude` (Claude Code CLI),
 `grok-build` (Grok Build CLI, also reachable as `grok`), `cursor` (Cursor CLI)
 `copilot` (GitHub Copilot CLI) and `codex` (Codex CLI). A registry
 record in backends.json alone is discovery metadata, not an implementation.
-A conversation binds one backend at a time, and an owned session belonging to
-another backend blocks activation until off/cleanup succeeds.
+A conversation runs up to `agentLimit` (4, at most 8) agent sessions of any
+backends. Each owned entry keeps its `alias` (its name), settings and `lastUsedAt`;
+`main` is the current agent and `backend`/`settings` mirror it. Each agent has its
+own FIFO queue and worker (`runners`, keyed by session), so agents work side by
+side; captured requests record their `session`, `agent` and `name`.
 
 Only a `/d` or `$d` prompt reaches the agent (Passthrough mode was removed;
 a conversation saved in it opens in Direct mode, and a request it already
@@ -185,8 +197,10 @@ continuity uncertainty without silently appending a brief. Explicit settings
 changes may rotate a provider ID, which is verified before accepting the binding.
 
 The controller exposes no worker creation or per-session dispatch commands.
-`send` targets only the main session. Extra/legacy ownership blocks dispatch and
-activation until off/cleanup completes. `off` gates routing first, cancels and
+`send` targets only the current agent. Legacy (non-agent) ownership blocks dispatch
+and activation until off/cleanup completes. `close --name` closes one agent: its
+queued requests are superseded, its running turn is canceled and its session
+closed, while the other agents keep working. `off` gates routing first, cancels and
 closes all recorded ownership (including legacy workers), and reports incomplete
 shutdown if operations are still finishing.
 Repeat off to verify final cleanup after those operations settle; never kill

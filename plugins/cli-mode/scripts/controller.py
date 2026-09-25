@@ -22,7 +22,8 @@ from operations import emit, operation_running, pending_work, status_age  # noqa
 from presentation import chat_menu, menu_block, relay_plain
 from progress import PROGRESS_MODES
 from queue_worker import QueueMixin
-from state import Store, route
+from state import Store, agent_label, live_agents, passing_line, route
+import names
 
 
 class Controller(QueueMixin, MenuMixin, BindingMixin, DispatchMixin):
@@ -45,6 +46,15 @@ class Controller(QueueMixin, MenuMixin, BindingMixin, DispatchMixin):
         self.backend = self.override or self.adapter.Backend()
         return self.adapter
 
+    def session_of(self, name):
+        """The session of the agent `name` names (any case, `cod7k`, `-7K`), or None for no name."""
+        if not name:
+            return None
+        found = names.resolve(name, live_agents(self.store.read(), every=True))
+        if not found or found[0] != 'match':
+            raise RuntimeError('No running agent is named ' + name.upper() + '. /cli list shows them.')
+        return found[1]
+
 
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -59,6 +69,9 @@ def build_parser():
     for name in ('status', 'off', 'refresh', 'activation-message', 'queue', 'resume'):
         sub.add_parser(name)
     sub.add_parser('commands')
+    p = sub.add_parser('close'); p.add_argument('--name')
+    p = sub.add_parser('use'); p.add_argument('--name', required=True)
+    p = sub.add_parser('agents'); p.add_argument('--max', type=int)
     p = sub.add_parser('observe'); p.add_argument('--request', required=True)
     p.add_argument('--cursor', type=int, default=0); p.add_argument('--limit', type=int, default=100)
     p = sub.add_parser('relay'); p.add_argument('--request', required=True, action='append')
@@ -66,13 +79,14 @@ def build_parser():
     p.add_argument('--view-dir')
     p = sub.add_parser('follow'); p.add_argument('--request', required=True)
     p = sub.add_parser('pump', help=argparse.SUPPRESS); p.add_argument('--token', required=True)
+    p.add_argument('--session')
     p = sub.add_parser('choose'); p.add_argument('number', type=int)
     p = sub.add_parser('navigate'); p.add_argument('action', choices=['b', 'r', '>', '<'])
-    p = sub.add_parser('settings'); p.add_argument('--dismiss', action='store_true')
+    p = sub.add_parser('settings'); p.add_argument('--dismiss', action='store_true'); p.add_argument('--name')
     p = sub.add_parser('progress'); p.add_argument('--choice', choices=PROGRESS_MODES)
     p = sub.add_parser('view'); p.add_argument('--choice', choices=('on', 'off'))
     p = sub.add_parser('catalog'); p.add_argument('--agent')
-    p = sub.add_parser('bind'); p.add_argument('--agent', default='agy')
+    p = sub.add_parser('bind'); p.add_argument('--agent', default='agy'); p.add_argument('--name')
     p = sub.add_parser('frontend'); p.add_argument('--agent', default='agy'); p.add_argument('--page', type=int, default=1)
     p = sub.add_parser('options'); p.add_argument('--agent'); p.add_argument('--page', type=int, default=1)
     p.add_argument('--phase', choices=['model', 'effort', 'access'], required=True)
@@ -90,10 +104,11 @@ def build_parser():
     p.add_argument('--effort'); p.add_argument('--agent')
     p = sub.add_parser('tune'); p.add_argument('--phase', choices=['model', 'effort', 'access'], required=True)
     p.add_argument('--apply', action='store_true', help='Match and apply the text typed after the command.')
+    p.add_argument('--name', help='The agent to change; the current agent by default.')
     p = sub.add_parser('send')
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument('--file'); source.add_argument('--request')
-    sub.add_parser('cancel')
+    p = sub.add_parser('cancel'); p.add_argument('--name')
     p = sub.add_parser('acknowledge'); p.add_argument('--operation', required=True)
     return parser
 
@@ -129,7 +144,7 @@ def run(args, control=None):
         if views:
             raise ValueError('follow is for a host without inline views (Claude Code).')
         result = control.follow(args.request, write=lambda line: print(line, flush=True))
-    elif command == 'pump': result = control.pump(args.token)
+    elif command == 'pump': result = control.pump(args.token, args.session)
     elif command == 'activation-message':
         if views and not args.message_output:
             raise ValueError('activation-message requires --message-output.')
@@ -142,10 +157,10 @@ def run(args, control=None):
             control.prefetching = False
         activated = result.get('active') and not result.get('pending') and 'activationMenu' not in result
         if confirming and activated:
-            result = dict(result, activation=control.activation_message(confirm_to))
+            result = dict(result, activation=control.activation_message(confirm_to, session=result.get('activated')))
     elif command == 'refresh': result = control.refresh()
     elif command == 'navigate': result = control.navigate(args.action)
-    elif command == 'settings': result = control.settings_menu(args.dismiss)
+    elif command == 'settings': result = control.settings_menu(args.dismiss, control.session_of(args.name))
     elif command == 'progress': result = control.progress(args.choice)
     elif command == 'view': result = control.view(args.choice)
     elif command == 'catalog':
@@ -162,7 +177,8 @@ def run(args, control=None):
         with Path(args.file).open(encoding='utf-8-sig', newline='') as source:
             text = source.read()
             if args.kind == 'passing':
-                text = control.adapter.PASSING
+                current = control.store.read()  # The current agent by name; another kind by its label alone.
+                text = passing_line(agent_label(current) if current.get('backend') == target else label)
             elif args.kind == 'activation':
                 raise ValueError('Use activation-message for the verified shared activation template.')
             result = {'messageView': dict(
@@ -174,16 +190,17 @@ def run(args, control=None):
         target = args.agent or control.agent_of(control.store.read())
         result = menu_view.write_progress(args.file, args.message_output, control.use(target).LABEL)
     elif command == 'format-menu': result = {'text': menu_block(Path(args.file).read_text(encoding='utf-8-sig'))}
-    elif command == 'bind': result = control.bind(args.agent, message_output=confirm_to, confirm=confirming)
+    elif command == 'bind':
+        result = control.bind(args.agent, message_output=confirm_to, confirm=confirming, name=args.name)
     elif command == 'tune' and args.apply:
         control.prefetching = confirming  # A setting change reactivates, as a menu choice does.
         try:
-            result = control.tune_choice(args.phase)
+            result = control.tune_choice(args.phase, control.session_of(args.name))
         finally:
             control.prefetching = False
         if confirming and result.get('active') and not result.get('pending'):
-            result = dict(result, activation=control.activation_message(confirm_to))
-    elif command == 'tune': result = control.tune(args.phase)
+            result = dict(result, activation=control.activation_message(confirm_to, session=result.get('activated')))
+    elif command == 'tune': result = control.tune(args.phase, control.session_of(args.name))
     elif command == 'frontend': result = control.frontend(args.agent, args.page)
     elif command == 'options':
         current = control.store.read()
@@ -201,8 +218,8 @@ def run(args, control=None):
         current = control.store.read()
         target = args.agent or control.agent_of(current)
         defaults = control.use(target).DEFAULTS
-        # Another backend's saved model never seeds this one.
-        saved = (current.get('settings') or {}) if current.get('backend') in (None, target) else {}
+        # The settings its activation page showed; another backend's saved model never seeds this one.
+        saved = control.kind_settings(current, target)
         model = args.model or saved.get('model', defaults['model'])
         access = args.access or saved.get('access', defaults['access'])
         effort = args.effort or saved.get('effort', defaults.get('effort'))
@@ -211,13 +228,16 @@ def run(args, control=None):
         if confirming:
             result = dict(result, activation=control.activation_message(confirm_to, prefetched))
     elif command == 'off': result = control.off()
+    elif command == 'close': result = control.close(args.name)
+    elif command == 'use': result = control.make_current(args.name)
+    elif command == 'agents': result = control.agents(args.max)
     elif command == 'send':
         if args.request:
             result = control.send_request(args.request)
         else:
             with Path(args.file).open(encoding='utf-8-sig', newline='') as source:
                 result = control.send(source.read())
-    elif command == 'cancel': result = control.cancel()
+    elif command == 'cancel': result = control.cancel(control.session_of(args.name))
     else:
         result = control.acknowledge(args.operation)
     block = result.get('activationMenu') or (result.get('text') if command == 'format-menu' else None)

@@ -17,7 +17,9 @@ as when the user presses Esc. After each turn it asserts:
 
 --extras adds the Codex-only checks: gates (the Full Access gate: a thread without Full
 Access must be refused, B6), format (the formatting prompt through the host, R1 and R2 as
-posted), viewer (L8 under the Codex host). Codex's rate limits are read before and after.
+posted), viewer (L8 under the Codex host), and agents: two named agents at once (--agent and
+Codex CLI), each sent a task by name, listed, then closed one at a time. Codex's rate limits
+are read before and after.
 
 It spends real quota: Codex turns on your plan, and the agent's own account.
 Evidence goes to %TEMP%\\cmv\\codex-<agent>-<depth>-<time>.
@@ -48,7 +50,9 @@ VERSION = json.loads((PROJECT / 'plugins/cli-mode/.codex-plugin/plugin.json').re
     'version'].split('+')[0]
 INSTALLED = CODEX_HOME / 'plugins' / 'cache' / 'cli-mode' / 'cli-mode' / VERSION
 AGENTS = ('claude', 'copilot', 'agy', 'grok-build', 'codex', 'cursor')
-EXTRAS = ('gates', 'format', 'viewer')
+EXTRAS = ('gates', 'format', 'viewer', 'agents')
+LABELS = {'claude': 'Claude', 'copilot': 'Copilot', 'agy': 'Antigravity', 'grok-build': 'Grok', 'codex': 'Codex',
+          'cursor': 'Cursor'}
 # CLI-MODE writes U+E200 visualize U+E202 {...} U+E201; a model has been seen to write U+E000/E002/E001.
 REFERENCE = re.compile('[]visualize[](\\{.*?\\})[]')
 
@@ -357,6 +361,44 @@ def extra_viewer(session, agent):
     return [row('viewer', ['L8', 'L1', 'L2', 'L9'], [a, b, c])]
 
 
+def extra_agents(session, agent, second='codex'):
+    """Two named agents at once: each gets a task by name and answers under its own name; closing one leaves
+    the other running; closing the last turns CLI-MODE off."""
+    if session.state().get('active'):
+        session.send('/cli stop', 'agents')
+
+    def newest():
+        owned = session.state().get('owned') or []
+        return max(owned, key=lambda item: item.get('lastUsedAt') or 0).get('alias') if owned else None
+    a = session.send('/cli spawn ' + agent, 'agents')
+    first = newest()
+    b = session.send('/cli spawn ' + second, 'agents')
+    second_name = newest()
+    turns = [a, b]
+    scenarios.expect(b, first and second_name and first != second_name and
+                     len(session.state().get('owned') or []) == 2, 'two agents did not start')
+    for name, kind, word in ((first, agent, 'alpha'), (second_name, second, 'beta')):
+        if not name:
+            continue
+        t = session.send('/d ' + name.lower() + ' Reply with only the word ' + word + '.', 'agents')
+        label = LABELS[kind] + ' ' + name
+        shown = session.shown(t)
+        scenarios.expect(t, 'Passing to ' + label in shown, 'no "Passing to ' + label + '"')
+        scenarios.expect(t, label + ' says' in shown and word in shown.casefold(),
+                         'the answer did not come back under "' + label + ' says"')
+        turns.append(t)
+    listed = session.send('/cli list', 'agents')
+    scenarios.expect(listed, first and second_name and first in session.shown(listed)
+                     and second_name in session.shown(listed), '/cli list did not name both agents')
+    closed = session.send('/cli close ' + (first or ''), 'agents')
+    left = [item.get('alias') for item in session.state().get('owned') or []]
+    scenarios.expect(closed, left == [second_name] and session.state().get('active'),
+                     'closing ' + str(first) + ' did not leave only ' + str(second_name) + ': ' + json.dumps(left))
+    off = session.send('/cli close', 'agents')
+    scenarios.expect(off, not session.state().get('active'), '/cli close with one agent left did not turn CLI-MODE off')
+    return [row('agents', ['N1'], turns + [listed, closed, off])]
+
+
 def run(agent, depth, extras, keep):
     if not (INSTALLED / 'scripts' / 'controller.py').is_file():
         raise SystemExit('CLI-MODE %s is not installed in %s' % (VERSION, CODEX_HOME))
@@ -376,6 +418,8 @@ def run(agent, depth, extras, keep):
                     sessions.append(other)
                 elif name == 'format':
                     rows = extra_format(session, agent, evidence)
+                elif name == 'agents':
+                    rows = extra_agents(session, agent)
                 else:
                     rows = extra_viewer(session, agent)
             except Exception as exc:

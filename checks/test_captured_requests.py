@@ -349,8 +349,8 @@ class CapturedRequests(unittest.TestCase):
         inspections = []
         def inspect(owned):
             inspections.append(owned['settings']['access'])
-            for change in (lambda: self.control.tune('access'), self.control.settings_menu,
-                           self.control.frontend):
+            # Opening a new agent's page (frontend) is not a change to this one: it is never held.
+            for change in (lambda: self.control.tune('access'), self.control.settings_menu):
                 with self.assertRaisesRegex(RuntimeError, 'Settle current work'):
                     change()
             return original(owned)

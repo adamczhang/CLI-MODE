@@ -70,6 +70,7 @@ scripts/host.py
 scripts/installer.py
 scripts/menu_view.py
 scripts/menus.py
+scripts/names.py
 scripts/native_agy.py
 scripts/native_commands.py
 scripts/operations.py

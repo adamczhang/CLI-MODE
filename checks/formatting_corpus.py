@@ -65,7 +65,8 @@ CASES = {
     'unclosed-fence': '```bash\necho unclosed',
 }
 PREAMBLE = "I'll look at calc.py first, then answer."
-LABEL = 'Antigravity'  # The adapter the offline Controller binds to; its label heads every relay.
+NAME = 'AGY-4K'  # The offline agent's name: a fixed one, so every run renders the same.
+LABEL = 'Antigravity ' + NAME  # The adapter the offline Controller binds to, and the name; it heads every relay.
 
 
 def answer():
@@ -130,6 +131,8 @@ def settled_controller(root, turn, progress='activity'):
     control = Controller(Store('corpus', Path(root) / 'workspace', Path(root) / 'state'), FakeBackend())
     control.frontend()
     control.activate('gemini-3.8-flash-high', 'allow')
+    with control.store.edit() as state:
+        state['owned'][0]['alias'] = NAME
     control.progress(progress)
     request = uuid.uuid4().hex
     store = control.store

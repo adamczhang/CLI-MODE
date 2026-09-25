@@ -12,7 +12,7 @@
     "logo": "./assets/icon.jpg",
     "logoDark": "./assets/icon.jpg",
     "shortDescription": "Use six persistent CLI agents through ACPX: send a prompt to one with /d.",
-    "longDescription": "CLI-MODE sends /d prompts to one persistent CLI agent through a queue; every other message stays with the host. Select an agent with /cli or /cli <agent>. Each backend provides setup, public tool and message progress, and the quota reporting its runtime supports.",
+    "longDescription": "CLI-MODE sends /d prompts to persistent, named CLI agents (several at once, each with its own queue); every other message stays with the host. Select an agent with /cli or /cli <agent>. Each backend provides setup, public tool and message progress, and the quota reporting its runtime supports.",
     "developerName": "CLI-MODE Project",
     "category": "Productivity",
     "capabilities": [],

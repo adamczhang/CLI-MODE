@@ -290,9 +290,36 @@ def controller_relay(s):
             dict(step='cli resume after completion', output=s.cli('resume'))]
 
 
+def several_agents(s):
+    """Two named agents: spawn a second, a named /d, the list, the current agent, the close chooser, close one."""
+    s.activate()
+    c = s.control
+    first = s.store.read()['owned'][0]['alias']
+
+    def spawn():  # What `bind --agent agy --name ELON` does, without scanning this machine's CLIs.
+        c.frontend('agy')
+        with s.store.edit() as state:
+            state['pending']['name'] = 'ELON'
+        return c.activate('gemini-3.8-flash-high', 'allow', agent='agy')
+
+    def named_send():
+        request = s.store.read()['turnRoute']['requestId']
+        s.backend.events = [dict(type='message', text='Parsed.\n')]
+        return c.send_request(request, output=lambda event: None)
+
+    return turns(s, '/cli spawn agy elon', ('bind --agent agy --name ELON', spawn),
+                 '/cli spawn agy ' + first.replace('-', ''), '/cli list', ('agents', c.agents),
+                 '/d elon Explain the parser', ('send --request', named_send),
+                 '/d -' + first[-2:] + ' short form', '/d COD-99 unknown', '/cli use ' + first,
+                 ('use --name ' + first, lambda: c.make_current(first)), '/cli agents max 2',
+                 ('agents --max 2', lambda: c.agents(2)), '/cli spawn agy', '/cli settings elon',
+                 '/cli close', ('close', c.close), 'x', '/cli close', ('close', c.close), '2',
+                 ('close --name ELON', lambda: c.close('ELON')), '/cli close', '/cli stop elon')
+
+
 SCENARIOS = [inactive_basics, home_flow, frontend_each_agent, setup_replies, reactivation_menu, help_flow,
              bind_routes, active_direct, active_settings, saved_passthrough, compaction_restores, resume_blocked,
-             controller_menus, controller_relay]
+             controller_menus, controller_relay, several_agents]
 
 
 def record():

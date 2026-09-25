@@ -18,6 +18,7 @@ Copilot or Codex CLI, and relays their answers back into the chat you were alrea
 | Feature | Claude Code | Codex |
 |---|:---:|:---:|
 | Six agents, setup, `/d` prompts, Agent Settings | ✓ | ✓ |
+| Several named agents at once (`/cli spawn`, `/cli list`) | ✓ | ✓ |
 | Queue, cancel, resume, provider slash commands | ✓ | ✓ |
 | Live viewer window (`/cli view`) | ✓ | ✓ |
 | Agents listed on the background tasks panel | ✓ | — |
@@ -61,8 +62,8 @@ come back into your conversation. No second app, no second chat window, no termi
 | GitHub Copilot | `/cli copilot` | [Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-chat/use-copilot-chat-in-the-command-line) |
 | Codex CLI | `/cli codex` | [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) |
 
-One agent runs per conversation, in that conversation's working folder, using its own account and model
-access. To switch agents, run `/cli stop` first; conversations do not transfer between providers.
+Each agent runs in the conversation's working folder, using its own account and model access. Up to four run
+at once, in any mix (see [Several agents](#several-agents)); conversations do not transfer between providers.
 
 ## Install
 
@@ -108,8 +109,8 @@ Release **0.3.1** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.
 3. On Codex, if prompted, approve the hooks under **Plugins → CLI-MODE → Hooks → Review / Trust all**, then
    recheck setup.
 4. Accept the defaults or choose the model, effort and access.
-5. Send your prompt. CLI-MODE announces `Passing to Claude...`, for example, and relays the answer under
-   `Claude says...`.
+5. Send your prompt. CLI-MODE announces `Passing to Claude CLA-4F...`, for example, and relays the answer
+   under `Claude CLA-4F says...`. `CLA-4F` is the agent's name.
 
 ## Sending a prompt to the agent
 
@@ -123,14 +124,36 @@ host, so you decide exactly what each agent is asked:
 `/d` does not activate an agent on its own. Messages sent while the agent is busy queue up and go out in order; see [Architecture](docs/ARCHITECTURE.md)
 for how the queue works.
 
+## Several agents
+
+Every agent has a name, shown in capitals: one you give it (`/cli spawn grok ELON`, 1-10 letters and digits)
+or a generated one such as `GRO-4K`. Start another agent at any time, even while others work; the newest
+becomes the current agent, the one a plain `/d` goes to. Put a name first to send to another:
+
+```text
+/d gro-4k Review the parser changes.
+/d elon Write tests for the parser.
+```
+
+Names match in any case, and a generated name also as `gro4k`, or as `-4K` when only one running agent has
+that ending. Each agent has its own queue, so they work side by side, and each answer is relayed under its
+own name (`Grok GRO-4K says...`). `/cli list` shows them all, `/cli use <name>` changes the current agent, and
+`/cli close <name>` closes one while the others keep working.
+
 ## Settings and commands
 
 - **`/cli`** — choose an agent or run setup.
-- **`/cli bind <agent>`** — activate with saved defaults, after readiness checks.
-- **`/cli menu`** or **`/cli model`** — open the Agent Settings page.
-- **`/cli model <choice>`**, **`/cli effort <choice>`**, **`/cli access <choice>`** — change a setting.
-  CLI-MODE matches your wording (for example `opus`, `extra high` or `bypass permissions`) against the agent's
-  options and applies a unique match; if the choice is unclear it shows the menu.
+- **`/cli spawn <agent> [name]`** (or **`/cli bind`**) — start an agent with saved defaults, after readiness
+  checks.
+- **`/cli list`** (or **`/cli agents`**) — the running agents by name; **`/cli agents max <n>`** sets how many
+  can run at once (4 by default, up to 8).
+- **`/cli use <name>`** — make that agent the current one.
+- **`/cli menu [name]`** (or **`/cli settings`**) — open an agent's settings page; the current agent's by
+  default.
+- **`/cli model <choice>`**, **`/cli effort <choice>`**, **`/cli access <choice>`** — change a setting, with an
+  agent's name first for another agent (`/cli model elon opus`). CLI-MODE matches your wording (for example
+  `opus`, `extra high` or `bypass permissions`) against the agent's options and applies a unique match; if the
+  choice is unclear it shows the menu.
 - **`/cli progress activity`** or **`/cli progress quiet`** — show tool activity and usage (default), or only
   messages and plans. Applies from the next turn.
 - **`/cli view on`** or **`/cli view off`** — watch each agent turn live in its own PowerShell window: the
@@ -138,9 +161,11 @@ for how the queue works.
   conversation. Closing the window is safe; the next turn reopens it until you turn it off.
 - **`/cli queue`** — see queued, running and completed requests; **`/cli resume`** picks up monitoring of
   existing turns without resending anything.
-- **`/cli cancel`** — cancel the running turn, keeping queued follow-ups.
-- **`/cli stop`** — stop the agent and return to your host.
-- **`/help`** (Codex) or **`/cli help`** (Claude Code) — show the command card. Reply X to close it.
+- **`/cli cancel [name]`** — cancel an agent's running turn, keeping queued follow-ups.
+- **`/cli close [name|all]`** (or **`/cli stop`**, **`/cli off`**) — close one agent, or all of them. With
+  several running and no name, it asks which. Closing the last agent returns you to your host.
+- **`/help`** (Codex) or **`/cli help`** (Claude Code, also **`/cli commands`**) — show the command card. Reply
+  X to close it.
 
 `$` works in place of `/`, and controls are case-insensitive. Help and controls always stay local.
 Closing help or settings keeps the agent running.
@@ -236,7 +261,8 @@ At **Allow** access an agent can edit files and run commands without asking, the
   `/reload-plugins` or start a new session. "This session loaded an older plugin" means the same.
 - **Activation fails:** check the agent CLI's sign-in, model access and quota. Antigravity's CLI and ACP
   runtime are set up separately.
-- **Switching agents is blocked:** run `/cli stop`, then choose the other agent.
+- **Starting another agent is refused:** four agents are running, the limit. Close one with
+  `/cli close <name>`, or raise it with `/cli agents max <n>`.
 - **A turn stopped on a permission request:** the agent needed an approval its access level cannot give. Use
   `/cli access allow`, or ask for work that needs no approval.
 - **Odd behaviour after an upgrade:** from a source checkout, run

@@ -287,6 +287,15 @@ def queue_text(result):
     return '\n'.join(lines)
 
 
+def close_text(result):
+    """`/cli close`: the chooser when several agents run, one agent's close, or the full shutdown."""
+    if isinstance(result.get('activationMenu'), str):
+        return result_text(result)
+    if 'closed' in result:
+        return result.get('message') or ''
+    return shutdown_text(result)
+
+
 def shutdown_text(result):
     """`/cli stop` as plain lines, reporting exactly what shutdown verified."""
     if result.get('shutdownComplete'):

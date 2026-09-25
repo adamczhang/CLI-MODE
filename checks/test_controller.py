@@ -142,7 +142,10 @@ class SettingChanges(unittest.TestCase):
         self.backend.prompts, self.backend.calls = 0, []
 
     def activate(self):
-        self.control.frontend('codex')
+        if self.control.store.read()['active']:
+            self.control.tune('access')  # A running agent's settings change through its settings, not a new agent.
+        else:
+            self.control.frontend('codex')
         defaults = self.control.adapter.DEFAULTS
         return self.control.activate(defaults['model'], defaults['access'], effort=defaults.get('effort'), agent='codex')
 
@@ -186,7 +189,10 @@ class Tests(unittest.TestCase):
         self.control = Controller(self.store, self.backend)
 
     def activate(self, model='gemini-3.8-flash-high', access='allow'):
-        self.control.frontend()
+        if self.store.read()['active']:
+            self.control.tune('access')  # A running agent's settings change through its settings, not a new agent.
+        else:
+            self.control.frontend()
         return self.control.activate(model, access)
 
     def test_acpx_backends_bootstrap_before_strict_readiness(self):
@@ -551,7 +557,7 @@ class Tests(unittest.TestCase):
 
     def test_failed_setting_change_gates_partially_configured_session(self):
         old = self.activate()
-        self.control.frontend()
+        self.control.tune('effort')  # A setting change on the running agent (the activation page starts another).
         self.backend.fail = True
         with self.assertRaises(RuntimeError): self.control.activate('gemini-3.8-flash-low', 'prompt')
         current = self.store.read()
@@ -567,6 +573,7 @@ class Tests(unittest.TestCase):
         new = self.activate('gemini-pro-agent', 'prompt')
         self.assertEqual(old['main'], new['main'])
         self.assertNotIn(old['main'], self.backend.closed)
+        self.assertEqual(new.pop('activated'), old['main'])  # The agent the change applied to.
         self.assertEqual(new, self.store.read())
         self.assertEqual(len(new['owned']), 1)
         self.assertEqual(new['owned'][0]['settings'], new['settings'])

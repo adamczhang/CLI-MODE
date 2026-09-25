@@ -152,11 +152,11 @@ def menu(root, agent, settings=None, routing=None, access=None, page=1):
     return menu_block(text + '\nB. Back to agents')
 
 
-def settings_text(agent, settings=None):
+def settings_text(agent, settings=None, name=None):
     """Structured settings fields; adapter prose is never parsed as a UI API."""
     adapter = adapters.module(agent)
     selected = settings or adapter.selection(adapter.CATALOG.parent, **adapter.DEFAULTS)
-    return '\n'.join(['CLI-MODE', 'Agent Settings', '', adapter.DISPLAY_NAME,
+    return '\n'.join(['CLI-MODE', 'Agent Settings', '', adapter.DISPLAY_NAME + (' ' + name if name else ''),
                       'Model: ' + selected['modelName'], 'Effort: ' + effort_display(selected['effort']),
                       'Access: ' + access_display(selected['access'], selected.get('accessName')) +
                       access_note(selected['access'])])
@@ -177,10 +177,39 @@ def selected_key(root, backend, phase, settings, snapshot=None):
     return selected.get('effortValue') if family.get('modelId') else model
 
 
-def active_settings_menu(agent, settings, progress=DEFAULT_PROGRESS_MODE):
-    text = settings_text(agent, settings)
+def active_settings_menu(agent, settings, progress=DEFAULT_PROGRESS_MODE, name=None):
+    text = settings_text(agent, settings, name)
     return menu_block(text + '\nProgress: ' + progress.title() +
         '\n\n1. Change model\n2. Change effort\n3. Change access\n4. Toggle activity progress\nX. Close settings')
+
+
+def close_menu(state):
+    """The `/cli close` chooser, when several agents run: numbered names, all, or cancel."""
+    from state import agent_entry, agent_label
+    rows = []
+    for number, session in enumerate(state.get('closeMenu') or [], 1):
+        if agent_entry(state, session):
+            rows.append(str(number) + '. ' + agent_label(state, session) +
+                        (' (current)' if session == state.get('main') else ''))
+    return menu_block('CLI-MODE\nClose Agent\n\n' + '\n'.join(rows) + '\nA. All agents\nX. Cancel')
+
+
+def agents_text(state, activity):
+    """`/cli list`: every running agent by name, its settings and what it is doing."""
+    from state import agent_label, agent_limit
+    owned = sorted(state.get('owned') or [], key=lambda item: item['name'] != state.get('main'))
+    if not owned:
+        return 'No agent is running. /cli spawn <agent> starts one.'
+    lines = ['Agents: ' + str(len(owned)) + ' of ' + str(agent_limit(state))]
+    for item in owned:
+        settings = item.get('settings') or {}
+        lines.append(agent_label(state, item['name']) +
+                     (' (current)' if item['name'] == state.get('main') else '') + ': ' + activity[item['name']])
+        if settings.get('modelName'):
+            lines.append('  ' + settings['modelName'] + ' · ' + effort_display(settings.get('effort')) + ' · ' +
+                         access_display(settings.get('access'), settings.get('accessName')))
+    lines.append('/d <name> <prompt> sends to one; /cli use <name> makes it current.')
+    return '\n'.join(lines)
 
 
 def phase_options(root, backend, phase, settings=None, snapshot=None):

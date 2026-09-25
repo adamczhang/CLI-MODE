@@ -70,6 +70,11 @@ class ClaudeHook(unittest.TestCase):
         control.frontend()
         control.activate('gemini-3.8-flash-high', 'allow')
 
+    def name(self):
+        """The current agent as CLI-MODE names it: `Antigravity AGY-XY` (its generated name varies by run)."""
+        from state import agent_label
+        return agent_label(self.store().read())
+
     def command(self, *words):
         event = dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='PreToolUse')
         return claude.command(event, self.data, *words)
@@ -208,7 +213,7 @@ class SlowControls(ClaudeHook):
         output = claude.handle(event, self.data)['hookSpecificOutput']
         self.assertEqual(output['permissionDecision'], 'ask')
         # Its row, if it gets one (13-42 s), is named after the agent.
-        self.assertEqual(output['updatedInput'], dict(command=tune, description='Antigravity · starting'))
+        self.assertEqual(output['updatedInput'], dict(command=tune, description=self.name() + ' · starting'))
         self.assertEqual(self.prompt('/cli access prompt').get('decision'), 'block')  # Not wider: in the hook.
 
     def test_every_command_that_can_fail_says_how_its_error_is_shown(self):
@@ -260,7 +265,7 @@ class Relay(ClaudeHook):
         import presentation
         self.activate()
         text = self.context(self.prompt('/d Explain the parser'))
-        line = presentation.strong('Passing to Antigravity...', True)
+        line = presentation.strong('Passing to ' + self.name() + '...', True)
         # A zero-width space after the last "$": the app leaves a still-streaming block's final "$" as plain text.
         self.assertIn('posted before any command:\n' + line + '​\n', text)
         self.assertLess(text.index(line), text.index('relay --request'))
@@ -273,7 +278,7 @@ class Relay(ClaudeHook):
         self.assertIn('relay --request', json.dumps(resumed))
         self.assertNotIn('Passing', json.dumps(resumed))
         (self.data / 'display.json').write_text(json.dumps({'color': 'off'}), encoding='utf-8')
-        self.assertIn('\n**Passing to Antigravity...**\n', self.context(self.prompt('/d Next')))
+        self.assertIn('\n**Passing to ' + self.name() + '...**\n', self.context(self.prompt('/d Next')))
 
     def test_pasted_text_is_forwarded_without_claudes_markers(self):
         self.activate()
@@ -466,7 +471,10 @@ class BackgroundFollow(ClaudeHook):
     """A /d turn posts the Passing line, starts a background `follow` and ends; the follow's end wakes Claude
     for one relay. Probes P1-P4 (2026-09-24) confirmed each Claude Code behaviour this relies on."""
     PROMPT = 'Explain the parser in detail please'
-    LABEL = 'Antigravity · Explain the parser in detail p…'  # Agent, then 30 characters of the prompt.
+
+    @property
+    def LABEL(self):
+        return self.name() + ' · Explain the parser in detail p…'  # Agent and name, then 30 characters of the prompt.
 
     def start(self):
         self.activate()
@@ -496,7 +504,7 @@ class BackgroundFollow(ClaudeHook):
         before = self.store().read()
         text = self.context(self.prompt(self.notification('toolu_follow1')))
         self.assertIn('`' + self.command('relay', '--request', request) + '`', text)
-        self.assertIn('Antigravity has finished', text)
+        self.assertIn(self.name() + ' has finished', text)
         self.assertNotIn(' follow --request', text)
         after = self.store().read()
         self.assertEqual((after['turnRoute'], after['requests']), (before['turnRoute'], before['requests']))
@@ -528,7 +536,7 @@ class BackgroundFollow(ClaudeHook):
         self.assertIn('`' + self.command('relay', '--request', request) + '`', text)
         # Live runs 2-4: with the Passing line first, Claude Code asked the turn for visible output after the
         # follow, and Claude filled it (echo, ScheduleWakeup, sleep). The line now ends the turn.
-        self.assertLess(text.index(follow), text.index(presentation.strong('Passing to Antigravity...', True)))
+        self.assertLess(text.index(follow), text.index(presentation.strong('Passing to ' + self.name() + '...', True)))
         self.assertNotIn('posted before any command', text)
         for phrase in ('first runs its follow command', 'as its only message', 'wakes this conversation by itself',
                        'no other tool of any kind (no echo, sleep, check, wake-up', 'posts nothing else',
@@ -558,11 +566,11 @@ class BackgroundFollow(ClaudeHook):
         self.prompt('/d Fix\n\nthe   bug')
         short = self.store().read()['turnRoute']['requestId']
         output = self.pre_tool_use(self.command('follow', '--request', short))
-        self.assertEqual(output['updatedInput']['description'], 'Antigravity · Fix the bug')
+        self.assertEqual(output['updatedInput']['description'], self.name() + ' · Fix the bug')
         with self.store().edit() as state:
             state.pop('followLabels')  # A request from before labels were saved: named by its agent, still allowed.
         output = self.pre_tool_use(self.command('follow', '--request', short))
-        self.assertEqual((output['permissionDecision'], output['updatedInput']['description']), ('allow', 'Antigravity'))
+        self.assertEqual((output['permissionDecision'], output['updatedInput']['description']), ('allow', self.name()))
 
     def test_one_follow_per_request_and_none_for_requests_of_other_sessions(self):
         _, request = self.start()
