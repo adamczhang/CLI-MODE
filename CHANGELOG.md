@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 — Several named agents — 2026-09-24
 
 ### Several named agents (both hosts)
 - **Up to four agents run at once, in any mix, each with a name.** `/cli spawn <agent> [name]` starts one at any time, even while others work, and it becomes the current agent. A name you give is 1-10 letters and digits; otherwise one is generated from the agent's code and two characters, such as `COD-7K`. Names show in capitals and match in any case.

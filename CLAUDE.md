@@ -1,6 +1,6 @@
 # CLI-MODE — working notes for Claude
 
-> **Written for CLI-MODE 0.3.1** (tag `v0.3.1`, 2026-09-24).
+> **Written for CLI-MODE 0.3.2** (tag `v0.3.2`, 2026-09-24).
 > If `plugins/cli-mode/.codex-plugin/plugin.json` shows a different version, parts of this file may be
 > out of date. Verify any file, function or rule named here against the code before relying on it; when
 > they disagree, the code wins. Fix this file in the same change. `checks/test_agent_docs.py` fails
