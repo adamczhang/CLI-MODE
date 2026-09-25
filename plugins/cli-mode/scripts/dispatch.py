@@ -7,6 +7,7 @@ import time
 import uuid
 
 import acpx
+import agent_folder
 import native_agy
 import native_commands
 import viewer
@@ -270,7 +271,7 @@ class DispatchMixin:
                 if canceled:
                     self.cleanup(owned)
 
-    def _send(self, text, output=emit, timeout=86400, request_id=None):
+    def _send(self, text, output=emit, timeout=86400, request_id=None, working_folder=False):
         state = self.store.read()
         if request_id is None and state.get('turnRoute', {}).get('route') == 'direct-result':
             raise RuntimeError('This turn was already dispatched; inspect its saved events instead of replaying it.')
@@ -303,6 +304,10 @@ class DispatchMixin:
         owned = next((x for x in state['owned'] if x['name'] == session and x['ready']), None)
         if not owned:
             raise RuntimeError('No ready owned session matches this dispatch.')
+        # A task names the agent's working folder (agent_folder); an agent's own slash command goes as typed.
+        if working_folder and not provider_command and agent_folder.ensure(
+                owned.get('workspace') or self.store.workspace, owned.get('alias')) is not None:
+            text += agent_folder.instruction(owned['alias'])
         if hasattr(self.backend, 'validate_prompt'):
             self.backend.validate_prompt(owned)
         if hasattr(self.backend, 'prepare'):

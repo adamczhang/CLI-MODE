@@ -216,7 +216,40 @@ def receipt_html(label, receipt):
             numbers(receipt.get('added', 0), receipt.get('removed', 0)) + '<ul>' + rows + '</ul></div>'), text
 
 
-def final_markdown(label, batch, history, footer=None, show_work=True, color=False, receipt=None):
+def saved_markdown(label, saved):
+    """What the turn saved in the agent's working folder: `ART saved 3 files in `Agent_Working_Folder/ART/`: ...`."""
+    from agent_folder import counts
+    if not saved:
+        return None
+    head = label + ' ' + counts(saved) + ' in `' + saved['folder'] + '/`'
+    if saved.get('partial'):
+        return head + ' (too many files there to list them).'
+    rows = []
+    for item in (saved.get('paths') or [])[:RECEIPT_PATHS]:
+        path = defuse(item['path'])
+        rows.append(('`' + path + '`' if '`' not in path else path) + ' ' + item['status'])
+    more = saved['files'] - len(rows)
+    return head + ': ' + ' · '.join(rows) + (' · and ' + str(more) + ' more' if more > 0 else '')
+
+
+def saved_html(label, saved):
+    """The same line in a view, with its plain-text fallback."""
+    from agent_folder import counts
+    if not saved:
+        return '', None
+    head = label + ' ' + counts(saved) + ' in ' + saved['folder'] + '/'
+    if saved.get('partial'):
+        text = head + ' (too many files there to list them).'
+        return '<div class="changes saved">' + escape(text) + '</div>', text
+    rows = ''.join('<li><code>' + escape(item['path']) + '</code> ' + escape(item['status']) + '</li>'
+                   for item in (saved.get('paths') or [])[:RECEIPT_PATHS])
+    more = saved['files'] - min(len(saved.get('paths') or []), RECEIPT_PATHS)
+    if more > 0:
+        rows += '<li>and ' + str(more) + ' more</li>'
+    return ('<div class="changes saved"><strong>' + escape(head) + '</strong><ul>' + rows + '</ul></div>'), head + '.'
+
+
+def final_markdown(label, batch, history, footer=None, show_work=True, color=False, receipt=None, saved=None):
     """The end of a turn for hosts without inline views (Claude Code), as chat Markdown.
 
     It carries the agent's words, artifacts and errors (all of the turn's, unless
@@ -245,6 +278,9 @@ def final_markdown(label, batch, history, footer=None, show_work=True, color=Fal
     changed = receipt_markdown(label, receipt, color)
     if changed:
         parts.append(changed)
+    kept = saved_markdown(label, saved)
+    if kept:
+        parts.append(kept)
     if footer:
         parts.append('_' + footer + '_')
     if not parts and not messages(history):
@@ -252,7 +288,7 @@ def final_markdown(label, batch, history, footer=None, show_work=True, color=Fal
     return '\n\n'.join(parts)
 
 
-def render(label, history, destination, footer=None, show_work=True, workspace=None, receipt=None):
+def render(label, history, destination, footer=None, show_work=True, workspace=None, receipt=None, saved=None):
     """The turn's one inline view: final words, artifacts, errors and nested work.
 
     Returns (path, plain-text fallback, artifacts).
@@ -312,6 +348,10 @@ def render(label, history, destination, footer=None, show_work=True, workspace=N
     if changed:
         html.append(changed)
         plain.append(changed_text)
+    kept, kept_text = saved_html(label, saved)
+    if kept:
+        html.append(kept)
+        plain.append(kept_text)
     if footer:
         html.append('<div class="state">' + escape(footer) + '</div>')
         plain.append(footer)

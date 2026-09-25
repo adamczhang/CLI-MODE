@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Agent working folders (both hosts)
+- **Each agent has a folder for its files: `Agent_Working_Folder/<NAME>/` in the project.** A coding task still changes the project's files as asked; anything else an agent creates (notes, reports, assets, drafts) goes in its own folder, flat, so it finds its earlier files. CLI-MODE adds one paragraph naming the folder to each task it sends (never to an agent's own slash command); the chat shows the prompt as typed.
+- **Saved-files receipt.** Each answer ends with what the agent saved there (new, changed, removed), under the change receipt, in the Claude Code chat, the Codex view and the background-task row. It comes from listing the agent's folder, so it works outside git, stays fast for images and audio, and names the right agent even while several work at once.
+- The folder holds a `.gitignore` of `*`, so agent files stay out of git and out of the change receipt; the project's own `.gitignore` is untouched.
+
 ## 0.3.3 — Antigravity's temp folder — 2026-09-25
 
 ### Antigravity

@@ -86,6 +86,17 @@ the real index never changes. `git diff-tree --numstat` between the two trees is
 request before it settles, so the relay that follows always has it. The trees stay reachable only through
 the receipt; git's garbage collection removes them eventually, after which `/cli diff` says the diff is gone.
 
+## Agent working folders
+
+Each agent has `Agent_Working_Folder/<NAME>/` in the project (`scripts/agent_folder.py`), flat and named after
+the agent, for files it creates that are not edits to the project: notes, reports, assets, drafts. Before a
+turn the worker makes the folder, with a `.gitignore` of `*` inside `Agent_Working_Folder/` that keeps it out
+of git and out of the git receipt without touching the project's own `.gitignore`. Each task gets one added
+paragraph naming the folder (the request file and the chat keep the user's words); an agent's own slash
+command is sent exactly as typed. Listings of the agent's folder (path, size, modified time) before and after
+the turn give the request's `saved`: new, changed and removed files, shown under the change receipt. They
+work outside git and stay fast for large media; past 5,000 files the line only says the folder changed.
+
 ## Stopping
 
 Stopping verifies closure of owned sessions and settlement of local submitters.

@@ -52,6 +52,7 @@ scripts/acpx-config.mjs
 scripts/acpx-runtime.mjs
 scripts/acpx.py
 scripts/adapters.py
+scripts/agent_folder.py
 scripts/agy.py
 scripts/binding.py
 scripts/catalogs.py

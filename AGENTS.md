@@ -44,7 +44,8 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
 - **Agents** (shared): a conversation runs up to four named agents at once (`owned[]`, each with `alias`,
   `timeout` and its own worker in `runners`); `main` is the current one. `/d a,b <prompt>` captures one
   request per named agent. `scripts/names.py` makes and resolves names; `scripts/changes.py` takes the git
-  snapshots behind each turn's change receipt and `/cli diff`.
+  snapshots behind each turn's change receipt and `/cli diff`; `scripts/agent_folder.py` keeps each agent's
+  git-ignored `Agent_Working_Folder/<NAME>/`, names it in each task and reports what a turn saved there.
 - **Routing** (shared): `state.route()` turns a prompt into a route: `/cli …` controls, `/d` (Direct),
   help, setup replies; any other text is the host's (Passthrough mode was removed). `route.decide()` records
   it in the conversation state and, for `direct`, captures the exact text as a request and ensures the worker

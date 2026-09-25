@@ -24,7 +24,10 @@ lands in one of three zones below; know which before editing.
   Gates are per agent: `pending_work(state, session=…)`, `operations.menu_holds`, one worker per agent (`runners`).
   `/d a,b <prompt>` captures one request per named agent (`turnRoute.requestIds`); a registry `tag` names the
   only agent of its kind. `scripts/changes.py` takes git-tree snapshots around each turn (a temporary index copy)
-  for the change receipt and `/cli diff`. Each owned entry's `timeout` (minutes) is its ACPX owner TTL
+  for the change receipt and `/cli diff`. `scripts/agent_folder.py` gives each agent
+  `Agent_Working_Folder/<NAME>/` (git-ignored) for files that are not project edits: `_send(working_folder=True)`
+  makes it and names it in each task (never after an agent's own slash command), and a before/after listing
+  becomes the request's `saved`. Each owned entry's `timeout` (minutes) is its ACPX owner TTL
   (`acpx.AcpxBackend.ttl`); `/cli attach` moves an open owned entry from another conversation in the folder.
 - `hooks/route.py`: `decide()` and `task_through_settings()` (shared), `codex_output()` and
   `activation_reply()` (Codex only).

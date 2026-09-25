@@ -154,6 +154,18 @@ To ask several agents the same thing, name them all, with commas between:
 Each gets its own copy and works at the same time; the answers arrive one by one, each under its own name.
 If any name matches no running agent, nothing is sent.
 
+**Where agents save files.** A coding task changes your project's files as asked. Anything else an agent
+creates (research notes, reports, art, drafts) goes in its own folder, `Agent_Working_Folder/<NAME>/` in the
+project, such as `Agent_Working_Folder/ART/`. CLI-MODE tells the agent this with each task, and the answer
+ends with what it saved there:
+
+```text
+Grok ART saved 3 files in Agent_Working_Folder/ART/: marble/face-1.svg new · marble/preview.html new · notes.md new
+```
+
+The folder is kept out of git (it holds its own `.gitignore`), so drafts never reach your history; copy what
+you keep into the project. It is reported in folders outside git too.
+
 **Agents from earlier sessions.** An agent you didn't close keeps its conversation. In a new session in the
 same folder, `/cli attach` lists them and `/cli attach <name or number>` brings one here; its next `/d`
 continues where it left off, and the earlier session no longer has it.

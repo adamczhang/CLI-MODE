@@ -47,6 +47,14 @@ def runtime_result(stop='end_turn', **fields):
                 outputComplete=True, settled=True, **fields)
 
 
+FOLDER_NOTE = '\n\n---\nCLI-MODE: your working folder is '
+
+
+def user_words(sent):
+    """A sent task without the working-folder paragraph CLI-MODE adds to it."""
+    return sent.split(FOLDER_NOTE)[0]
+
+
 class FakeBackend:
     def __init__(self):
         self.records = {}
@@ -55,6 +63,7 @@ class FakeBackend:
         self.fail = False
         self.stop = 'end_turn'
         self.calls = []
+        self.sent = []
 
     def start(self, owned, args, timeout=60):
         self.calls.append(args)
@@ -68,6 +77,10 @@ class FakeBackend:
         if '--file' in args:
             with Path(args[-1]).open(encoding='utf-8', newline='') as source:
                 payload = source.read()
+            self.sent.append(payload)
+            # The agent answers with the user's words, so tests see them arrive exactly; the working-folder
+            # paragraph CLI-MODE adds (agent_folder.instruction) is checked through `sent`.
+            payload = user_words(payload)
             events = [dict(type='message', text=payload)]
             if self.stop is not None:
                 events.append(runtime_result(self.stop))
