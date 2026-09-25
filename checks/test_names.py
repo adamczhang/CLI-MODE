@@ -41,6 +41,31 @@ class Generation(unittest.TestCase):
         self.assertEqual(len(set(used)), 200)
 
 
+class Tags(unittest.TestCase):
+    """One three-letter tag per agent: a command word everywhere an agent is taken, and its names' code."""
+
+    def test_registry_tags_are_the_name_codes(self):
+        from state import backend_records
+        records = backend_records()
+        self.assertEqual({item['id']: item['tag'].upper() for item in records}, names.CODES)
+        self.assertEqual(sorted(item['tag'] for item in records), ['agy', 'cla', 'cod', 'cop', 'cur', 'gro'])
+
+    def test_tags_and_full_names_work_in_every_agent_command(self):
+        from state import backend_records
+        off = state_with()
+        for item in backend_records():
+            for word in [item['tag'], item['tag'].upper(), item['id']] + list(item.get('aliases') or []):
+                with self.subTest(word=word):
+                    self.assertEqual(route('/cli ' + word, off), {'route': 'frontend', 'agent': item['id']})
+                    for verb in ('bind', 'spawn', 'BIND'):
+                        self.assertEqual(route('/cli %s %s' % (verb, word), off), {'route': 'bind', 'agent': item['id']})
+                    self.assertEqual(route('$cli spawn %s bob' % word, off)['name'], 'BOB')
+
+    def test_a_tag_cannot_name_an_agent(self):
+        for tag in ('agy', 'cla', 'cod', 'gro', 'cop', 'cur'):
+            self.assertIn('command or agent word', names.custom_error(tag))
+
+
 class Custom(unittest.TestCase):
     def test_letters_and_digits_up_to_ten(self):
         for good in ('ELONMUSK', 'bob', 'a1', 'X9Y8Z7W6V5'):

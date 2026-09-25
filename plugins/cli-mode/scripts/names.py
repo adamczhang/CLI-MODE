@@ -1,15 +1,20 @@
 """Agent names: generate, validate and resolve them. Pure functions; no state is written here.
 
-Every agent CLI-MODE runs has a name, shown in capitals: one the user gives at spawn (`/cli spawn grok
+Every agent CLI-MODE runs has a name, shown in capitals: one the user gives at spawn (`/cli spawn gro
 ELONMUSK`, 1-10 letters and digits) or a generated one, the agent's three-letter code, a dash and a
 two-character id (`COD-7K`). Targeting ignores case. A generated name is also reached as `cod7k` (without the
 dash) or as `-7K` when exactly one live agent has that id; never as the bare `7k`, so an ordinary word at the
 start of a prompt is never taken for an agent.
 """
 import hashlib
+import json
+from pathlib import Path
 import re
 
-CODES = {'agy': 'AGY', 'claude': 'CLA', 'codex': 'COD', 'copilot': 'COP', 'cursor': 'CUR', 'grok-build': 'GRO'}
+# The agent registry both hosts load (state.REGISTRY). Each agent's three-letter tag (`cod`) is also a command
+# word (/cli cod, /cli spawn cod) and, in capitals, the code of its generated names (COD-7K).
+REGISTRY = Path(__file__).resolve().parents[1] / 'codex/skills/cli-mode/references/backends.json'
+CODES = {item['id']: item['tag'].upper() for item in json.loads(REGISTRY.read_text(encoding='utf-8'))['backends']}
 # 33 characters: no 0, I or O, which read like each other.
 ID_CHARS = '123456789ABCDEFGHJKLMNPQRSTUVWXYZ'
 CUSTOM_MAX = 10

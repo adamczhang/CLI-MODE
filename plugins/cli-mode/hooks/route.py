@@ -173,7 +173,8 @@ def codex_output(event, store, state, decision, worker, cancellation):
         return {'hookSpecificOutput': dict(hookEventName=name, additionalContext=
             'CLI-MODE is installed and no CLI agent is active. When the user types /cli, $cli, /d or /help, '
             'the prompt hook gives the exact command to run; run it directly, without opening the CLI-MODE '
-            'skill or reference files. Agents: agy (Antigravity), claude, grok-build, cursor, copilot, codex. '
+            'skill or reference files. Agents by tag: agy (Antigravity), cla (Claude Code), cod (Codex CLI), gro (Grok Build), '
+            'cop (GitHub Copilot), cur (Cursor); their full names work too. '
             '/cli bind <agent> [name] (= spawn) starts one with saved defaults, and several can run at once, each '
             'named (COD-7K); /cli list lists them; /cli close [name|all] (= stop) closes them. Controller: ' +
             run('--help') + '.')}

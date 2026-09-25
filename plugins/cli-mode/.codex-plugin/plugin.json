@@ -18,10 +18,10 @@
     "capabilities": [],
     "defaultPrompt": [
       "/cli",
-      "/cli claude",
-      "/cli cursor",
-      "/cli copilot",
-      "/cli codex"
+      "/cli cla",
+      "/cli cur",
+      "/cli cop",
+      "/cli cod"
     ],
     "brandColor": "#006400"
   }

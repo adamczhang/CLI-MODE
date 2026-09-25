@@ -1,6 +1,6 @@
 # Codex CLI backend for CLI-MODE
 
-Use /cli codex or $cli codex for setup, /cli bind codex for saved defaults,
+Use /cli cod (also /cli codex, $cli cod) for setup, /cli bind cod for saved defaults,
 and /cli stop for shutdown. Codex CLI is the sixth agent, distinct from the
 Codex host handling the menu. Discussing development does not activate it.
 Read [shared controls](../../codex/skills/cli-mode/SKILL.md),

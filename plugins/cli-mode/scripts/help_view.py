@@ -4,8 +4,8 @@ from presentation import menu_block
 
 COMMANDS = (
     ('/cli', 'Choose an agent and open its setup.'),
-    ('/cli <agent>', 'Open agy (Antigravity), claude (Claude Code), grok (Grok Build), cursor, '
-                     'copilot (GitHub Copilot) or codex (Codex CLI).'),
+    ('/cli <agent>', 'Open agy (Antigravity), cla (Claude Code), cod (Codex CLI), gro (Grok Build), '
+                     'cop (GitHub Copilot) or cur (Cursor). Full names work too.'),
     ('/cli bind|spawn <agent> [name]', 'Start an agent with its saved settings. Several can run at once, each with '
                                        'a name: yours (letters and digits) or one like COD-7K.'),
     ('/d [name] <PROMPT>', 'Send a prompt to the current agent, or to the agent named first. Nothing else reaches '

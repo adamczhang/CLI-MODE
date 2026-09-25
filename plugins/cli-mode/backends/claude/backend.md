@@ -1,7 +1,7 @@
 # Claude Code backend for CLI-MODE
 
-/cli claude (also $cli claude) opens this frontend, case-insensitively.
-/cli bind claude starts with saved defaults without a further menu confirmation.
+/cli cla (also /cli claude, $cli cla) opens this frontend, case-insensitively.
+/cli bind cla starts with saved defaults without a further menu confirmation.
 /cli opens agent selection; /cli stop or /cli off shuts down. /help lists controls.
 Requests to build, edit or explain this backend never activate it.
 

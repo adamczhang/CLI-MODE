@@ -23,14 +23,14 @@ Copilot or Codex CLI, and relays their answers back into the chat you were alrea
 | Live viewer window (`/cli view`) | ✓ | ✓ |
 | Agents listed on the background tasks panel | ✓ | — |
 | Agent streaming updates | Panel viewer | In chat |
-| Help | `/cli help` | `/help` |
+| Help | `/cli help` | `/help` or `/cli help` |
 | Needs | workspace trust | a Full Access task |
 
 On Claude Code the whole answer arrives when the agent finishes, with a one-line work summary; see
 [Claude Code](#claude-code) for details.
 
-<!-- Screenshot: a Claude Code conversation showing "Passing to Grok...", the agent's row in background
-     tasks, then "Grok says..." with its work summary. 1280 px wide, light or dark theme. -->
+<!-- Screenshot: a Claude Code conversation showing "Passing to Grok GRO-4K...", the agent's row in
+     background tasks, then "Grok GRO-4K says..." with its work summary. 1280 px wide, light or dark theme. -->
 
 ## Why
 
@@ -56,14 +56,16 @@ come back into your conversation. No second app, no second chat window, no termi
 | Agent | Command | Install guide |
 |---|---|---|
 | Antigravity | `/cli agy` | [Antigravity CLI](https://antigravity.google/docs/cli/install/) (also needs its ACP runtime) |
-| Claude Code | `/cli claude` | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) |
-| Grok Build | `/cli grok` | [Grok Build](https://docs.x.ai/build/overview) |
-| Cursor | `/cli cursor` | [Cursor CLI](https://cursor.com/docs/cli/overview) |
-| GitHub Copilot | `/cli copilot` | [Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-chat/use-copilot-chat-in-the-command-line) |
-| Codex CLI | `/cli codex` | [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) |
+| Claude Code | `/cli cla` | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) |
+| Grok Build | `/cli gro` | [Grok Build](https://docs.x.ai/build/overview) |
+| Cursor | `/cli cur` | [Cursor CLI](https://cursor.com/docs/cli/overview) |
+| GitHub Copilot | `/cli cop` | [Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-chat/use-copilot-chat-in-the-command-line) |
+| Codex CLI | `/cli cod` | [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) |
 
-Each agent runs in the conversation's working folder, using its own account and model access. Up to four run
-at once, in any mix (see [Several agents](#several-agents)); conversations do not transfer between providers.
+Every command that takes an agent accepts its three-letter tag or its full name (`cla` or `claude`, `gro`
+or `grok`), and the tag also starts its generated names (`GRO-4K`). Each agent runs in the conversation's
+working folder, using its own account and model access. Up to four run at once, in any mix (see
+[Several agents](#several-agents)); conversations do not transfer between providers.
 
 ## Install
 
@@ -112,21 +114,21 @@ Release **0.3.1** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.
 5. Send your prompt. CLI-MODE announces `Passing to Claude CLA-4F...`, for example, and relays the answer
    under `Claude CLA-4F says...`. `CLA-4F` is the agent's name.
 
-## Sending a prompt to the agent
+## Sending a prompt to an agent
 
-Only a message that starts with `/d` (or `$d`) goes to the active agent; everything else stays with your
-host, so you decide exactly what each agent is asked:
+Only a message that starts with `/d` (or `$d`) goes to an agent, the current one unless you name another;
+everything else stays with your host, so you decide exactly what each agent is asked:
 
 ```text
 /d Explain how authentication works in this project.
 ```
 
-`/d` does not activate an agent on its own. Messages sent while the agent is busy queue up and go out in order; see [Architecture](docs/ARCHITECTURE.md)
-for how the queue works.
+`/d` does not activate an agent on its own. Messages sent while an agent is busy queue up for it and go out
+in order; see [Architecture](docs/ARCHITECTURE.md) for how the queue works.
 
 ## Several agents
 
-Every agent has a name, shown in capitals: one you give it (`/cli spawn grok ELON`, 1-10 letters and digits)
+Every agent has a name, shown in capitals: one you give it (`/cli spawn gro ELON`, 1-10 letters and digits)
 or a generated one such as `GRO-4K`. Start another agent at any time, even while others work; the newest
 becomes the current agent, the one a plain `/d` goes to. Put a name first to send to another:
 
@@ -144,7 +146,7 @@ own name (`Grok GRO-4K says...`). `/cli list` shows them all, `/cli use <name>` 
 
 - **`/cli`** — choose an agent or run setup.
 - **`/cli spawn <agent> [name]`** (or **`/cli bind`**) — start an agent with saved defaults, after readiness
-  checks.
+  checks. `<agent>` is its tag or full name, for example `cod` or `codex`.
 - **`/cli list`** (or **`/cli agents`**) — the running agents by name; **`/cli agents max <n>`** sets how many
   can run at once (4 by default, up to 8).
 - **`/cli use <name>`** — make that agent the current one.
@@ -164,8 +166,8 @@ own name (`Grok GRO-4K says...`). `/cli list` shows them all, `/cli use <name>` 
 - **`/cli cancel [name]`** — cancel an agent's running turn, keeping queued follow-ups.
 - **`/cli close [name|all]`** (or **`/cli stop`**, **`/cli off`**) — close one agent, or all of them. With
   several running and no name, it asks which. Closing the last agent returns you to your host.
-- **`/help`** (Codex) or **`/cli help`** (Claude Code, also **`/cli commands`**) — show the command card. Reply
-  X to close it.
+- **`/cli help`** (or **`/cli commands`**; on Codex also **`/help`**) — show the command card. Reply X to
+  close it.
 
 `$` works in place of `/`, and controls are case-insensitive. Help and controls always stay local.
 Closing help or settings keeps the agent running.
@@ -179,7 +181,8 @@ followed by the agent's own name for it, for example `Allow (Bypass permissions)
 
 ## What to expect
 
-- **Persistent context:** follow-up prompts continue the same agent conversation, and settings changes keep it.
+- **Persistent context:** each agent keeps its own conversation; follow-up prompts continue it, and settings
+  changes keep it.
 - **How answers arrive:** on Claude Code, the agent works as a row in Claude Code's background tasks and its
   whole answer arrives when it finishes, with a one-line work summary (see [Claude Code](#claude-code)). On
   Codex, the agent's words arrive as chat updates in readable batches, and when the turn ends, one view shows
@@ -261,8 +264,8 @@ At **Allow** access an agent can edit files and run commands without asking, the
   `/reload-plugins` or start a new session. "This session loaded an older plugin" means the same.
 - **Activation fails:** check the agent CLI's sign-in, model access and quota. Antigravity's CLI and ACP
   runtime are set up separately.
-- **Starting another agent is refused:** four agents are running, the limit. Close one with
-  `/cli close <name>`, or raise it with `/cli agents max <n>`.
+- **Starting another agent is refused:** the agent limit is reached (four by default). Close one with
+  `/cli close <name>`, or raise the limit with `/cli agents max <n>`.
 - **A turn stopped on a permission request:** the agent needed an approval its access level cannot give. Use
   `/cli access allow`, or ask for work that needs no approval.
 - **Odd behaviour after an upgrade:** from a source checkout, run

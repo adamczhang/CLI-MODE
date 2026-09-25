@@ -9,6 +9,7 @@
 - `/cli list` lists the running agents with their settings and what each is doing; `/cli agents max <n>` sets the limit (up to 8). `/cli use <name>` changes the current agent.
 - `/cli close <name>` closes one agent (its turn, queue and session) while the others keep working; `/cli close all` closes them all. With several agents, a bare `/cli close` asks which. Closing the current agent makes the most recently used one current, and closing the last turns CLI-MODE off.
 - `/cli menu`, `/cli model`, `/cli effort`, `/cli access` and `/cli cancel` take an agent's name to act on another agent.
+- **Agent tags:** every command that takes an agent accepts its three-letter tag, `agy`, `cla`, `cod`, `gro`, `cop` or `cur` (`/cli cla`, `/cli spawn cod`), as well as its full name. The same tag starts its generated names; the registry's `tag` field defines both.
 - Command pairs that do the same thing: `close` = `stop` = `off`, `spawn` = `bind`, `settings` = `menu`, `agents` = `list`, `commands` = `help` (`/cli help` now also works on Codex).
 - `/cli bind` and the activation page start a new agent rather than reconfiguring the running one; settings change through Agent Settings or `/cli model|effort|access`. A `/d` task typed while any menu is open closes the menu and is sent.
 

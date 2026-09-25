@@ -1,7 +1,7 @@
 # Grok Build backend for CLI-MODE
 
-/cli grok (also $cli grok, /cli grok-build) opens this frontend, case-insensitively.
-/cli bind grok starts with saved defaults without a further menu confirmation.
+/cli gro (also /cli grok, /cli grok-build, $cli gro) opens this frontend, case-insensitively.
+/cli bind gro starts with saved defaults without a further menu confirmation.
 /cli opens agent selection; /cli stop or /cli off shuts down. /help lists controls.
 Requests to build, edit or explain this backend never activate it.
 

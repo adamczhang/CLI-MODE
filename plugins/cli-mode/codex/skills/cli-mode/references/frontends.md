@@ -57,7 +57,7 @@ that backend's defaults, but still requires all readiness gates and
 authenticated agent verification.
 
 Once any backend is configured, /cli shows Select CLI Agent, with Setup needed on unconfirmed providers. A numbered selection uses controller choose; it checks that backend when needed and otherwise opens its activation page. B returns home. A registry record may
-declare short aliases, so /cli grok and /cli grok-build reach the same backend. Existing model/effort/access defaults
+declare a three-letter tag and may declare short aliases, so /cli gro, /cli grok and /cli grok-build reach the same backend. Existing model/effort/access defaults
 are preserved throughout setup and recovery. Opening menus never starts a second agent. The controller rechecks readiness on activation.
 
 Menu colors and bold headers are supplied by the inline view renderer, not

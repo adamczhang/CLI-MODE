@@ -22,8 +22,8 @@ class CardHelp(unittest.TestCase):
 
     def test_agent_names_and_display_modes_are_explained(self):
         text = help_view.text()
-        for agent in ('agy (Antigravity)', 'claude (Claude Code)', 'grok (Grok Build)', 'cursor',
-                      'copilot (GitHub Copilot)', 'codex (Codex CLI)'):
+        for agent in ('agy (Antigravity)', 'cla (Claude Code)', 'gro (Grok Build)', 'cur (Cursor)',
+                      'cop (GitHub Copilot)', 'cod (Codex CLI)'):
             self.assertIn(agent, text)
         for mode in ('activity', 'quiet'):
             self.assertIn(mode, text)

@@ -1,7 +1,7 @@
 # GitHub Copilot backend for CLI-MODE
 
-/cli copilot (also $cli copilot) opens this frontend, case-insensitively.
-/cli bind copilot starts with saved defaults without a further menu confirmation.
+/cli cop (also /cli copilot, $cli cop) opens this frontend, case-insensitively.
+/cli bind cop starts with saved defaults without a further menu confirmation.
 /cli opens agent selection; /cli stop or /cli off shuts down. /help lists controls.
 Requests to build, edit or explain this backend never activate it.
 

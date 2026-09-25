@@ -78,7 +78,9 @@ the backend supplies its implementation and provider-specific exceptions.
 2. Link `../../codex/skills/cli-mode/SKILL.md` from its guide and meet the responsibilities
    above. Keep its scripts, assets, and provider references inside that folder.
 3. Add one registry record. `entrypoint` is relative to the registry directory
-   and must stay inside the plugin. Do not add placeholders for unimplemented
+   and must stay inside the plugin. `tag` is the agent's unique three-letter tag
+   (`cod`): a command word (`/cli cod`, `/cli spawn cod`) and, in capitals, the code
+   of its generated names (`COD-7K`). Do not add placeholders for unimplemented
    backends or borrow another backend's account/session.
 4. Implement and register an executable adapter alongside `scripts/agy.py` with
    catalog selection, profile/setting mapping, native-setting verification and

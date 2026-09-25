@@ -72,7 +72,7 @@ class AgentControls(unittest.TestCase):
                 self.assertEqual(route('/cli bind %s now' % word, OFF), dict(route='bind', agent=backend, name='NOW'))
 
     def test_near_miss_agent_names_are_never_resolved(self):
-        for text in ('/cli gro', '/cli grokbuild', '/cli claud', '/cli agyx',
+        for text in ('/cli gr', '/cli grk', '/cli grokbuild', '/cli claud', '/cli clau', '/cli agyx', '/cli co',
                      '/cli bind', '/cli bind nope'):
             self.assertEqual(route(text, OFF)['route'], 'hint', text)
 
@@ -235,8 +235,7 @@ class HelpText(unittest.TestCase):
         commands = self.help.render()
         for backend in backend_ids():
             record = next(i for i in frontends.backends() if i['id'] == backend)
-            word = (record.get('aliases') or [record['id']])[0]
-            self.assertIn(word, commands)
+            self.assertIn(record['tag'] + ' (', self.help.text())  # Help names each agent by its tag.
         self.assertIn('/cli <agent>', commands)
         self.assertIn('/cli bind|spawn <agent> [name]', commands)
 

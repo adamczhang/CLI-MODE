@@ -1,7 +1,7 @@
 # Cursor backend for CLI-MODE
 
-/cli cursor (also $cli cursor) opens this frontend, case-insensitively.
-/cli bind cursor starts with saved defaults without a further menu confirmation.
+/cli cur (also /cli cursor, $cli cur) opens this frontend, case-insensitively.
+/cli bind cur starts with saved defaults without a further menu confirmation.
 /cli opens agent selection; /cli stop or /cli off shuts down. /help lists controls.
 Requests to build, edit or explain this backend never activate it.
 

@@ -15,7 +15,7 @@ from presentation import menu_block
 from progress import DEFAULT_PROGRESS_MODE, PROGRESS_MODES, progress_mode
 
 
-REGISTRY = Path(__file__).resolve().parents[1] / 'codex/skills/cli-mode/references/backends.json'
+REGISTRY = names.REGISTRY
 DEFAULT_ROUTING_MODE = 'direct'
 MAX_QUEUED_REQUESTS = 32
 DEFAULT_AGENT_LIMIT = 4
@@ -44,7 +44,8 @@ def _registry():
         _BACKEND_IDS = tuple(item['id'] for item in backends)
         words = {}
         for item in backends:
-            for word in [item['id']] + list(item.get('aliases') or []):
+            # Its ID, its three-letter tag (cla, cod, gro...) and any other alias all name it.
+            for word in [item['id'], item['tag']] + list(item.get('aliases') or []):
                 key = word.casefold()
                 if key in words and words[key] != item['id']:
                     raise ValueError('Ambiguous CLI-MODE backend word: ' + word)

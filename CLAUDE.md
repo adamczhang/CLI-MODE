@@ -72,7 +72,7 @@ files) and `dist/cli-mode-claude-<v>.zip` (without the `CODEX_ONLY` files).
 
 | Guard | Protects | Fails when |
 |---|---|---|
-| `checks/test_codex_golden.py` with `checks/fixtures/codex-golden.json` (142 steps, 28 route kinds) | every hook response and controller result **Codex** receives | a shared or Claude change alters anything Codex sees |
+| `checks/test_codex_golden.py` with `checks/fixtures/codex-golden.json` (144 steps, 28 route kinds) | every hook response and controller result **Codex** receives | a shared or Claude change alters anything Codex sees |
 | `test_claude_package.py` with `checks/fixtures/codex-package-files.txt` | the Codex zip's exact file list; the Claude zip's contents; the root marketplace in sync; Claude's hook rules | a file leaks into the wrong package, or the marketplace or hooks drift |
 | `test_host.py`, `test_claude_hook.py` | Claude routing, relay, colour, menus, the Stop guard, the fast path | a Codex or shared change breaks Claude behaviour |
 | `test_package_reproducibility.py` | identical zips from LF and CRLF checkouts | packaging depends on line endings |

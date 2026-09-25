@@ -167,7 +167,8 @@ def home_flow(s):
 
 
 def frontend_each_agent(s):
-    return prompts(s, '/cli agy', '/cli claude', '/cli grok', '/cli cursor', '/cli copilot', '/cli codex')
+    return prompts(s, '/cli agy', '/cli claude', '/cli grok', '/cli cursor', '/cli copilot', '/cli codex',
+                   '/cli cla', '$cli GRO')  # Three-letter tags name the same agents.
 
 
 def setup_replies(s):

@@ -4,6 +4,7 @@ A registry record in backends.json is discovery metadata only. A backend is
 implemented when it appears here with a real runtime adapter. Never fall back
 to another provider's adapter for an unknown or future backend.
 """
+import re
 import agy
 import claude_code
 import codex_cli
@@ -44,4 +45,7 @@ def descriptor(backend):
         raise ValueError('Backend command transport differs from registry: ' + backend)
     if not record.get('prerequisites') or record.get('catalogRefresh') != 'owned-session-metadata':
         raise ValueError('Missing prerequisite/refresh contract: ' + backend)
+    tags = [item.get('tag') for item in records.values()]
+    if not re.fullmatch('[a-z]{3}', record.get('tag') or '') or tags.count(record['tag']) != 1:
+        raise ValueError('Each backend needs its own three-letter tag: ' + backend)
     return record

@@ -26,7 +26,7 @@ ordinary text.
 | Command | Effect |
 | --- | --- |
 | `/cli` | Agent selection menu (setup when prerequisites are missing). |
-| `/cli <agent>` | That agent's setup or activation menu. `grok` = `grok-build`. |
+| `/cli <agent>` | That agent's setup or activation menu. Each agent has a three-letter tag: `agy`, `cla` (Claude Code), `cod` (Codex CLI), `gro` (Grok Build), `cop` (Copilot), `cur` (Cursor); its full name (`claude`, `grok`, `grok-build`...) works too, in every command that takes an agent. |
 | `/cli bind\|spawn <agent> [name]` | Start a new agent with its kind's saved defaults (or its initial defaults), after the same readiness checks. No extra confirmation. It gets `name` (1-10 letters and digits) or a generated one such as `COD-7K`, and becomes the current agent. |
 | `/cli list\|agents` | List the running agents by name. `/cli agents max <1-8>` sets how many can run at once (4). |
 | `/cli use <name>` | Make that agent the current one. |
