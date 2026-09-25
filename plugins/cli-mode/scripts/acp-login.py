@@ -3,20 +3,24 @@ import json
 import os
 from pathlib import Path
 import queue
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import uuid
 
 
 def join_kill_on_close_job():
     """Put this launcher in a job that Windows ends, with everything in it, when the launcher exits.
 
-    agy_acp_server.exe starts a second agy_acp_server.exe (with localharness_external.exe)
-    and does not stop it when it exits, and Windows does not end children with their parent,
-    so every server start used to leave that pair running (2026-09-23: 19 pairs, about 2 GB).
-    The server and its children join the job as they start; no breakaway is allowed. Setup
-    copies this file on its own, so it cannot share processes.py. Best effort: returns False
+    agy_acp_server.exe is a PyInstaller one-file program: it runs as a parent that unpacks the
+    program and a child (the second agy_acp_server.exe, with localharness_external.exe) that
+    serves. ACPX ends the launcher, not the server, and Windows does not end children with their
+    parent, so every server start used to leave that pair running (2026-09-23: 19 pairs, about
+    2 GB). The server and its children join the job as they start; no breakaway is allowed. Ending
+    the parent this way skips its own clean-up of what it unpacked: private_temp() handles that.
+    Setup copies this file on its own, so it cannot share processes.py. Best effort: returns False
     where Windows refuses (or elsewhere), and the server still runs. Used for serving only.
     """
     if os.name != 'nt':
@@ -56,6 +60,66 @@ def join_kill_on_close_job():
     return bool(kernel.SetInformationJobObject(job, extended_limit_information, ctypes.byref(limits),
                                                ctypes.sizeof(limits))
                 and kernel.AssignProcessToJobObject(job, kernel.GetCurrentProcess()))
+
+
+def private_temp(base):
+    """A temp folder for this launcher's server alone, as (folder, lock); the lock must stay open.
+
+    The server's parent unpacks about 1.25 GB into a new _MEI folder under TEMP on every start and
+    deletes it only when the server exits by itself. Ended by the job, or by setup's terminate(),
+    it never does (2026-09-24: 278 folders, 347 GB). So each launcher gives the server its own TEMP
+    under `base` and holds `<id>.lock` open until it exits, however it ends: Windows refuses to
+    delete a file that is open. A folder whose lock can be deleted belongs to a launcher that is
+    gone, and stale() lists it for removal. The lock is created before its folder, so a starting
+    launcher's folder is never taken for a stale one.
+
+    Keep the folder's path short: the server's deepest unpacked file is 120 characters below its
+    _MEI folder (1.1.1, 2026-09-25), and a path past Windows' 259 stops the unpack ("Failed to
+    create parent directory structure"). Hence the 8-character names.
+    """
+    base.mkdir(parents=True, exist_ok=True)
+    while True:
+        name = uuid.uuid4().hex[:8]
+        try:
+            lock = open(base / (name + '.lock'), 'x')
+            break
+        except FileExistsError:
+            continue
+    folder = base / name
+    folder.mkdir(exist_ok=True)  # A stale folder of the same name is now this launcher's.
+    return folder, lock
+
+
+def stale(base, keep):
+    """The folders under `base` that no running launcher holds, except `keep`, with their locks released."""
+    if os.name != 'nt' or not base.is_dir():
+        return []  # Elsewhere an open file can be deleted, so a lock proves nothing.
+    found = []
+    for path in base.iterdir():
+        if path == keep or not path.is_dir():
+            continue
+        try:
+            (base / (path.name + '.lock')).unlink(missing_ok=True)
+        except OSError:
+            continue  # Its launcher is running.
+        found.append(path)
+    for lock in base.glob('*.lock'):
+        if not (base / lock.stem).exists():
+            try:
+                lock.unlink()  # A launcher ended before making its folder.
+            except OSError:
+                pass
+    return found
+
+
+def remove_stale(base, keep):
+    """Delete what earlier launchers left, in the background: a 1.25 GB folder takes seconds."""
+    def remove():
+        for path in stale(base, keep):
+            shutil.rmtree(path, ignore_errors=True)  # If this launcher ends first, the next one finishes.
+    thread = threading.Thread(target=remove, daemon=True)
+    thread.start()
+    return thread
 
 
 class RPC:
@@ -155,6 +219,9 @@ def main():
     env['ANTIGRAVITY_HARNESS_PATH'] = str(root/'localharness_external.exe')
     env['GEMINI_HOME'] = str(root/'profile')
     env['AGY_ACP_FORCE_FILE_STORAGE'] = '1'
+    folder, lock = private_temp(root/'tmp')  # `lock` stays open until this launcher exits.
+    env['TMP'] = env['TEMP'] = str(folder)
+    remove_stale(root/'tmp', folder)
     command = [str(root/'agy_acp_server.exe')]
     if sys.argv[1:] == ['--login']:
         settings = root/'profile/antigravity-acp/settings.json'

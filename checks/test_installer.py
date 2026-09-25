@@ -54,6 +54,83 @@ class ManagedLauncherJob(unittest.TestCase):
         self.assertFalse(self.orphan_survives(join=True))
 
 
+@unittest.skipUnless(os.name == 'nt', 'Windows refuses to delete open files')
+class ManagedLauncherTemp(unittest.TestCase):
+    """Antigravity's server unpacks 1.25 GB per start and, ended by the job, never deletes it
+    (278 folders, 347 GB, 2026-09-24). Each launcher's server unpacks into a folder of its own,
+    and the next launcher removes every folder whose launcher is gone."""
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name) / 'tmp'
+
+    def folder(self, held=True):
+        folder, lock = acp_login.private_temp(self.base)
+        (folder / '_MEI12345').mkdir()
+        (folder / '_MEI12345' / 'python.dll').write_bytes(b'x' * 1024)
+        if held:
+            self.addCleanup(lock.close)
+        else:
+            lock.close()
+        return folder
+
+    def test_only_folders_of_ended_launchers_are_stale(self):
+        running, ended, current = self.folder(), self.folder(held=False), self.folder()
+        self.assertEqual(acp_login.stale(self.base, current), [ended])
+        self.assertTrue((self.base / (running.name + '.lock')).exists())
+        self.assertFalse((self.base / (ended.name + '.lock')).exists())
+
+    def test_a_killed_launchers_folder_is_removed_by_the_next(self):
+        launcher = ('import importlib.util, sys, time\n'
+                    'from pathlib import Path\n'
+                    'spec = importlib.util.spec_from_file_location("acp_login", sys.argv[1])\n'
+                    'module = importlib.util.module_from_spec(spec)\n'
+                    'spec.loader.exec_module(module)\n'
+                    'folder, lock = module.private_temp(Path(sys.argv[2]))\n'
+                    '(folder / "_MEI1" ).mkdir(); (folder / "_MEI1" / "base_library.zip").write_bytes(b"x" * 4096)\n'
+                    'print(folder, flush=True)\n'
+                    'time.sleep(60)\n')
+        process = subprocess.Popen([sys.executable, '-c', launcher, str(PLUGIN / 'scripts/acp-login.py'),
+                                    str(self.base)], stdout=subprocess.PIPE, text=True)
+        killed = Path(process.stdout.readline().strip())
+        current = self.folder()
+        self.assertEqual(acp_login.stale(self.base, current), [], 'a running launcher keeps its folder')
+        process.kill()  # TerminateProcess, as the job does: nothing in the launcher runs.
+        process.wait(timeout=10)
+        process.stdout.close()
+        acp_login.remove_stale(self.base, current).join(timeout=30)
+        self.assertFalse(killed.exists())
+        self.assertTrue(current.exists())
+
+    def test_leftover_locks_are_removed_unless_held(self):
+        self.base.mkdir(parents=True)
+        (self.base / 'gone.lock').write_text('')
+        held = open(self.base / 'starting.lock', 'x')  # A launcher about to make its folder.
+        self.addCleanup(held.close)
+        acp_login.stale(self.base, None)
+        self.assertFalse((self.base / 'gone.lock').exists())
+        self.assertTrue((self.base / 'starting.lock').exists())
+
+    def test_the_server_gets_its_own_temp(self):
+        root = self.base.parent
+        seen = {}
+
+        def serve(command, env):
+            seen.update(env)
+            return 0
+        with patch.object(acp_login, '__file__', str(root / 'acp-login.py')), \
+                patch.object(acp_login, 'join_kill_on_close_job'), \
+                patch.object(acp_login.subprocess, 'call', side_effect=serve), \
+                patch.object(sys, 'argv', ['acp-login.py']):
+            with self.assertRaises(SystemExit):
+                acp_login.main()
+        folder = Path(seen['TEMP'])
+        self.assertEqual(seen['TMP'], seen['TEMP'])
+        self.assertEqual(folder.parent, root.resolve() / 'tmp')
+        self.assertEqual(len(folder.name), 8)  # Short: Antigravity's deepest unpacked path is 120 characters.
+        self.assertTrue(folder.is_dir())
+
+
 class Installer(unittest.TestCase):
     @unittest.skipUnless(os.name == 'nt', 'Windows PATH refresh')
     def test_repeated_path_refresh_is_idempotent_and_launchable(self):
