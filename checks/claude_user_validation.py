@@ -176,7 +176,7 @@ class Session:
         # line before any call, posts nothing between calls, and ends with the agent's output.
         if relayed and 'tool' in order:
             first, last = order.index('tool'), len(order) - 1 - order[::-1].index('tool')
-            if turn['route'] in ('direct', 'delegate') and not (first and '**Passing to ' in plain(texts[0])):
+            if turn['route'] == 'direct' and not (first and '**Passing to ' in plain(texts[0])):
                 turn['problems'].append('"Passing to" was not posted before the first relay call')
             if 'text' in order[first:last] and not parts:
                 turn['problems'].append('text posted between relay calls, where the app folds it out of view')

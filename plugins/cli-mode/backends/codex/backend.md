@@ -1,6 +1,6 @@
 # Codex CLI backend for CLI-MODE
 
-Use /cli codex or $cli codex for setup, /cli bind codex for saved defaults,
+Use /cli cod (also /cli codex, $cli cod) for setup, /cli bind cod for saved defaults,
 and /cli stop for shutdown. Codex CLI is the sixth agent, distinct from the
 Codex host handling the menu. Discussing development does not activate it.
 Read [shared controls](../../codex/skills/cli-mode/SKILL.md),
@@ -38,8 +38,8 @@ Model/effort/access changes reuse its durable identity. Idle owner exit is not
 shutdown. Off gates dispatch, cancels, closes and verifies the owned session.
 Readiness must include the controller's fresh challenge marker.
 
-Passthrough forwards ordinary prompts. Direct requires /d or $d, removed once
-before provider command validation. Commands must be advertised by the ACP
+Only /d or $d prompts reach the agent; the trigger is removed once before
+provider command validation. Commands must be advertised by the ACP
 adapter; terminal UI commands are not automatically available. Remain on ACP,
 with no Antigravity native handoff. Pass whole user prompts unchanged; the Codex
 provider owns any internal tools or delegation. Announce Passing to Codex...

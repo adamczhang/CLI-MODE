@@ -9,7 +9,7 @@ from state import Store
 
 # Distinctive phrases from each rule group in hooks/route.py.
 RELAY = 'post its `markdown` right away'
-MENU = 'X on the routing-mode menu'
+MENU = 'X on active Settings or tuning pages runs'
 SETUP = 'Follow pending.onboarding'
 HELP = 'Help is the same framed card'
 # Budgets leave headroom over today's sizes (about 2.7k, 2.5k, 3.2k and 1.6k).
@@ -31,7 +31,6 @@ class HookContext(unittest.TestCase):
         control = Controller(self.store, FakeBackend())
         control.frontend()
         control.activate('gemini-3.8-flash-high', 'allow')
-        control.mode('passthrough')
 
     def assertGroups(self, text, present, budget):
         for phrase in (RELAY, MENU, SETUP, HELP):
@@ -43,7 +42,7 @@ class HookContext(unittest.TestCase):
 
     def test_delegated_turns_carry_relay_rules_only(self):
         self.activate()
-        text = self.context('Explain the parser')
+        text = self.context('/d Explain the parser')
         self.assertGroups(text, (RELAY,), BUDGET['delegate'])
         self.assertIn('relay --request ', text)
         self.assertNotIn('"pending"', text)  # Relay turns do not echo menu transactions.
@@ -51,7 +50,7 @@ class HookContext(unittest.TestCase):
 
     def test_menu_and_help_turns_do_not_carry_relay_rules(self):
         self.activate()
-        self.assertGroups(self.context('/cli mode'), (MENU,), BUDGET['menu'])
+        self.assertGroups(self.context('/cli menu'), (MENU,), BUDGET['menu'])
         self.assertGroups(self.context('/help'), (HELP,), BUDGET['help'])
 
 

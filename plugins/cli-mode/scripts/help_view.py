@@ -4,17 +4,25 @@ from presentation import menu_block
 
 COMMANDS = (
     ('/cli', 'Choose an agent and open its setup.'),
-    ('/cli <agent>', 'Open agy (Antigravity), claude (Claude Code), grok (Grok Build), cursor, '
-                     'copilot (GitHub Copilot) or codex (Codex CLI).'),
-    ('/cli bind <agent>', 'Activate an agent with its saved settings, or its defaults on first use.'),
-    ('/d <PROMPT>', 'Send a prompt to the active agent in Direct mode (the default).'),
-    ('/cli menu', 'Agent Settings: model, effort, access, routing and progress.'),
+    ('/cli <agent>', 'Open agy (Antigravity), cla (Claude Code), cod (Codex CLI), gro (Grok Build), '
+                     'cop (GitHub Copilot) or cur (Cursor). Full names work too.'),
+    ('/cli bind|spawn <agent> [name]', 'Start an agent with its saved settings. Several can run at once, each with '
+                                       'a name: yours (letters and digits) or one like COD-7K.'),
+    ('/d [names] <PROMPT>', 'Send a prompt to the current agent, or to the agents named first, commas between '
+                            '(gro-4k,elon or a tag like cod). Nothing else reaches an agent.'),
+    ('/cli list|agents', 'List the running agents. /cli agents max <n> sets how many can run (4).'),
+    ('/cli use <name>', 'Make an agent the current one.'),
+    ('/cli diff [name]', 'Show what an agent\'s last turn changed, as a diff.'),
+    ('/cli timeout [name] <time>', 'How long an idle agent keeps running (1 hour by default), e.g. 90m or 2h.'),
+    ('/cli attach [name]', 'Bring an open agent from an earlier session in this folder here.'),
+    ('/cli menu|settings [name]', 'Agent Settings: model, effort, access and progress.'),
     ('/cli progress <mode>', 'activity shows tool work and usage; quiet shows messages and plans only.'),
     ('/cli view on|off', 'Watch each agent turn live in a PowerShell window. Off by default.'),
     ('/cli queue', 'Show queued, running and completed requests.'),
-    ('/cli cancel', 'Cancel the current agent turn; keep queued follow-ups.'),
+    ('/cli cancel [name]', 'Cancel an agent\'s running turn; keep queued follow-ups.'),
     ('/cli resume', 'Reattach status monitoring and restart a stopped queue worker without resending a prompt.'),
-    ('/cli stop', 'Close the active agent and clear queued requests. Same as /cli off.'),
+    ('/cli close|stop [name|all]', 'Close one agent, or all of them. With several running and no name, it asks '
+                                   'which. Same as /cli off.'),
     ('/help', 'Show this page.'),
 )
 
@@ -30,7 +38,7 @@ def commands():
                             ('/cli shortcuts', 'Add /cli and /d to autocomplete (the zip installer '
                                                'already does).'),
                             ('/cli reset', 'Set aside unreadable CLI-MODE state for this session.'),
-                            ('/cli help', 'Show this page.'))
+                            ('/cli help|commands', 'Show this page.'))
 
 
 def text():

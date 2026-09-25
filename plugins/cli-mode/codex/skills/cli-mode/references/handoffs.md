@@ -1,8 +1,7 @@
-# Passthrough and relay
+# Delegation and relay
 
-In Passthrough, each ordinary activated prompt goes intact to the main provider.
-In Direct, only leading `/d` or `$d` requests do; the worker strips the trigger
-exactly once. Other Direct-mode prompts stay with Codex. Never rewrite, split,
+Only leading `/d` or `$d` requests go to the main provider; the worker strips the
+trigger exactly once. Every other prompt stays with Codex. Never rewrite, split,
 add context to or generate follow-up work for a delegated prompt. The agent owns
 strategy, implementation, checks, media and any native subagents.
 
@@ -73,8 +72,8 @@ elapsed-time note at most once a minute is enough.
 
 ## Provider commands
 
-After the Direct trigger is removed, provider commands follow the same rules as
-Passthrough. `/d /help` asks the provider for help; bare `/help` is CLI-MODE help.
+After the `/d` trigger is removed, provider commands are checked before
+dispatch. `/d /help` asks the provider for help; bare `/help` is CLI-MODE help.
 Unsupported commands fail before dispatch instead of becoming model text.
 Antigravity's `/teamwork` and `/teamwork-preview` use its native CLI handoff. See
 [native commands](native-commands.md).

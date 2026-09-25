@@ -26,11 +26,11 @@ FEATURES = {
     'B6': 'readiness gates', 'B7': 'setup menu navigation',
     'C1': 'menu 1 defaults', 'C2': 'change-defaults chain', 'C3': 'routing mode at activation', 'C4': '/cli bind',
     'C5': 'activation card', 'C6': 'usage beside activation', 'C7': 'wider access asks first', 'C8': 'one readiness prompt',
-    'D1': 'menu/mode/model open settings', 'D2': 'model list', 'D3': 'effort list', 'D4': 'access list', 'D5': 'routing sub-menu',
+    'D1': 'menu/model open settings', 'D2': 'model list', 'D3': 'effort list', 'D4': 'access list', 'D5': 'no routing choice; /cli mode explains /d',
     'D6': 'progress toggle', 'D7': 'X closes, agent active', 'D8': 'direct setting commands', 'D9': 'warm/cold change',
     'D10': 'settings persist',
     'E1': 'Direct keeps host prompts', 'E2': '/d forwards unchanged', 'E3': '/d empty', 'E4': '/d inactive',
-    'E5': 'Passthrough', 'E6': '/d with menu open', 'E7': 'help stays local', 'E8': 'X semantics', 'E9': 'case and $',
+    'E5': 'plain text stays with the host', 'E6': '/d with menu open', 'E7': 'help stays local', 'E8': 'X semantics', 'E9': 'case and $',
     'E10': 'unknown /cli verb',
     'F1': 'Passing to once', 'F2': 'X says verbatim', 'F3': 'work line', 'F4': 'plans', 'F5': 'tool rows', 'F6': 'artifacts',
     'F7': 'errors and permission stop', 'F8': 'usage line', 'F9': 'Codex Markdown then view', 'F10': 'Claude final text',
@@ -107,19 +107,14 @@ STEPS = [
     step('color-menu', 'formatting', '/cli menu', ['K2'], 'plain_menu', hosts=('claude-code',)),
     step('color-x', 'formatting', 'x', ['K2'], 'local', hosts=('claude-code',)),
     step('color-on', 'formatting', '/cli color on', ['K2'], 'color_on', hosts=('claude-code',)),
-    # 5. Routing modes.
-    step('routing-menu', 'routing', '/cli menu', ['D5'], 'settings_page'),
-    step('routing-open', 'routing', '{routing_number}', ['D5'], 'routing_menu'),
-    step('passthrough', 'routing', '{passthrough_number}', ['D5', 'E5'], 'mode_set'),
-    # Choosing a mode returns to Agent Settings, which stays open: an ordinary prompt typed now is taken as a
-    # menu reply and silently not sent (finding, 2026-09-24). Record it, then close the menu.
-    step('pass-absorbed', 'routing', 'Reply with only the word early.', ['E5', 'E8'], 'absorbed_by_menu'),
-    step('pass-close', 'routing', 'x', ['D7'], 'settings_closed'),
-    step('pass-prompt', 'routing', 'Reply with only the word pass.', ['E5', 'F2'], 'relayed'),
-    step('pass-help', 'routing', {'claude-code': '/cli help', 'codex': '/help'}, ['E7'], 'help'),
-    step('pass-help-x', 'routing', 'x', ['E8'], 'help_closed'),
-    step('pass-queue', 'routing', '/cli queue', ['E5', 'G2'], 'queue'),
-    step('direct', 'routing', '/cli mode direct', ['D5', 'E1'], 'mode_set'),
+    # 5. Routing: only /d reaches the agent (Passthrough mode was removed).
+    step('routing-menu', 'routing', '/cli menu', ['D5'], 'no_routing_item'),
+    step('routing-close', 'routing', 'x', ['D7'], 'settings_closed'),
+    step('mode-removed', 'routing', '/cli mode', ['D5', 'E1'], 'mode_removed'),
+    step('plain-stays', 'routing', 'Reply with only the word pass.', ['E5'], 'not_relayed'),
+    step('routing-help', 'routing', {'claude-code': '/cli help', 'codex': '/help'}, ['E7'], 'help'),
+    step('routing-help-x', 'routing', 'x', ['E8'], 'help_closed'),
+    step('routing-queue', 'routing', '/cli queue', ['G2'], 'queue'),
     # 6. Provider commands.
     step('native', 'native commands', '/d {native}', ['H1'], 'relayed'),
     step('refused', 'native commands', '/d /model', ['H3'], 'refused'),
@@ -242,8 +237,6 @@ def check(name, h, turn, ctx):
                'state is not active for ' + agent)
     elif name == 'settings_page':
         expect(turn, 'Agent Settings' in shown and 'Model:' in shown, 'settings page missing')
-        rows = options(shown)
-        ctx['routing_number'] = pick(rows, 'rout')[0] or pick(rows, 'mode')[0]
     elif name == 'settings_closed':
         expect(turn, h.state().get('active'), 'X turned the agent off')
     elif name == 'relayed' and 'finished without public output' in shown:
@@ -284,21 +277,13 @@ def check(name, h, turn, ctx):
         expect(turn, '\\color{' not in raw and '```diff' not in raw, 'colour off still posts green LaTeX or diff rows')
     elif name == 'color_on':
         expect(turn, 'now green' in shown, 'colour on not confirmed ("now green")')
-    elif name == 'routing_menu':
-        rows = options(shown)
-        ctx['passthrough_number'] = pick(rows, 'Passthrough')[0]
-        ctx['direct_number'] = pick(rows, 'Direct')[0]
-        expect(turn, ctx['passthrough_number'], 'no Passthrough option: ' + str(rows)[:200])
-    elif name == 'absorbed_by_menu':
-        sent = 'says...' in shown
-        prose = re.sub(r'```.*?```', '', shown, flags=re.S)  # The menu's own rows ("X. Close settings") are no explanation.
-        prose = '\n'.join(line for line in prose.splitlines() if not line.strip().startswith('|'))
-        explained = re.search(r'(?i)not sent|menu is open|close (the )?(menu|settings)|reply with a number', prose)
-        turn['notes'].append('ordinary prompt with Agent Settings open: ' + ('relayed' if sent else 'held by the menu') +
-                             (', with an explanation' if explained else ', without an explanation'))
-        expect(turn, sent or explained, 'an ordinary prompt typed while Agent Settings was open was silently not sent')
-    elif name == 'mode_set':
-        expect(turn, 'assthrough' in shown or 'irect' in shown, 'routing change not confirmed')
+    elif name == 'no_routing_item':
+        expect(turn, 'Agent Settings' in shown and 'Model:' in shown, 'settings page missing')
+        expect(turn, not pick(options(shown), 'rout')[0], 'the settings page still offers a routing choice')
+    elif name == 'mode_removed':
+        expect(turn, 'only through /d' in shown, '/cli mode does not explain that only /d reaches the agent')
+    elif name == 'not_relayed':
+        expect(turn, 'says...' not in shown and 'Passing to' not in shown, 'a plain prompt reached the agent')
     elif name == 'queue':
         expect(turn, 'queue' in shown.casefold() or 'Worker' in shown, 'no queue report')
     elif name == 'refused':

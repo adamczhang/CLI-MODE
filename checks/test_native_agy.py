@@ -23,7 +23,6 @@ class NativeTransport(unittest.TestCase):
         self.store = Store('native-test', self.root, self.root / 'data')
         self.backend = FakeBackend()
         self.control = Controller(self.store, self.backend)
-        self.control.mode('passthrough')  # This fixture exercises unprefixed forwarding.
         self.control.frontend()
         self.control.activate('gemini-3.8-flash-high', 'allow')
 
@@ -34,7 +33,7 @@ class NativeTransport(unittest.TestCase):
         files = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
         with patch.object(self.backend, 'start', side_effect=AssertionError('must not dispatch')):
             with self.assertRaisesRegex(RuntimeError, 'does not advertise'):
-                self.control.send('/record')
+                self.control.send('/d /record')
         after = self.store.read()
         receipts = after.pop('requests')
         self.assertEqual({r['status'] for r in receipts.values()}, {'rejected'})
@@ -46,13 +45,13 @@ class NativeTransport(unittest.TestCase):
 
     def test_only_help_is_local(self):
         for active in (False, True):
-            state = {'active': active, 'pending': None, 'routingMode': 'passthrough'}
+            state = {'active': active, 'pending': None, 'routingMode': 'direct'}
             # Help is the only local command, under either accepted prefix.
             for command in ('/help', '$help'):
                 self.assertEqual(route(command, state)['route'], 'help')
-            # /commands is not a help alias, and ? is not an accepted prefix.
+            # /commands is not a help alias, ? is not an accepted prefix, and only /d reaches the agent.
             for command in ('/commands', '$commands', '?commands', '?help'):
-                self.assertEqual(route(command, state)['route'], 'delegate' if active else 'host')
+                self.assertEqual(route(command, state)['route'], 'host')
 
     def test_native_commands_are_complete_leading_tokens(self):
         for text in ('/teamwork task', '/teamwork-preview task', '/commands', '/usage', '/model'):
@@ -99,14 +98,14 @@ class NativeTransport(unittest.TestCase):
     def test_handoff_closes_acp_once_and_followups_resume_native(self, prepare):
         original = self.store.read()['main']
         events = []
-        self.control.send('/teamwork-preview  test\r\nkeep whitespace ', output=events.append)
+        self.control.send('/d /teamwork-preview  test\r\nkeep whitespace ', output=events.append)
         self.assertEqual(self.backend.closed, [original])
         self.assertEqual(self.store.read()['owned'][0]['providerSession'], 'native-fixture')
         self.assertEqual(self.store.read()['owned'][0]['transport'], 'native')
         self.assertTrue(any(e['type'] == 'context_warning' for e in events))
         self.assertEqual(next(e['text'] for e in events if e['type'] == 'message'),
                          '/teamwork-preview  test\r\nkeep whitespace ')
-        self.control.send('interview answer', output=lambda e: None)
+        self.control.send('/d interview answer', output=lambda e: None)
         self.assertEqual(self.backend.closed, [original])
         self.control.tune('effort')
         self.control.activate('gemini-3.8-flash-low', 'allow')
@@ -117,7 +116,7 @@ class NativeTransport(unittest.TestCase):
     def test_failed_preflight_keeps_acp_session_untouched(self, prepare):
         before = self.store.read()
         with self.assertRaisesRegex(RuntimeError, 'unavailable'):
-            self.control.send('/teamwork task')
+            self.control.send('/d /teamwork task')
         after = self.store.read()
         receipts = after.pop('requests')
         self.assertEqual({r['status'] for r in receipts.values()}, {'rejected'})
@@ -128,7 +127,7 @@ class NativeTransport(unittest.TestCase):
     def test_failed_close_gates_dispatch(self, prepare):
         with patch.object(self.backend, 'close', side_effect=RuntimeError('close failed')):
             with self.assertRaisesRegex(RuntimeError, 'close failed'):
-                self.control.send('/usage')
+                self.control.send('/d /usage')
         self.assertFalse(self.store.read()['active'])
         self.assertEqual(len(self.store.read()['owned']), 1)
 
@@ -142,7 +141,7 @@ class NativeTransport(unittest.TestCase):
 
     @patch('native_agy.prepare', return_value='gemini-3.8-flash-high')
     def test_terminal_native_errors_do_not_leave_uncertain_work(self, prepare):
-        self.control.send('/usage', output=lambda e: None)
+        self.control.send('/d /usage', output=lambda e: None)
         def process_result(result):
             code = 'print(' + repr(json.dumps({'event': 'result', 'result': result})) + ')'
             return subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE,
@@ -151,17 +150,17 @@ class NativeTransport(unittest.TestCase):
                 {'status': 'ERROR', 'error': 'Command needs an interactive terminal'})):
             events = []
             with self.assertRaisesRegex(RuntimeError, 'did not complete'):
-                self.control.send('/unsupported', output=events.append)
+                self.control.send('/d /unsupported', output=events.append)
             self.assertTrue(any(e.get('message') == 'Command needs an interactive terminal' for e in events))
             self.assertFalse(self.store.read()['inflight'])
         with patch.object(self.backend, 'start', side_effect=lambda *a: process_result(
                 {'status': 'SUCCESS', 'response': ''})):
-            self.control.send('/empty-result', output=lambda e: None)
+            self.control.send('/d /empty-result', output=lambda e: None)
             self.assertFalse(self.store.read()['inflight'])
 
     @patch('native_agy.prepare', return_value='gemini-3.8-flash-high')
     def test_off_cancels_an_inflight_native_turn(self, prepare):
-        self.control.send('/teamwork-preview test', output=lambda e: None)
+        self.control.send('/d /teamwork-preview test', output=lambda e: None)
         started = threading.Event()
         def start(owned, args, timeout):
             proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(20)'],
@@ -174,7 +173,7 @@ class NativeTransport(unittest.TestCase):
         with patch.object(self.backend, 'start', side_effect=start), \
              patch.object(self.backend, 'close', side_effect=native_agy.close), \
              concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(self.control.send, 'long turn', lambda e: None)
+            future = pool.submit(self.control.send, '/d long turn', lambda e: None)
             self.assertTrue(started.wait(3))
             result = self.control.off()
             with self.assertRaisesRegex(RuntimeError, 'canceled'):

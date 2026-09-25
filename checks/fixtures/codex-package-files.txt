@@ -55,6 +55,7 @@ scripts/adapters.py
 scripts/agy.py
 scripts/binding.py
 scripts/catalogs.py
+scripts/changes.py
 scripts/claude_code.py
 scripts/codex_cli.py
 scripts/confirmation.py
@@ -70,6 +71,7 @@ scripts/host.py
 scripts/installer.py
 scripts/menu_view.py
 scripts/menus.py
+scripts/names.py
 scripts/native_agy.py
 scripts/native_commands.py
 scripts/operations.py

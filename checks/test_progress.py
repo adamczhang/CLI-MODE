@@ -24,7 +24,6 @@ class Progress(unittest.TestCase):
             root = Path(folder)
             backend = FakeBackend()
             control = Controller(Store('empty-command', root, root / 'state'), backend)
-            control.mode('passthrough')
             control.frontend()
             control.activate('gemini-3.8-flash-high', 'allow')
             owned = control.store.read()['owned'][0]
@@ -44,7 +43,6 @@ class Progress(unittest.TestCase):
             root = Path(folder)
             backend = FakeBackend()
             control = Controller(Store('canonical-failure', root, root / 'state'), backend)
-            control.mode('passthrough')
             control.frontend()
             control.activate('gemini-3.8-flash-high', 'allow')
             events = [dict(type='message', text='Looks successful'),
@@ -52,7 +50,7 @@ class Progress(unittest.TestCase):
                            settled=True, outputComplete=True)]
             with patch.object(backend, 'start', side_effect=lambda *a, **kw: runtime_process(events)):
                 with self.assertRaises(RuntimeError):
-                    control.send('task', output=lambda e: None)
+                    control.send('/d task', output=lambda e: None)
             self.assertFalse(control.store.read()['inflight'])
             self.assertEqual(next(iter(control.store.read()['requests'].values()))['status'], 'failed')
 
@@ -61,7 +59,6 @@ class Progress(unittest.TestCase):
             root = Path(folder)
             backend = FakeBackend()
             control = Controller(Store('incomplete-output', root, root / 'state'), backend)
-            control.mode('passthrough')
             control.frontend()
             control.activate('gemini-3.8-flash-high', 'allow')
             outcome = runtime_result()
@@ -69,7 +66,7 @@ class Progress(unittest.TestCase):
             events = [dict(type='message', text='Partial output'), outcome]
             with patch.object(backend, 'start', side_effect=lambda *a, **kw: runtime_process(events)):
                 with self.assertRaises(RuntimeError):
-                    control.send('task', output=lambda e: None)
+                    control.send('/d task', output=lambda e: None)
             self.assertFalse(control.store.read()['inflight'])
             self.assertEqual(next(iter(control.store.read()['requests'].values()))['status'], 'failed')
 
@@ -144,7 +141,6 @@ class Progress(unittest.TestCase):
             root = Path(folder)
             backend = Backend()
             control = Controller(Store('progress', root, root / 'state'), backend)
-            control.mode('passthrough')
             control.frontend()
             control.activate('gemini-3.8-flash-high', 'allow')
             plan = dict(type='plan', entries=[dict(content='Inspect project', status='in_progress')])
@@ -154,7 +150,7 @@ class Progress(unittest.TestCase):
                 dict(type='message', messageId='a', text='I will '),
                 dict(type='message', messageId='a', text='check it.'), runtime_result()]
             output = []
-            result = control.send('exact request', output=output.append)
+            result = control.send('/d exact request', output=output.append)
             saved = [json.loads(line) for line in Path(result['events']).read_text(encoding='utf-8').splitlines()]
             self.assertEqual(saved, output[1:])  # Dispatch metadata is not provider progress.
             self.assertEqual([e['type'] for e in saved], ['plan', 'message', 'done'])

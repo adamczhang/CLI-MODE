@@ -12,7 +12,7 @@ import acpx
 import adapters
 import host
 import installer
-from state import DEFAULT_ROUTING_MODE, backend_records, lock
+from state import backend_records, lock
 from presentation import access_display, access_note, effort_display, effort_key, effort_rank, menu_block, options_menu
 from progress import DEFAULT_PROGRESS_MODE
 
@@ -124,7 +124,7 @@ def setup_menu(result, routing, access=None):
     return menu_block('\n'.join(lines))
 
 
-def menu(root, agent, settings=None, routing=None, access=None, page=1, routing_mode=DEFAULT_ROUTING_MODE):
+def menu(root, agent, settings=None, routing=None, access=None, page=1):
     blocked = routing is not None and not routing['ready']
     if agent != 'home':
         receipt_path(root, agent)
@@ -145,19 +145,18 @@ def menu(root, agent, settings=None, routing=None, access=None, page=1, routing_
         return menu_block(built['text'])
     receipt_path(root, agent)
     text = settings_text(agent, settings)
-    text += '\nMode: ' + routing_mode.title()
     text += '\n\n1. Recheck routing' if blocked else '\n\n1. Yes - use these defaults'
-    text += '\n2. Change defaults\n3. Change routing mode'
+    text += '\n2. Change defaults'
     if blocked:
         text += '\n\nHook check pending.\nActivation is unavailable.'
     return menu_block(text + '\nB. Back to agents')
 
 
-def settings_text(agent, settings=None):
+def settings_text(agent, settings=None, name=None):
     """Structured settings fields; adapter prose is never parsed as a UI API."""
     adapter = adapters.module(agent)
     selected = settings or adapter.selection(adapter.CATALOG.parent, **adapter.DEFAULTS)
-    return '\n'.join(['CLI-MODE', 'Agent Settings', '', adapter.DISPLAY_NAME,
+    return '\n'.join(['CLI-MODE', 'Agent Settings', '', adapter.DISPLAY_NAME + (' ' + name if name else ''),
                       'Model: ' + selected['modelName'], 'Effort: ' + effort_display(selected['effort']),
                       'Access: ' + access_display(selected['access'], selected.get('accessName')) +
                       access_note(selected['access'])])
@@ -178,19 +177,39 @@ def selected_key(root, backend, phase, settings, snapshot=None):
     return selected.get('effortValue') if family.get('modelId') else model
 
 
-def routing_mode_menu(current=DEFAULT_ROUTING_MODE):
-    labels = [name.title() + ('  (current)' if name == current else '')
-              for name in ('passthrough', 'direct')]
-    built = options_menu('Routing Mode', labels, lead=[
-        'Passthrough sends ordinary prompts.',
-        'Direct sends only /d or $d prompts.', ''])
-    return menu_block(built['text'] + '\nX. Back')
+def active_settings_menu(agent, settings, progress=DEFAULT_PROGRESS_MODE, name=None):
+    text = settings_text(agent, settings, name)
+    return menu_block(text + '\nProgress: ' + progress.title() +
+        '\n\n1. Change model\n2. Change effort\n3. Change access\n4. Toggle activity progress\nX. Close settings')
 
 
-def active_settings_menu(agent, settings, routing_mode, progress=DEFAULT_PROGRESS_MODE):
-    text = settings_text(agent, settings)
-    return menu_block(text + '\nMode: ' + routing_mode.title() + '\nProgress: ' + progress.title() +
-        '\n\n1. Change model\n2. Change effort\n3. Change access\n4. Change routing mode\n5. Toggle activity progress\nX. Close settings')
+def close_menu(state):
+    """The `/cli close` chooser, when several agents run: numbered names, all, or cancel."""
+    from state import agent_entry, agent_label
+    rows = []
+    for number, session in enumerate(state.get('closeMenu') or [], 1):
+        if agent_entry(state, session):
+            rows.append(str(number) + '. ' + agent_label(state, session) +
+                        (' (current)' if session == state.get('main') else ''))
+    return menu_block('CLI-MODE\nClose Agent\n\n' + '\n'.join(rows) + '\nA. All agents\nX. Cancel')
+
+
+def agents_text(state, activity):
+    """`/cli list`: every running agent by name, its settings and what it is doing."""
+    from state import agent_label, agent_limit
+    owned = sorted(state.get('owned') or [], key=lambda item: item['name'] != state.get('main'))
+    if not owned:
+        return 'No agent is running. /cli spawn <agent> starts one.'
+    lines = ['Agents: ' + str(len(owned)) + ' of ' + str(agent_limit(state))]
+    for item in owned:
+        settings = item.get('settings') or {}
+        lines.append(agent_label(state, item['name']) +
+                     (' (current)' if item['name'] == state.get('main') else '') + ': ' + activity[item['name']])
+        if settings.get('modelName'):
+            lines.append('  ' + settings['modelName'] + ' · ' + effort_display(settings.get('effort')) + ' · ' +
+                         access_display(settings.get('access'), settings.get('accessName')))
+    lines.append('/d <name> <prompt> sends to one; /cli use <name> makes it current.')
+    return '\n'.join(lines)
 
 
 def phase_options(root, backend, phase, settings=None, snapshot=None):

@@ -88,9 +88,9 @@ class Markdown(unittest.TestCase):
 
     def test_r1_passing_says_and_work_line(self):
         text = ran()['r1']
-        self.assertTrue(text.startswith('**Passing to Antigravity...**'))
-        self.assertEqual(text.count('Antigravity says...'), 1)
-        self.assertIn('_Antigravity work: 1 running · 2 done · 1 failed · plan 1/3: Write the answer', text)
+        self.assertTrue(text.startswith('**Passing to Antigravity AGY-4K...**'))
+        self.assertEqual(text.count('Antigravity AGY-4K says...'), 1)
+        self.assertIn('_Antigravity AGY-4K work: 1 running · 2 done · 1 failed · plan 1/3: Write the answer', text)
         self.assertIn('Artifact: report.txt', text)
         self.assertIn('**Search for multiply did not finish.**', text)
         self.assertIn('**Context is 80% full.**', text)
@@ -98,7 +98,7 @@ class Markdown(unittest.TestCase):
     def test_r3_green_attribution_within_the_latex_guard(self):
         text = ran()['r3']
         first = text.split('\n', 1)[0]
-        self.assertEqual(presentation.plain_strong(first), '**Antigravity says...**')
+        self.assertEqual(presentation.plain_strong(first), '**Antigravity AGY-4K says...**')
         for span in re.findall(r'\$([^$]*)\$', first):
             self.assertLessEqual(len(span), presentation.LATEX_MAX)
             self.assertNotRegex(span, r'[#@"`]')
@@ -109,7 +109,7 @@ class Markdown(unittest.TestCase):
         folder = Path(tempfile.mkdtemp(prefix='cmc-'))
         ran.folders.append(folder)
         text = corpus.render_r1_r3(corpus.events(), folder, color=False)['r3']
-        self.assertTrue(text.startswith('**Antigravity says...**'))
+        self.assertTrue(text.startswith('**Antigravity AGY-4K says...**'))
         self.assertNotIn('\\color', text)
 
     def test_quiet_hides_work_and_usage(self):
@@ -209,7 +209,7 @@ class View(unittest.TestCase):
 
     def test_work_is_nested_with_relative_rows_and_full_paths_in_details(self):
         html = self.body()
-        self.assertIn('<details class="work"><summary>Antigravity work · 1 running · 2 done · 1 failed</summary>', html)
+        self.assertIn('<details class="work"><summary>Antigravity AGY-4K work · 1 running · 2 done · 1 failed</summary>', html)
         self.assertIn('<summary>Plan · 1 of 3 done</summary>', html)
         self.assertRegex(html, r'title="Read calc\.py — [^"]*/workspace/calc\.py:1">Read calc\.py — calc\.py:1</span>')
         self.assertIn('>Run Python tests (unittest)</span>', html)
@@ -233,8 +233,8 @@ class View(unittest.TestCase):
         folder = Path(tempfile.mkdtemp(prefix='cmc-'))
         ran.folders.append(folder)
         out = corpus.render_r1_r3([dict(type='done', stopReason='end_turn')], folder)
-        self.assertIn('Antigravity finished without public output.', out['r2'])
-        self.assertIn('_Antigravity finished without public output._', out['r3'])
+        self.assertIn('Antigravity AGY-4K finished without public output.', out['r2'])
+        self.assertIn('_Antigravity AGY-4K finished without public output._', out['r3'])
 
 
 @unittest.skipUnless(viewer.shell(), 'PowerShell is not installed')

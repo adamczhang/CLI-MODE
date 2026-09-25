@@ -139,6 +139,19 @@ def green(words):
     return GREEN_OPEN + ''.join(LATEX_ESCAPES.get(char, char) for char in words) + GREEN_CLOSE
 
 
+# Lines removed, in the red diffs use; it reads on both the light and the dark theme.
+CHAT_RED = 'cf222e'
+
+
+def added_removed(added, removed, color=False):
+    """`+42 -7`: lines added in green and removed in red (Claude Code's chat), or plain."""
+    plus, minus = '+' + str(added), '-' + str(removed)
+    if not color:
+        return plus + ' ' + minus
+    return ('$' + green(plus) + '$ $' + GREEN_OPEN.replace(CHAT_GREEN, CHAT_RED) +
+            ''.join(LATEX_ESCAPES.get(char, char) for char in minus) + GREEN_CLOSE + '$')
+
+
 def strong(text, color=False):
     """Bold text; with colour on (Claude Code, /cli color), green bold sans-serif.
 
@@ -254,6 +267,8 @@ def relay_plain(result):
     agent = result.get('agent') or 'The agent'
     post = result['text'] if result['done'] else result.get('markdown') or ''
     again = ' Run the same command again with --cursor ' + str(result['cursor']) + '.'
+    if result.get('posted'):
+        return agent + '\'s answer is already posted above, so there is nothing more to post.'
     if result['done']:
         lead = agent + ' has finished. Post everything below this line exactly, as the last message of the turn.'
     elif post:
@@ -283,6 +298,15 @@ def queue_text(result):
     if result.get('inflight'):
         lines.append(str(len(result['inflight'])) + ' operation(s) in flight.')
     return '\n'.join(lines)
+
+
+def close_text(result):
+    """`/cli close`: the chooser when several agents run, one agent's close, or the full shutdown."""
+    if isinstance(result.get('activationMenu'), str):
+        return result_text(result)
+    if 'closed' in result:
+        return result.get('message') or ''
+    return shutdown_text(result)
 
 
 def shutdown_text(result):

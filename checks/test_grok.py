@@ -44,20 +44,21 @@ class Controls(unittest.TestCase):
     def test_resolution_is_canonical(self):
         self.assertEqual(resolve_backend('grok'), 'grok-build')
         self.assertEqual(resolve_backend('grok-build'), 'grok-build')
-        self.assertIsNone(resolve_backend('gro'))
+        self.assertEqual(resolve_backend('gro'), 'grok-build')  # Its three-letter tag.
+        self.assertIsNone(resolve_backend('grk'))
         self.assertIsNone(resolve_backend('grokbuild'))
 
     def test_partial_or_trailing_text_is_not_a_control(self):
         off = {'active': False}
-        self.assertEqual(route('/cli gro', off)['route'], 'hint')
+        self.assertEqual(route('/cli gr', off)['route'], 'hint')
         self.assertEqual(route('/cli grok now please', off)['route'], 'hint')
-        self.assertEqual(route('/cli bind gro', off)['route'], 'hint')
+        self.assertEqual(route('/cli bind gr', off)['route'], 'hint')
 
     def test_help_lists_the_third_agent(self):
         import help_view
         commands = help_view.text()
-        self.assertIn('grok (Grok Build)', commands)
-        self.assertIn('/cli bind <agent>', commands)
+        self.assertIn('gro (Grok Build)', commands)
+        self.assertIn('/cli bind|spawn <agent> [name]', commands)
 
 
 class Catalog(unittest.TestCase):
@@ -145,7 +146,7 @@ class Verification(unittest.TestCase):
         self.assertNotIn('antigravity', command)
         self.assertNotIn('claude', command)
         self.assertIn('--approve-all', command)
-        self.assertEqual(command[command.index('--ttl') + 1], '1800')
+        self.assertEqual(command[command.index('--ttl') + 1], '3600')  # One hour unless /cli timeout changes it.
 
     def test_prompt_access_drops_host_auto_approval(self):
         owned = dict(self.owned, settings=grok_build.selection(self.root, 'grok-4.7', 'prompt', 'high'))

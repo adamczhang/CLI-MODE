@@ -1,16 +1,36 @@
 # CLI-MODE
 
-![CLI-MODE: unlock third-party subscriptions in Codex](docs/images/banner.jpg)
+![CLI-MODE: unlock third-party subscriptions in Claude Code and Codex](docs/images/banner.jpg)
 
-**Use your other AI coding subscriptions without leaving Codex or Claude Code.**
-CLI-MODE is a plugin for both hosts that hands your prompts to Antigravity, Claude Code, Grok Build,
-Cursor, GitHub Copilot or Codex CLI, and relays their answers back into the chat you were already in.
+**Use your other AI coding subscriptions without leaving Claude Code or Codex.**
+CLI-MODE is a plugin that hands your prompts to Antigravity, Claude Code, Grok Build, Cursor, GitHub
+Copilot or Codex CLI, and relays their answers back into the chat you were already in.
 
-**Windows only for now** · Codex and Claude Code · Six agents over the
+**Windows only for now** · Built for Claude Code, also runs in Codex · Six agents over the
 [Agent Client Protocol](https://agentclientprotocol.com/) · MIT
 
-<!-- Screenshot: a Codex conversation showing "Passing to Claude...", then "Claude says..." with its work
-     summary, and the same turn in Claude Code. 1280 px wide, light or dark theme. -->
+## Hosts
+
+- **Claude Code has first-class support.** It is the primary host: new features are designed for it and
+  arrive there first, and every change is checked against it.
+- **Codex is supported and tested,** but new features may reach it later, or work differently there.
+
+| Feature | Claude Code | Codex |
+|---|:---:|:---:|
+| Six agents, setup, `/d` prompts, Agent Settings | ✓ | ✓ |
+| Several named agents at once (`/cli spawn`, `/cli list`) | ✓ | ✓ |
+| Queue, cancel, resume, provider slash commands | ✓ | ✓ |
+| Live viewer window (`/cli view`) | ✓ | ✓ |
+| Agents listed on the background tasks panel | ✓ | — |
+| Agent streaming updates | Panel viewer | In chat |
+| Help | `/cli help` | `/help` or `/cli help` |
+| Needs | workspace trust | a Full Access task |
+
+On Claude Code the whole answer arrives when the agent finishes, with a one-line work summary; see
+[Claude Code](#claude-code) for details.
+
+<!-- Screenshot: a Claude Code conversation showing "Passing to Grok GRO-4K...", the agent's row in
+     background tasks, then "Grok GRO-4K says..." with its work summary. 1280 px wide, light or dark theme. -->
 
 ## Why
 
@@ -25,7 +45,8 @@ come back into your conversation. No second app, no second chat window, no termi
 ## What you need
 
 - **Windows 10 or 11.** Setup and the agent runtime are Windows-only for now.
-- **A host:** the Codex desktop app (the install uses the Codex CLI), or **Claude Code 2.1.147 or later**.
+- **A host:** **Claude Code 2.1.147 or later** (recommended), or the Codex desktop app (the install uses the
+  Codex CLI).
 - **Python 3.10+ and Node.js 22.13+.** Setup installs the rest, including CLI-MODE's own copy of ACPX.
 - **At least one supported agent CLI,** installed and signed in with its own subscription. You only need the
   ones you plan to use; `/cli` checks each one and guides installation and sign-in.
@@ -35,28 +56,23 @@ come back into your conversation. No second app, no second chat window, no termi
 | Agent | Command | Install guide |
 |---|---|---|
 | Antigravity | `/cli agy` | [Antigravity CLI](https://antigravity.google/docs/cli/install/) (also needs its ACP runtime) |
-| Claude Code | `/cli claude` | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) |
-| Grok Build | `/cli grok` | [Grok Build](https://docs.x.ai/build/overview) |
-| Cursor | `/cli cursor` | [Cursor CLI](https://cursor.com/docs/cli/overview) |
-| GitHub Copilot | `/cli copilot` | [Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-chat/use-copilot-chat-in-the-command-line) |
-| Codex CLI | `/cli codex` | [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) |
+| Claude Code | `/cli cla` | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) |
+| Grok Build | `/cli gro` | [Grok Build](https://docs.x.ai/build/overview) |
+| Cursor | `/cli cur` | [Cursor CLI](https://cursor.com/docs/cli/overview) |
+| GitHub Copilot | `/cli cop` | [Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-chat/use-copilot-chat-in-the-command-line) |
+| Codex CLI | `/cli cod` | [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) |
 
-One agent runs per conversation, in that conversation's working folder, using its own account and model
-access. To switch agents, run `/cli stop` first; conversations do not transfer between providers.
+Every command that takes an agent accepts its three-letter tag or its full name (`cla` or `claude`, `gro`
+or `grok`), and the tag also starts its generated names (`GRO-4K`). Each agent runs in the conversation's
+working folder, using its own account and model access. Up to four run at once, in any mix (see
+[Several agents](#several-agents)); conversations do not transfer between providers.
 
 ## Install
 
 Pick your host and run its block in PowerShell.
 
-**Codex:**
-
-```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.1
-codex plugin add cli-mode@cli-mode
-```
-
-**Claude Code:** download `cli-mode-claude-0.3.1.zip` from the
-[v0.3.1 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.1), extract it, and run:
+**Claude Code:** download `cli-mode-claude-0.3.2.zip` from the
+[v0.3.2 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.2), extract it, and run:
 
 ```powershell
 .\install-claude.ps1
@@ -65,57 +81,101 @@ codex plugin add cli-mode@cli-mode
 Or install it straight from GitHub:
 
 ```powershell
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.1 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.2 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
 The zip's installer also checks Python, Node and your Claude Code version, and adds `/cli` and `/d` to
 autocomplete; see [Claude Code](#claude-code).
 
+**Codex:**
+
+```powershell
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.2
+codex plugin add cli-mode@cli-mode
+```
+
 **Using both?** Install both. They share CLI-MODE's ACPX copy and each agent's sign-in, so an agent set up
 for one host is ready in the other. Conversations and settings stay separate per host.
 
-**Upgrading from 0.3.0?** A GitHub install stays on its tag; the [release notes](RELEASE_NOTES.md#upgrading-from-v030)
-show how to move it to 0.3.1 and keep your settings.
+**Upgrading?** A GitHub install stays on its tag; the [release notes](RELEASE_NOTES.md#upgrading-from-v031-or-v030)
+show how to move it to 0.3.2 and keep your settings.
 
-Release **0.3.1** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
+Release **0.3.2** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
 
 ## Get started
 
-1. Open a new Codex task with **Full Access** (on Claude Code, start a new session and accept the folder's
-   workspace trust prompt).
+1. Start a new Claude Code session and accept the folder's workspace trust prompt (on Codex, open a new task
+   with **Full Access**).
 2. Run **`/cli`** and choose an agent. Setup checks its dependencies and guides installation and sign-in.
 3. On Codex, if prompted, approve the hooks under **Plugins → CLI-MODE → Hooks → Review / Trust all**, then
    recheck setup.
-4. Accept the defaults or choose the model, effort, access and routing mode.
-5. Send your prompt. CLI-MODE announces `Passing to Claude...`, for example, and relays the answer under
-   `Claude says...`.
+4. Accept the defaults or choose the model, effort and access.
+5. Send your prompt. CLI-MODE announces `Passing to Claude CLA-4F...`, for example, and relays the answer
+   under `Claude CLA-4F says...`. `CLA-4F` is the agent's name.
 
-## Passthrough or Direct
+## Sending a prompt to an agent
 
-**Direct** is the default and keeps ordinary prompts with your host. Prefix a request with `/d` or `$d` to
-send it to the active agent:
+Only a message that starts with `/d` (or `$d`) goes to an agent, the current one unless you name another;
+everything else stays with your host, so you decide exactly what each agent is asked:
 
 ```text
-/cli mode direct
 /d Explain how authentication works in this project.
 ```
 
-**Passthrough** forwards every ordinary prompt to the active agent.
+`/d` does not activate an agent on its own. Messages sent while an agent is busy queue up for it and go out
+in order; see [Architecture](docs/ARCHITECTURE.md) for how the queue works.
 
-Changing routing mode keeps the agent's session and settings. `/d` does not activate an agent on its own.
-Messages sent while the agent is busy queue up and go out in order; see [Architecture](docs/ARCHITECTURE.md)
-for how the queue works.
+## Several agents
+
+Every agent has a name, shown in capitals: one you give it (`/cli spawn gro ELON`, 1-10 letters and digits)
+or a generated one such as `GRO-4K`. Start another agent at any time, even while others work; the newest
+becomes the current agent, the one a plain `/d` goes to. Put a name first to send to another:
+
+```text
+/d gro-4k Review the parser changes.
+/d elon Write tests for the parser.
+```
+
+Names match in any case, and a generated name also as `gro4k`, or as `-4K` when only one running agent has
+that ending. A tag (`gro`, `cod`) names an agent too when only one of its kind is running. Each agent has its
+own queue, so they work side by side, and each answer is relayed under its own name (`Grok GRO-4K says...`).
+`/cli list` shows them all, `/cli use <name>` changes the current agent, and `/cli close <name>` closes one
+while the others keep working.
+
+To ask several agents the same thing, name them all, with commas between:
+
+```text
+/d gro-4k,cod-7k Review the parser changes.
+/d elon, -7K Is this migration safe?
+```
+
+Each gets its own copy and works at the same time; the answers arrive one by one, each under its own name.
+If any name matches no running agent, nothing is sent.
+
+**Agents from earlier sessions.** An agent you didn't close keeps its conversation. In a new session in the
+same folder, `/cli attach` lists them and `/cli attach <name or number>` brings one here; its next `/d`
+continues where it left off, and the earlier session no longer has it.
 
 ## Settings and commands
 
 - **`/cli`** — choose an agent or run setup.
-- **`/cli bind <agent>`** — activate with saved defaults, after readiness checks.
-- **`/cli menu`**, **`/cli mode`** or **`/cli model`** — open the Agent Settings page.
-- **`/cli model <choice>`**, **`/cli effort <choice>`**, **`/cli access <choice>`** — change a setting.
-  CLI-MODE matches your wording (for example `opus`, `extra high` or `bypass permissions`) against the agent's
-  options and applies a unique match; if the choice is unclear it shows the menu.
-- **`/cli mode direct`** or **`/cli mode passthrough`** — change routing.
+- **`/cli spawn <agent> [name]`** (or **`/cli bind`**) — start an agent with saved defaults, after readiness
+  checks. `<agent>` is its tag or full name, for example `cod` or `codex`.
+- **`/cli list`** (or **`/cli agents`**) — the running agents by name; **`/cli agents max <n>`** sets how many
+  can run at once (4 by default, up to 8).
+- **`/cli use <name>`** — make that agent the current one.
+- **`/cli diff [name]`** — what an agent's last turn changed, as a diff.
+- **`/cli timeout [name] <time>`** — how long an idle agent keeps running, from 5 minutes to 24 hours
+  (`90`, `90m`, `2h`; 1 hour by default). Without a name it sets the default for every conversation and this
+  one's agents. `/cli timeout` shows the values.
+- **`/cli attach [name]`** — bring an open agent from an earlier session in this folder here.
+- **`/cli menu [name]`** (or **`/cli settings`**) — open an agent's settings page; the current agent's by
+  default.
+- **`/cli model <choice>`**, **`/cli effort <choice>`**, **`/cli access <choice>`** — change a setting, with an
+  agent's name first for another agent (`/cli model elon opus`). CLI-MODE matches your wording (for example
+  `opus`, `extra high` or `bypass permissions`) against the agent's options and applies a unique match; if the
+  choice is unclear it shows the menu.
 - **`/cli progress activity`** or **`/cli progress quiet`** — show tool activity and usage (default), or only
   messages and plans. Applies from the next turn.
 - **`/cli view on`** or **`/cli view off`** — watch each agent turn live in its own PowerShell window: the
@@ -123,12 +183,14 @@ for how the queue works.
   conversation. Closing the window is safe; the next turn reopens it until you turn it off.
 - **`/cli queue`** — see queued, running and completed requests; **`/cli resume`** picks up monitoring of
   existing turns without resending anything.
-- **`/cli cancel`** — cancel the running turn, keeping queued follow-ups.
-- **`/cli stop`** — stop the agent and return to your host.
-- **`/help`** (Codex) or **`/cli help`** (Claude Code) — show the command card. Reply X to close it.
+- **`/cli cancel [name]`** — cancel an agent's running turn, keeping queued follow-ups.
+- **`/cli close [name|all]`** (or **`/cli stop`**, **`/cli off`**) — close one agent, or all of them. With
+  several running and no name, it asks which. Closing the last agent returns you to your host.
+- **`/cli help`** (or **`/cli commands`**; on Codex also **`/help`**) — show the command card. Reply X to
+  close it.
 
-`$` works in place of `/`, and controls are case-insensitive. Help and controls stay local, even in
-Passthrough. Closing help or settings keeps the agent running.
+`$` works in place of `/`, and controls are case-insensitive. Help and controls always stay local.
+Closing help or settings keeps the agent running.
 
 **Access levels.** Claude supports Allow, Auto-edit and Prompt; Antigravity, Grok and Copilot support Allow
 and Prompt; Cursor and Codex support Allow only. CLI-MODE cannot show you an agent's approval prompt, so
@@ -139,11 +201,17 @@ followed by the agent's own name for it, for example `Allow (Bypass permissions)
 
 ## What to expect
 
-- **Persistent context:** follow-up prompts continue the same agent conversation, and settings changes keep it.
-- **Live updates on Codex:** the agent's words arrive as chat updates in readable batches, each with a
-  one-line summary of its work. When the turn ends, one view shows the final message and a collapsible
-  **work** section with the plan and tool activity. On Claude Code the whole answer arrives at the end (see
-  [Claude Code](#claude-code)).
+- **Persistent context:** each agent keeps its own conversation; follow-up prompts continue it, and settings
+  changes keep it. An agent idle for its timeout (1 hour by default) stops its process; the next `/d` starts it
+  again in the same conversation, with a slower first reply.
+- **Change receipts:** in a git repository, each answer ends with what changed in the folder during the turn:
+  files, lines added in green and removed in red, for example `Codex COD-7K changed 2 files +42 -7`.
+  `/cli diff` shows the full diff. Agents that share a folder at the same time share its changes too. Your
+  staging area is never touched.
+- **How answers arrive:** on Claude Code, the agent works as a row in Claude Code's background tasks and its
+  whole answer arrives when it finishes, with a one-line work summary (see [Claude Code](#claude-code)). On
+  Codex, the agent's words arrive as chat updates in readable batches, and when the turn ends, one view shows
+  the final message and a collapsible **work** section with the plan and tool activity.
 - **Only public output:** private reasoning and raw tool inputs and outputs are never relayed.
 - **Theme:** menus and views follow your host's light or dark theme; CLI-MODE's own lines are green.
 - **Provider commands:** an agent's slash commands run as commands. CLI-MODE refuses ones that would sign you
@@ -158,7 +226,8 @@ followed by the agent's own name for it, for example `Allow (Bypass permissions)
 
 ## Claude Code
 
-The agents, setup, menus, settings, routing modes and commands are the same as on Codex. What differs:
+Claude Code is CLI-MODE's primary host. The agents, setup, menus, settings and commands are
+the same on Codex; what is specific to Claude Code:
 
 - **Commands.** After a zip install, `/cli` and `/d` autocomplete as typed. After a GitHub install, Claude
   Code offers them as `/cli-mode:cli` and `/cli-mode:d`; run **`/cli-mode:cli shortcuts`** once to add `/cli`
@@ -167,11 +236,18 @@ The agents, setup, menus, settings, routing modes and commands are the same as o
 - **Replies are chat messages.** Menus and confirmations are posted as normal chat, each costing one small
   Claude turn. **`/cli display instant`** shows them at once with no model turn, as a hook notice (the desktop
   app frames it as "blocked by hook"); **`/cli display chat`** switches back.
-- **The answer arrives whole.** Claude posts "Passing to …" first, checks on the agent about every 25 seconds
-  (one short Claude turn each) without posting in between, then posts the agent's whole output as the last
-  message, with a one-line work summary. Very long answers come in parts.
-- **Interrupting is safe.** If you stop Claude mid-relay (Esc), the agent keeps working. Your next `/d`, or
-  **`/cli resume`**, shows what you missed, oldest first, without resending anything.
+- **The answer arrives whole.** Claude posts "Passing to …" and ends its turn. The agent's work shows as a
+  row in Claude Code's background tasks, named after the agent and the prompt, with one line per step. When
+  the agent finishes, Claude posts its whole output as one message, with a one-line work summary. Very long
+  answers come in parts. With background tasks turned off (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`), Claude
+  checks on the agent about every 25 seconds instead.
+- **Only agents in background tasks.** Activating an agent (10–45 seconds while it starts) runs inside
+  CLI-MODE's hook, so your prompt shows a "CLI-MODE" status line meanwhile and the confirmation card is the
+  reply; it never adds a background task of its own. Raising an agent's access is the exception: Claude
+  Code's permission prompt asks you first.
+- **Interrupting is safe.** If you stop Claude mid-relay (Esc), or stop an agent's row in background tasks,
+  the agent keeps working; only the watching stops. Your next `/d`, or **`/cli resume`**, shows what you
+  missed, oldest first, without resending anything. **`/cli cancel`** stops the agent's turn itself.
 - **Attachments stay with Claude Code.** Only the prompt's text reaches the agent, and Claude says so when a
   message had images or files.
 - **Green titles.** "Passing to …", "… says…" and the activation card's title are green on the desktop and
@@ -189,8 +265,10 @@ you ran its CLI yourself. Your host also does some work: on Codex, relaying happ
 on Claude Code, see the next question.
 
 **Does relaying cost Claude turns?** On Claude Code, yes, a few small ones: each menu reply is one short turn
-(none with `/cli display instant`), and while an agent works, Claude checks on it about every 25 seconds. If
-you pick the Claude Code agent inside Claude Code, the agent and the relaying draw on the same Claude plan.
+(none with `/cli display instant`), and each agent turn takes two: one to pass it on, one to post the answer.
+Nothing runs in between, however long the agent works (with background tasks off, Claude checks on it about
+every 25 seconds instead). If you pick the Claude Code agent inside Claude Code, the agent and the relaying
+draw on the same Claude plan.
 
 **Is my code sent anywhere new?** Only to the agent you choose, which talks to its own provider as it would
 from your terminal. CLI-MODE has no server of its own. Its settings, queue and relay logs stay on your
@@ -211,7 +289,8 @@ At **Allow** access an agent can edit files and run commands without asking, the
   `/reload-plugins` or start a new session. "This session loaded an older plugin" means the same.
 - **Activation fails:** check the agent CLI's sign-in, model access and quota. Antigravity's CLI and ACP
   runtime are set up separately.
-- **Switching agents is blocked:** run `/cli stop`, then choose the other agent.
+- **Starting another agent is refused:** the agent limit is reached (four by default). Close one with
+  `/cli close <name>`, or raise the limit with `/cli agents max <n>`.
 - **A turn stopped on a permission request:** the agent needed an approval its access level cannot give. Use
   `/cli access allow`, or ask for work that needs no approval.
 - **Odd behaviour after an upgrade:** from a source checkout, run

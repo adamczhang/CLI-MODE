@@ -3,6 +3,7 @@
   "backends": [
     {
       "id": "agy",
+      "tag": "agy",
       "displayName": "Antigravity CLI",
       "entrypoint": "../../../../backends/agy/backend.md",
       "acpxProfile": "antigravity",
@@ -25,10 +26,11 @@
     },
     {
       "id": "claude",
+      "tag": "cla",
       "displayName": "Claude Code CLI",
       "entrypoint": "../../../../backends/claude/backend.md",
       "acpxProfile": "claude",
-      "activateCommand": "/cli claude",
+      "activateCommand": "/cli cla",
       "offCommand": "/cli stop",
       "prerequisites": [
         [
@@ -51,13 +53,14 @@
     },
     {
       "id": "grok-build",
+      "tag": "gro",
       "displayName": "Grok Build CLI",
       "entrypoint": "../../../../backends/grok-build/backend.md",
       "acpxProfile": "grok-build",
       "aliases": [
         "grok"
       ],
-      "activateCommand": "/cli grok",
+      "activateCommand": "/cli gro",
       "offCommand": "/cli stop",
       "prerequisites": [
         [
@@ -76,10 +79,11 @@
     },
     {
       "id": "cursor",
+      "tag": "cur",
       "displayName": "Cursor CLI",
       "entrypoint": "../../../../backends/cursor/backend.md",
       "acpxProfile": "cursor",
-      "activateCommand": "/cli cursor",
+      "activateCommand": "/cli cur",
       "offCommand": "/cli stop",
       "prerequisites": [
         [
@@ -98,10 +102,11 @@
     },
     {
       "id": "copilot",
+      "tag": "cop",
       "displayName": "GitHub Copilot CLI",
       "entrypoint": "../../../../backends/copilot/backend.md",
       "acpxProfile": "copilot",
-      "activateCommand": "/cli copilot",
+      "activateCommand": "/cli cop",
       "offCommand": "/cli stop",
       "prerequisites": [
         [
@@ -120,10 +125,11 @@
     },
     {
       "id": "codex",
+      "tag": "cod",
       "displayName": "Codex CLI",
       "entrypoint": "../../../../backends/codex/backend.md",
       "acpxProfile": "codex",
-      "activateCommand": "/cli codex",
+      "activateCommand": "/cli cod",
       "offCommand": "/cli stop",
       "prerequisites": [
         [

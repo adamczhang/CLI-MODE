@@ -10,10 +10,21 @@ import acpx
 import native_agy
 import native_commands
 import viewer
-from operations import emit, pending_work
+from operations import emit, menu_holds, pending_work
 from presentation import PERMISSION_CODES, permission_stop
 from progress import progress_mode, public_progress
-from state import routing_mode, direct_payload
+from state import agent_entry, agent_label, routing_mode, direct_payload
+
+
+def without_name(payload, words=1):
+    """A /d payload without the `words` agent-name words it starts with (`gro-4k,`, `elon`) and one separator."""
+    rest = payload
+    for _ in range(max(1, int(words))):
+        rest = rest.lstrip()
+        rest = rest[len(rest.split(None, 1)[0]):] if rest.strip() else ''
+    if rest.startswith('\r\n'):
+        return rest[2:]
+    return rest[1:] if rest and rest[0].isspace() else rest
 
 
 class DispatchMixin:
@@ -31,17 +42,17 @@ class DispatchMixin:
         observed_session = None
         try:
             with self.store.edit() as state:
-                if request_id is None and routing_policy is not None and (routing_mode(state) != routing_policy or state.get('modeMenu')):
+                if request_id is None and routing_policy is not None and routing_mode(state) != routing_policy:
                     raise RuntimeError('Routing mode changed during dispatch; nothing was sent.')
                 if request_id is not None:
                     record = state['requests'][request_id]
                     if (record['status'] != 'submitting' or record['generation'] != state['generation']
                             or record.get('cancelRequested')
-                            or record['settings'] != state['settings']):
+                            or record['settings'] != (agent_entry(state, record['session']) or {}).get('settings')):
                         raise RuntimeError('Captured request no longer matches the active binding; nothing was sent.')
-                if not self.valid(state, generation, pending) or (pending is None and state.get('pending')):
+                if not self.valid(state, generation, pending) or (pending is None and menu_holds(state, owned['name'])):
                     raise RuntimeError('Mode is off or a setup menu is pending; nothing was sent.')
-                if pending_work(state, request_id, include_queue=False):
+                if pending_work(state, request_id, include_queue=False, session=owned['name']):
                     raise RuntimeError('Session has pending/uncertain work. Inspect or cancel it before resubmitting.')
                 if request_id is None:
                     state['inflight'][op] = dict(session=owned['name'], kind='prompt', origin='readiness',
@@ -50,14 +61,16 @@ class DispatchMixin:
                 # Persist the dispatch boundary before spawning. A crash after
                 # this checkpoint is uncertain, never safe to replay silently.
                 state['inflight'][op].update(phase='dispatching', events=str(events_path))
-            viewer.ensure(self.store, self.adapter.LABEL)  # Reopens the viewer window when /cli view is on.
+            label = agent_label(self.store.read(), owned['name'])
+            viewer.ensure(self.store, label)  # Reopens the viewer window when /cli view is on.
             with self.store.edit() as state:
+                target = agent_entry(state, owned['name']) or {}
                 if (not self.valid(state, generation, pending) or state['inflight'].get(op, {}).get('closed')
-                        or (pending is None and state.get('pending'))
-                        or (request_id is None and routing_policy is not None and (routing_mode(state) != routing_policy or state.get('modeMenu')))
+                        or (pending is None and menu_holds(state, owned['name']))
+                        or (request_id is None and routing_policy is not None and routing_mode(state) != routing_policy)
                         or (request_id and (state['requests'][request_id].get('cancelRequested')
-                            or state['requests'][request_id]['settings'] != state['settings']
-                            or state['requests'][request_id]['session'] != state['main']))):
+                            or state['requests'][request_id]['settings'] != target.get('settings')
+                            or state['requests'][request_id]['session'] != owned['name'] or not target.get('ready')))):
                     raise RuntimeError('Operation canceled before dispatch; nothing was sent.')
                 owned = dict(owned, requestId=request_id or op, cancelFile=str(self.store.cancel_path(op)),
                              configCache=self.config_cache(),
@@ -67,7 +80,7 @@ class DispatchMixin:
                 state['inflight'][op].update(pid=process.pid, uncertain=True, running=True)
                 if request_id is not None:
                     state['requests'][request_id].update(events=str(events_path))
-                if (owned['role'] == 'main' and state.get('turnRoute', {}).get('route') in ('direct', 'delegate')
+                if (owned['role'] == 'main' and state.get('turnRoute', {}).get('route') == 'direct'
                         and (request_id is None or state['turnRoute'].get('requestId') == request_id)):
                     state['turnRoute'] = dict(route='direct-result', requestId=request_id,
                                               operation=op, events=str(events_path))
@@ -187,7 +200,7 @@ class DispatchMixin:
                                 if outcome['status'] == 'failed' and error.get('code') in PERMISSION_CODES:
                                     access = owned['settings'].get('accessName') or owned['settings']['access']
                                     publish([{'type': 'error', 'code': error['code'],
-                                              'message': permission_stop(self.adapter.LABEL, access)}])
+                                              'message': permission_stop(label, access)}])
                                 elif outcome['status'] != 'completed':
                                     publish([{'type': 'error', 'message': error.get('message', 'Agent turn canceled.')}])
                                 elif not raw.get('outputComplete'):
@@ -260,20 +273,24 @@ class DispatchMixin:
     def _send(self, text, output=emit, timeout=86400, request_id=None):
         state = self.store.read()
         if request_id is None and state.get('turnRoute', {}).get('route') == 'direct-result':
-            raise RuntimeError('This passthrough turn was already dispatched; inspect its saved events instead of replaying it.')
+            raise RuntimeError('This turn was already dispatched; inspect its saved events instead of replaying it.')
         if request_id is None and state.get('turnRoute', {}).get('requestId'):
             raise RuntimeError('This turn has captured input. Observe its request ID instead of submitting it again.')
-        if request_id is not None:
-            record = state['requests'][request_id]
-            if record['generation'] != state['generation']:
-                raise RuntimeError('Captured request binding changed; nothing was sent.')
-        self.use(self.agent_of(state))
-        if not state['active'] or state['pending'] or (request_id is None and (state.get('modeMenu') or state.get('helpMenu'))):
+        record = state['requests'][request_id] if request_id is not None else {}
+        if request_id is not None and record['generation'] != state['generation']:
+            raise RuntimeError('Captured request binding changed; nothing was sent.')
+        session = record.get('session') or state['main']
+        target = agent_entry(state, session)
+        self.use(target['backend'] if target else self.agent_of(state))
+        if (not state['active'] or menu_holds(state, session) or (request_id is None and state.get('pending'))
+                or (request_id is None and state.get('helpMenu'))):
             raise RuntimeError('Mode is off or a menu is pending; no task was sent.')
         policy = record['routingMode'] if request_id is not None else routing_mode(state)
         direct = policy == 'direct'
         if direct:
             payload = direct_payload(text)
+            if payload is not None and record.get('named'):
+                payload = without_name(payload, record['named'])  # The names picked the agents, not part of the task.
             if payload is None or not payload.strip():
                 raise RuntimeError('Direct mode requires /d or $d followed by a task; nothing was sent.')
             text = payload
@@ -281,9 +298,9 @@ class DispatchMixin:
         # explicitly targeted /help now belongs to the provider, not CLI-MODE.
         provider_command = (native_commands.name_of(text) is not None if direct
                             else self.adapter.command_request(text))
-        if len(state['owned']) != 1 or state['owned'][0]['role'] != 'main':
-            raise RuntimeError('Legacy or invalid session ownership. Run off before activating the single-session mode.')
-        owned = next((x for x in state['owned'] if x['name'] == state['main'] and x['ready']), None)
+        if any(item['role'] != 'main' for item in state['owned']):
+            raise RuntimeError('Legacy or invalid session ownership. Run off before activating again.')
+        owned = next((x for x in state['owned'] if x['name'] == session and x['ready']), None)
         if not owned:
             raise RuntimeError('No ready owned session matches this dispatch.')
         if hasattr(self.backend, 'validate_prompt'):
@@ -341,9 +358,10 @@ class DispatchMixin:
         model = native_agy.prepare(owned['settings'])
         transition = uuid.uuid4().hex
         with self.store.edit() as state:
-            if request_id is None and routing_policy is not None and (routing_mode(state) != routing_policy or state.get('modeMenu')):
+            if request_id is None and routing_policy is not None and routing_mode(state) != routing_policy:
                 raise RuntimeError('Routing mode changed during dispatch; nothing was sent.')
-            if not self.valid(state, generation) or state['pending'] or pending_work(state, request_id, include_queue=False):
+            if (not self.valid(state, generation) or state['pending']
+                    or pending_work(state, request_id, include_queue=False, session=owned['name'])):
                 raise RuntimeError('Settle current work before switching to native Antigravity commands.')
             state.update(active=False, pending={'id': transition, 'stage': 'verifying', 'phase': 'native'})
         try:
@@ -353,7 +371,8 @@ class DispatchMixin:
             with self.store.edit() as state:
                 if not self.valid(state, generation, transition):
                     raise RuntimeError('Native transport switch was canceled; no command sent.')
-                state.update(active=True, pending=None, owned=[native])
+                state.update(active=True, pending=None, owned=[native if item['name'] == native['name'] else item
+                                                               for item in state['owned']])
             output({'type': 'context_warning', 'message':
                 'Antigravity native commands require a new native CLI conversation. The ACP session is closed; '
                 'its history is retained but not copied. This command and subsequent replies use the native conversation. '

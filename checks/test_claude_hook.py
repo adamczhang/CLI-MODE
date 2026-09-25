@@ -22,6 +22,13 @@ if HOOK.is_file():  # Not in the Codex package, which checks/package_smoke.py te
 SESSION = 'claude-session-1'
 
 
+def presentation_plain(text):
+    from presentation import plain_strong
+    return plain_strong(text)
+# Claude Code without background tasks: the relay command waits in the turn itself, as before `follow`.
+no_background = patch.dict(os.environ, {'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS': '1'})
+
+
 @unittest.skipUnless(HOOK.is_file(), 'The Claude Code hook is not in the Codex package')
 class ClaudeHook(unittest.TestCase):
     def setUp(self):
@@ -58,11 +65,15 @@ class ClaudeHook(unittest.TestCase):
     def store(self):
         return Store(SESSION, self.project, self.data)
 
-    def activate(self, mode='direct'):
+    def activate(self):
         control = Controller(self.store(), self.backend)
         control.frontend()
         control.activate('gemini-3.8-flash-high', 'allow')
-        control.mode(mode)
+
+    def name(self):
+        """The current agent as CLI-MODE names it: `Antigravity AGY-XY` (its generated name varies by run)."""
+        from state import agent_label
+        return agent_label(self.store().read())
 
     def command(self, *words):
         event = dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='PreToolUse')
@@ -146,7 +157,7 @@ class InstantControls(ClaudeHook):
     def test_every_local_control_answers_in_plain_text_and_never_as_a_codex_view(self):
         replies = [self.prompt(text) for text in ('/cli agy', '/cli claude', '/cli grok', '/cli codex', '/help')]
         self.activate()
-        for text in ('/cli mode', '/cli mode passthrough', '/cli progress quiet', '/cli progress',
+        for text in ('/cli mode', '/cli progress quiet', '/cli progress',
                      '/cli menu', '1', 'x', '/cli menu', '4', 'x', '/cli menu', '5', '/cli model', '/cli queue'):
             with self.subTest(prompt=text):
                 reply = self.prompt(text)
@@ -164,15 +175,46 @@ class InstantControls(ClaudeHook):
 
 
 class SlowControls(ClaudeHook):
-    def test_bind_gives_one_exact_command_and_how_to_show_its_result(self):
-        text = self.context(self.prompt('/cli bind claude'))
-        self.assertIn('`' + self.command('bind', '--agent', 'claude') + '`', text)
-        self.assertIn('activation.text', text)
-        self.assertIn('180000 ms', text)
-        self.assertNotIn('messageView', text)
-        # A failed bind's error is CLI-MODE's reply, not Claude's retelling (P7b run 3 added its own advice).
+    """Activation takes 13-42 s. As a command Claude runs, it was a row of its own in the desktop app's
+    background tasks, beside the agent's rows (2026-09-24), so it runs in the prompt hook: its card is the reply."""
+    def setUp(self):
+        super().setUp()
+        usage = patch('confirmation.usage', return_value={'status': 'unavailable', 'reason': 'test'})
+        usage.start()
+        self.addCleanup(usage.stop)
+
+    def test_bind_activates_in_the_hook_with_no_command_for_claude(self):
+        reply = self.prompt('/cli bind agy')
+        self.assertEqual(reply.get('decision'), 'block', reply)
+        self.assertIn('**CLI-MODE Activated**', reply['reason'])  # A hook notice shows plain bold, not LaTeX.
+        self.assertNotIn('$', reply['reason'])
+        self.assertTrue(self.store().read()['active'])
+        del os.environ['CLI_MODE_CLAUDE_INSTANT']  # Chat display: Claude posts the card, with no command to run.
+        self.prompt('/cli stop')
+        card = self.context(self.prompt('/cli bind agy'))
+        self.assertIn('CLI-MODE Activated', presentation_plain(card))
+        self.assertIn('no command needs to run', card)
+        self.assertNotIn('controller.py', card)
+
+    def test_a_failed_activation_is_shown_as_its_error(self):
+        with patch('controller.run', side_effect=RuntimeError('Grok Build CLI is not signed in.')):
+            self.assertEqual(self.prompt('/cli bind grok')['reason'], 'CLI-MODE: Grok Build CLI is not signed in.')
+
+    def test_widening_access_is_still_a_command_so_claude_code_asks(self):
+        control = Controller(self.store(), self.backend)
+        control.frontend()
+        control.activate('gemini-3.8-flash-high', 'prompt')
+        text = self.context(self.prompt('/cli access allow'))
+        tune = self.command('tune', '--phase', 'access', '--apply')
+        self.assertIn('`' + tune + '`', text)
         self.assertIn('`CLI-MODE: ` followed by that error', text)
-        self.assertIn('no advice or alternatives added', text)
+        event = dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='PreToolUse', tool_name='Bash',
+                     tool_input={'command': tune, 'description': 'Claude\'s words'})
+        output = claude.handle(event, self.data)['hookSpecificOutput']
+        self.assertEqual(output['permissionDecision'], 'ask')
+        # Its row, if it gets one (13-42 s), is named after the agent.
+        self.assertEqual(output['updatedInput'], dict(command=tune, description=self.name() + ' · starting'))
+        self.assertEqual(self.prompt('/cli access prompt').get('decision'), 'block')  # Not wider: in the hook.
 
     def test_every_command_that_can_fail_says_how_its_error_is_shown(self):
         with self.store().edit() as state:
@@ -187,10 +229,12 @@ class SlowControls(ClaudeHook):
         control.frontend('agy')
         with patch('frontends.confirmed', return_value=True):
             control.frontend('agy')  # A configured agent's activation page.
-            yes = self.context(self.prompt('1'))
-            self.assertIn('`' + self.command('activate', '--agent', 'agy') + '`', yes)
             defaults = self.prompt('2')
-        self.assertEqual(defaults['decision'], 'block')
+            self.assertEqual(defaults['decision'], 'block')
+            control.frontend('agy')
+            yes = self.prompt('1')
+        self.assertEqual(yes['decision'], 'block')
+        self.assertIn('**CLI-MODE Activated**', yes['reason'])
 
     def test_install_needs_the_users_explicit_yes(self):
         with self.store().edit() as state:
@@ -203,7 +247,7 @@ class SlowControls(ClaudeHook):
 
 class Relay(ClaudeHook):
     def test_direct_turns_get_factual_relay_context_with_the_exact_command(self):
-        self.activate('direct')
+        self.activate()
         text = self.context(self.prompt('/d Explain the parser'))
         request = self.store().read()['turnRoute']['requestId']
         self.assertIn('`' + self.command('relay', '--request', request) + '`', text)
@@ -214,13 +258,14 @@ class Relay(ClaudeHook):
             self.assertNotIn(codex_only, text)
         self.assertLess(len(text), 10000)  # Claude Code's cap on hook context.
 
+    @no_background
     def test_the_turn_opens_with_the_passing_line_before_any_command(self):
         # The desktop app folds text between tool calls into a collapsed group, where the user found
         # "Passing to Grok...": the line comes first, the agent's output last, nothing in between.
         import presentation
-        self.activate('direct')
+        self.activate()
         text = self.context(self.prompt('/d Explain the parser'))
-        line = presentation.strong('Passing to Antigravity...', True)
+        line = presentation.strong('Passing to ' + self.name() + '...', True)
         # A zero-width space after the last "$": the app leaves a still-streaming block's final "$" as plain text.
         self.assertIn('posted before any command:\n' + line + '​\n', text)
         self.assertLess(text.index(line), text.index('relay --request'))
@@ -233,47 +278,49 @@ class Relay(ClaudeHook):
         self.assertIn('relay --request', json.dumps(resumed))
         self.assertNotIn('Passing', json.dumps(resumed))
         (self.data / 'display.json').write_text(json.dumps({'color': 'off'}), encoding='utf-8')
-        self.assertIn('\n**Passing to Antigravity...**\n', self.context(self.prompt('/d Next')))
+        self.assertIn('\n**Passing to ' + self.name() + '...**\n', self.context(self.prompt('/d Next')))
 
     def test_pasted_text_is_forwarded_without_claudes_markers(self):
-        self.activate('passthrough')
-        self.prompt('Review this:\n<pasted_content id="p1">\ndef f(): pass\n</pasted_content id="p1">')
+        self.activate()
+        self.prompt('/d Review this:\n<pasted_content id="p1">\ndef f(): pass\n</pasted_content id="p1">')
         request = self.store().read()['turnRoute']['requestId']
-        self.assertEqual(self.store().request_path(request).read_text(encoding='utf-8'), 'Review this:\ndef f(): pass')
+        self.assertEqual(self.store().request_path(request).read_text(encoding='utf-8'), '/d Review this:\ndef f(): pass')
 
     def test_a_cd_inside_the_project_never_breaks_the_session(self):
-        self.activate('passthrough')
+        self.activate()
         for folder in (self.project, self.project / 'src', self.cwd):
             self.cwd = folder
-            self.assertIn('relay --request', self.context(self.prompt('Next step')))
+            self.assertIn('relay --request', self.context(self.prompt('/d Next step')))
         self.assertEqual(Path(self.store().read()['workspace']), self.project)
 
     def test_resume_relays_existing_requests_without_sending_them_again(self):
-        self.activate('passthrough')
-        self.prompt('Queued task')
+        self.activate()
+        self.prompt('/d Queued task')
         request = self.store().read()['turnRoute']['requestId']
         text = self.context(self.prompt('/cli resume'))
         self.assertIn(self.command('relay', '--request', request), text)
         self.assertIn('not sent to the agent again', text)
 
     def test_a_new_request_first_relays_earlier_output_the_user_never_saw(self):
-        self.activate('direct')
+        self.activate()
         self.prompt('/d first task')  # Its relay was interrupted: it never finished.
         first = self.store().read()['turnRoute']['requestId']
         text = self.context(self.prompt('/d second task'))
         second = self.store().read()['turnRoute']['requestId']
-        self.assertLess(text.index(first), text.index(second))
+        relay = text[text.index(' relay --request'):]
+        self.assertLess(relay.index(first), relay.index(second))
         self.assertIn('not sent again', text)
         # One command for both: given one each, Claude posted only the last one's final text (P7b run 2).
         self.assertIn('`' + self.command('relay', '--request', first, '--request', second) + '`', text)
-        self.assertEqual(text.count('--request'), 2)
+        self.assertIn('`' + self.command('follow', '--request', second) + '`', text)  # FIFO: the latest ends last.
+        self.assertEqual(text.count('--request'), 3)
         self.assertIn('oldest first', text)
         with self.store().edit() as state:
             state['relayProgress'] = {first: dict(cursor=10, done=True), second: dict(cursor=10, done=True)}
         self.assertNotIn(first, self.context(self.prompt('/d third task')))  # Shown already: not repeated.
 
     def test_answers_already_relayed_are_not_relayed_again_after_many_requests(self):
-        self.activate('direct')
+        self.activate()
         control = Controller(self.store(), self.backend)
         requests = []
         for number in range(control.RELAY_PROGRESS_KEPT + 5):
@@ -286,27 +333,27 @@ class Relay(ClaudeHook):
         self.assertLessEqual(len(self.store().read()['relayProgress']), control.RELAY_PROGRESS_KEPT)
 
     def test_resume_includes_finished_work_whose_output_was_never_shown(self):
-        self.activate('passthrough')
-        self.prompt('Task whose relay was cut off')
+        self.activate()
+        self.prompt('/d Task whose relay was cut off')
         request = self.store().read()['turnRoute']['requestId']
         with self.store().edit() as state:
             state['requests'][request]['status'] = 'completed'
         self.assertIn(self.command('relay', '--request', request), self.context(self.prompt('/cli resume')))
 
     def test_resume_covers_every_pending_request_with_one_command(self):
-        self.activate('passthrough')
-        self.prompt('Task whose relay was cut off')
+        self.activate()
+        self.prompt('/d Task whose relay was cut off')
         first = self.store().read()['turnRoute']['requestId']
         with self.store().edit() as state:
             state['requests'][first]['status'] = 'completed'
-        self.prompt('Task queued behind it')
+        self.prompt('/d Task queued behind it')
         second = self.store().read()['turnRoute']['requestId']
         text = self.context(self.prompt('/cli resume'))
         self.assertIn('`' + self.command('relay', '--request', first, '--request', second) + '`', text)
-        self.assertEqual(text.count('--request'), 2)
+        self.assertEqual(text.count('--request'), 3)  # Both in the one relay, and the follow of the queued one.
 
     def test_compaction_resumes_a_chain_at_its_stream_cursor(self):
-        self.activate('direct')
+        self.activate()
         self.prompt('/d First task')
         first = self.store().read()['turnRoute']['requestId']
         self.prompt('/d Second task')
@@ -318,7 +365,7 @@ class Relay(ClaudeHook):
         self.assertIn(self.command('relay', '--request', first, '--request', second, '--cursor', '900'), text)
 
     def test_compaction_resumes_the_relay_from_its_saved_cursor(self):
-        self.activate('direct')
+        self.activate()
         self.prompt('/d Long task')
         request = self.store().read()['turnRoute']['requestId']
         with self.store().edit() as state:
@@ -330,7 +377,7 @@ class Relay(ClaudeHook):
 
     def task_through(self, *menu):
         """Open a settings menu, then send a /d task: it closes the menu and reaches the agent."""
-        self.activate('direct')
+        self.activate()
         for prompt in menu:
             self.prompt(prompt)
         self.assertTrue(self.store().read()['pending'])
@@ -347,7 +394,7 @@ class Relay(ClaudeHook):
 
     def test_a_message_the_open_settings_page_does_not_take_is_reported_not_dropped(self):
         """After a routing change Agent Settings stays open; a task typed then was silently lost (validation)."""
-        self.activate('passthrough')
+        self.activate()
         self.prompt('/cli menu')
         reply = self.prompt('Reply with only the word early.')['reason']
         self.assertIn('Agent Settings', reply)
@@ -355,23 +402,34 @@ class Relay(ClaudeHook):
         self.assertNotIn('not sent', self.prompt('/cli menu')['reason'])  # Its own controls get no note.
 
     def test_settings_replies_still_answer_the_menu(self):
-        self.activate('direct')
+        self.activate()
         self.prompt('/cli menu')
         self.assertIn('Agent Settings', self.prompt('/d')['reason'])  # No task: still a reply to the menu.
         self.assertEqual(self.prompt('x')['reason'], 'Settings closed. CLI remains active.')
 
     def test_subagents_are_denied_only_for_delegated_turns(self):
-        self.activate('direct')
+        # Live run 3: after starting the follow, Claude scheduled its own wake-up 20 minutes out.
+        tools = ('Agent', 'ScheduleWakeup', 'CronCreate', 'Monitor')
+        self.activate()
         self.prompt('host question')
-        self.assertEqual(self.event('PreToolUse', tool_name='Agent', tool_input={}), {})
+        for tool in tools:
+            self.assertEqual(self.event('PreToolUse', tool_name=tool, tool_input={}), {})  # Claude's own turn.
         self.prompt('/d agent task')
-        denied = self.event('PreToolUse', tool_name='Agent', tool_input={})
-        self.assertEqual(denied['hookSpecificOutput']['permissionDecision'], 'deny')
+        for tool in tools:
+            with self.subTest(tool=tool):
+                denied = self.event('PreToolUse', tool_name=tool, tool_input={})['hookSpecificOutput']
+                self.assertEqual(denied['permissionDecision'], 'deny')
+                self.assertIn('subagents' if tool == 'Agent' else 'wakes this conversation',
+                              denied['permissionDecisionReason'])
+        hooks = json.loads((PLUGIN / 'claude/hooks.json').read_text(encoding='utf-8'))['hooks']['PreToolUse']
+        self.assertEqual(set(hooks[0]['matcher'].split('|')), set(tools))  # Claude Code sends the hook exactly these.
+        self.assertEqual(tuple(claude.AGENT_TURN_TOOLS), tools)
 
 
 class StopGuard(ClaudeHook):
+    @no_background
     def test_an_early_stop_gets_the_next_relay_command_a_few_times(self):
-        self.activate('direct')
+        self.activate()
         self.prompt('/d Long task')
         request = self.store().read()['turnRoute']['requestId']
         first = self.context(self.event('Stop', stop_hook_active=False))
@@ -382,8 +440,9 @@ class StopGuard(ClaudeHook):
         self.assertIn('hookSpecificOutput', self.event('Stop', stop_hook_active=True))
         self.assertEqual(self.event('Stop', stop_hook_active=True), {})  # At most three nudges.
 
+    @no_background
     def test_the_guard_continues_a_turn_with_all_the_requests_it_carries(self):
-        self.activate('direct')
+        self.activate()
         self.prompt('/d First task')  # Its relay never finished.
         first = self.store().read()['turnRoute']['requestId']
         self.prompt('/d Second task')
@@ -398,7 +457,7 @@ class StopGuard(ClaudeHook):
 
     def test_no_guard_after_done_or_outside_relay_turns(self):
         self.assertEqual(self.event('Stop'), {})  # CLI-MODE never used here.
-        self.activate('direct')
+        self.activate()
         self.prompt('/d Task')
         request = self.store().read()['turnRoute']['requestId']
         with self.store().edit() as state:
@@ -406,6 +465,166 @@ class StopGuard(ClaudeHook):
         self.assertEqual(self.event('Stop'), {})
         self.prompt('ordinary host question')
         self.assertEqual(self.event('Stop'), {})
+
+
+class BackgroundFollow(ClaudeHook):
+    """A /d turn posts the Passing line, starts a background `follow` and ends; the follow's end wakes Claude
+    for one relay. Probes P1-P4 (2026-09-24) confirmed each Claude Code behaviour this relies on."""
+    PROMPT = 'Explain the parser in detail please'
+
+    @property
+    def LABEL(self):
+        return self.name() + ' · Explain the parser in detail p…'  # Agent and name, then 30 characters of the prompt.
+
+    def start(self):
+        self.activate()
+        text = self.context(self.prompt('/d ' + self.PROMPT))
+        return text, self.store().read()['turnRoute']['requestId']
+
+    def pre_tool_use(self, command, tool='Bash', tool_use_id='toolu_follow1'):
+        event = dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='PreToolUse', tool_name=tool,
+                     tool_use_id=tool_use_id,
+                     tool_input={'command': command, 'description': 'Claude\'s own words', 'timeout': 30000})
+        return claude.handle(event, self.data).get('hookSpecificOutput') or {}
+
+    @staticmethod
+    def notification(tool_use_id):
+        """Claude Code's wake-up prompt when a background task ends (as logged by probe P6)."""
+        return ('<task-notification>\n<task-id>b1x2y3z4</task-id>\n<tool-use-id>' + tool_use_id + '</tool-use-id>\n'
+                '<output-file>C:\\tmp\\b1x2y3z4.output</output-file>\n<status>completed</status>\n<summary>Background '
+                'command "Antigravity \u00b7 Explain" completed (exit code 0)</summary>\n</task-notification>')
+
+    def test_a_follows_notification_gets_its_exact_relay_and_is_never_routed(self):
+        # Probe P6: Claude Code runs UserPromptSubmit on a task notification. Routed, it became a host turn
+        # (live run 3), and an open menu would take it as a reply.
+        _, request = self.start()
+        self.pre_tool_use(self.command('follow', '--request', request), tool_use_id='toolu_follow1')
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'completed'
+        before = self.store().read()
+        text = self.context(self.prompt(self.notification('toolu_follow1')))
+        self.assertIn('`' + self.command('relay', '--request', request) + '`', text)
+        self.assertIn(self.name() + ' has finished', text)
+        self.assertNotIn(' follow --request', text)
+        after = self.store().read()
+        self.assertEqual((after['turnRoute'], after['requests']), (before['turnRoute'], before['requests']))
+        self.prompt('/cli menu')  # An open menu never takes the notification as its reply.
+        self.assertIn('hookSpecificOutput', self.prompt(self.notification('toolu_follow1')))
+        with self.store().edit() as state:
+            state['relayProgress'] = {request: dict(cursor=10, done=True)}
+        self.assertIn('relay has already run', self.context(self.prompt(self.notification('toolu_follow1'))))
+
+    def test_other_notifications_are_left_to_claude(self):
+        self.activate()
+        self.prompt('/d Explain the parser')
+        before = self.store().read()
+        for tool_use_id in ('toolu_claudes_own_build', 'not-in-the-prompt'):
+            prompt = self.notification(tool_use_id) if tool_use_id.startswith('toolu') else '<task-notification>'
+            self.assertEqual(self.prompt(prompt), {})
+        after = self.store().read()
+        self.assertEqual((after['turnRoute'], after['requests']), (before['turnRoute'], before['requests']))
+
+    def running(self, request):
+        from operations import follow_path
+        follow_path(self.store(), request).write_text(str(os.getpid()), encoding='ascii')  # A live process.
+
+    def test_a_d_turn_posts_the_passing_line_starts_one_follow_and_ends(self):
+        import presentation
+        text, request = self.start()
+        follow = '`' + self.command('follow', '--request', request) + '`'
+        self.assertIn(follow, text)
+        self.assertIn('`' + self.command('relay', '--request', request) + '`', text)
+        # Live runs 2-4: with the Passing line first, Claude Code asked the turn for visible output after the
+        # follow, and Claude filled it (echo, ScheduleWakeup, sleep). The line now ends the turn.
+        self.assertLess(text.index(follow), text.index(presentation.strong('Passing to ' + self.name() + '...', True)))
+        self.assertNotIn('posted before any command', text)
+        for phrase in ('first runs its follow command', 'as its only message', 'wakes this conversation by itself',
+                       'no other tool of any kind (no echo, sleep, check, wake-up', 'posts nothing else',
+                       'background tasks', 'whatever the follow\'s exit code',
+                       'exactly as printed', 'nothing added', 'Agent tool stays unused', '30000 ms'):
+            self.assertIn(phrase, text)
+        self.assertNotIn('up to 25 seconds', text)  # Nothing waits in the turn.
+        self.assertLess(len(text), 10000)
+
+    def test_a_follow_runs_in_the_background_labelled_with_the_agent_and_prompt(self):
+        _, request = self.start()
+        command = self.command('follow', '--request', request)
+        # Live run 1: the worker submits the request (deleting its captured text) before Claude runs the follow,
+        # and reading that text for the label left the follow unapproved, so headless Claude Code refused it.
+        self.store().request_path(request).unlink()
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'submitting'
+        for tool in ('Bash', 'PowerShell'):
+            with self.subTest(tool=tool):
+                output = self.pre_tool_use(command, tool)
+                self.assertEqual(output['permissionDecision'], 'allow')
+                # Claude Code replaces the whole input: the checked command, unchanged, plus the two fields.
+                self.assertEqual(output['updatedInput'], dict(command=command, timeout=30000, run_in_background=True,
+                                                              description=self.LABEL))
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'completed'
+        self.prompt('/d Fix\n\nthe   bug')
+        short = self.store().read()['turnRoute']['requestId']
+        output = self.pre_tool_use(self.command('follow', '--request', short))
+        self.assertEqual(output['updatedInput']['description'], self.name() + ' · Fix the bug')
+        with self.store().edit() as state:
+            state.pop('followLabels')  # A request from before labels were saved: named by its agent, still allowed.
+        output = self.pre_tool_use(self.command('follow', '--request', short))
+        self.assertEqual((output['permissionDecision'], output['updatedInput']['description']), ('allow', self.name()))
+
+    def test_one_follow_per_request_and_none_for_requests_of_other_sessions(self):
+        _, request = self.start()
+        self.running(request)
+        denied = self.pre_tool_use(self.command('follow', '--request', request))
+        self.assertEqual(denied['permissionDecision'], 'deny')
+        self.assertIn('already following', denied['permissionDecisionReason'])
+        for words in (('follow', '--request', 'f' * 32), ('follow', '--request', request, '--request', request),
+                      ('follow',)):
+            with self.subTest(words=words):
+                self.assertNotIn('permissionDecision', self.pre_tool_use(self.command(*words)))
+
+    def test_resume_and_compaction_never_start_a_second_follow(self):
+        from operations import follow_path
+        _, request = self.start()
+        follow_path(self.store(), request).write_text('999999999', encoding='ascii')  # It died without a wake-up.
+        self.assertIn(self.command('follow', '--request', request),
+                      self.context(self.event('SessionStart', source='compact')))
+        self.running(request)
+        for text in (self.context(self.event('SessionStart', source='compact')), self.context(self.prompt('/cli resume'))):
+            self.assertIn('already running', text)
+            self.assertIn('one line', text)
+            self.assertNotIn(' follow --request', text)
+            self.assertIn(self.command('relay', '--request', request), text)
+
+    def test_a_finished_request_is_relayed_at_once_without_a_follow(self):
+        _, request = self.start()
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'completed'
+        text = self.context(self.prompt('/cli resume'))
+        self.assertNotIn(' follow --request', text)
+        self.assertIn(self.command('relay', '--request', request), text)
+
+    def test_without_background_tasks_the_relay_waits_in_the_turn(self):
+        with no_background:
+            text, _ = self.start()
+        self.assertNotIn(' follow --request', text)
+        self.assertIn('up to 25 seconds', text)
+
+    def test_a_turn_ends_freely_while_its_follow_runs(self):
+        _, request = self.start()
+        follow = self.command('follow', '--request', request)
+        task = dict(id='b1', type='shell', status='running', description=self.LABEL, command=follow)
+        self.assertEqual(self.event('Stop', stop_hook_active=False, background_tasks=[task]), {})
+        self.assertNotIn('relayNudges', self.store().read())  # Ending here is the plan, not a missed relay.
+        # Claude ended the turn without starting it: the guard gives the follow, then the relay after it.
+        nudged = self.context(self.event('Stop', stop_hook_active=False, background_tasks=[dict(task, status='completed')]))
+        self.assertLess(nudged.index('`' + follow + '`'), nudged.index(self.command('relay', '--request', request)))
+        self.running(request)  # An older Claude Code sends no task list: the follow's own process file decides.
+        self.assertEqual(self.event('Stop', stop_hook_active=False), {})
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'completed'
+        woken = self.context(self.event('Stop', stop_hook_active=False, background_tasks=[]))
+        self.assertIn(self.command('relay', '--request', request, '--cursor', '0'), woken)  # The wake-up's relay.
 
 
 class Approval(ClaudeHook):
@@ -422,6 +641,13 @@ class Approval(ClaudeHook):
         self.assertTrue(self.allowed(relay, tool='PowerShell'))
         chain = self.command('relay', '--request', 'a' * 32, '--request', 'b' * 32, '--cursor', '4096')
         self.assertTrue(self.allowed(chain))
+        # Without background tasks a relay call waits 25 s: its row is named after the agent, not by Claude.
+        event = dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='PreToolUse', tool_name='Bash',
+                     tool_input={'command': chain, 'description': 'Relay the answer', 'timeout': 30000})
+        self.assertEqual(claude.handle(event, self.data)['hookSpecificOutput']['updatedInput'],
+                         dict(command=chain, description='Antigravity · answer', timeout=30000))
+        self.assertNotIn('updatedInput', claude.handle(dict(event, tool_input={'command': self.command('queue')}),
+                                                       self.data)['hookSpecificOutput'])  # Quick: no row to name.
         self.assertTrue(self.allowed(chain, tool='PowerShell'))
         self.assertTrue(self.allowed(self.command('bind', '--agent', 'grok-build')))
         self.assertTrue(self.allowed(self.command('activate', '--agent', 'agy')))
@@ -531,6 +757,7 @@ class Shortcuts(ClaudeHook):
                 ('python', dict(hook_event_name='PreToolUse', tool_name='Bash', tool_input={'command': 'python -V'})),
                 ('ours', dict(hook_event_name='PreToolUse', tool_name='PowerShell', tool_input={'command': ours})),
                 ('agent', dict(hook_event_name='PreToolUse', tool_name='Agent', tool_input={})),
+                ('wakeup', dict(hook_event_name='PreToolUse', tool_name='ScheduleWakeup', tool_input={})),
                 ('stop', dict(hook_event_name='Stop', stop_hook_active=False))]
 
     def states(self):
@@ -538,10 +765,8 @@ class Shortcuts(ClaudeHook):
         yield 'help open', lambda: self.prompt('/cli help')
         yield 'help closed', lambda: self.prompt('x')
         yield 'setup open', lambda: self.prompt('/cli')
-        yield 'active direct', lambda: (self.activate('direct'), self.prompt('What is 2+2?'))
+        yield 'active direct', lambda: (self.activate(), self.prompt('What is 2+2?'))
         yield 'relaying', lambda: self.prompt('/d task')
-        yield 'mode menu', lambda: self.prompt('/cli mode')
-        yield 'active passthrough', lambda: (self.prompt('1'), Controller(self.store(), self.backend).mode('passthrough'))
         yield 'stopped', lambda: self.prompt('/cli stop')
 
     def test_a_shortcut_gives_exactly_the_reply_handle_would(self):
@@ -673,6 +898,7 @@ class Process(ClaudeHook):
         for fields in (dict(hook_event_name='SessionStart', source='startup'),
                        dict(hook_event_name='UserPromptSubmit', prompt='Explain this function'),
                        dict(hook_event_name='PreToolUse', tool_name='Agent', tool_input={}),
+                       dict(hook_event_name='PreToolUse', tool_name='Monitor', tool_input={}),
                        dict(hook_event_name='Stop', stop_hook_active=False)):
             done = self.run_hook(dict(session_id=SESSION, cwd=str(self.cwd), **fields), code)
             self.assertEqual(done.stdout.splitlines(), ['{}', '[]'], fields)

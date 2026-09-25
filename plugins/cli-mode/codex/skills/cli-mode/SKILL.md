@@ -1,6 +1,6 @@
 ---
 name: cli-mode
-description: Handle /cli or $cli menus, binding, model/effort/access tuning and shutdown; /help (Codex) or /cli help (Claude Code) shows help. Choose Passthrough or Direct routing with /cli mode; Direct sends only /d or $d prompts. Route to one persistent agent (Antigravity CLI, Claude Code CLI, Grok Build CLI, Cursor CLI, GitHub Copilot CLI or Codex CLI) after explicit activation.
+description: Handle /cli or $cli menus, binding, model/effort/access tuning and shutdown; /help (Codex) or /cli help (Claude Code) shows help. Only a /d or $d prompt goes to the agent; every other message stays with the host. Route to persistent, named agents (Antigravity CLI, Claude Code CLI, Grok Build CLI, Cursor CLI, GitHub Copilot CLI or Codex CLI; several can run at once) after explicit activation.
 ---
 
 # CLI-MODE controls and routing
@@ -26,17 +26,22 @@ ordinary text.
 | Command | Effect |
 | --- | --- |
 | `/cli` | Agent selection menu (setup when prerequisites are missing). |
-| `/cli <agent>` | That agent's setup or activation menu. `grok` = `grok-build`. |
-| `/cli bind <agent>` | Activate with this conversation's saved defaults (or the agent's initial defaults), after the same readiness checks. No extra confirmation. |
-| `/cli menu`, `/cli mode`, `/cli model` | Active Agent Settings page. When no agent is active, reply exactly `CLI-MODE: Agent not activated. /CLI to setup`. |
-| `/cli model\|effort\|access\|permissions <choice>` | The controller matches the choice against the agent's advertised options and applies a unique match; otherwise it shows the menu. |
-| `/cli mode passthrough\|direct` | Change routing only. |
+| `/cli <agent>` | That agent's setup or activation menu. Each agent has a three-letter tag: `agy`, `cla` (Claude Code), `cod` (Codex CLI), `gro` (Grok Build), `cop` (Copilot), `cur` (Cursor); its full name (`claude`, `grok`, `grok-build`...) works too, in every command that takes an agent. |
+| `/cli bind\|spawn <agent> [name]` | Start a new agent with its kind's saved defaults (or its initial defaults), after the same readiness checks. No extra confirmation. It gets `name` (1-10 letters and digits) or a generated one such as `COD-7K`, and becomes the current agent. |
+| `/cli list\|agents` | List the running agents by name. `/cli agents max <1-8>` sets how many can run at once (4). |
+| `/cli use <name>` | Make that agent the current one. |
+| `/cli menu\|settings [name]`, `/cli model [name]` | Agent Settings of the current or named agent. When no agent is active, reply exactly `CLI-MODE: Agent not activated. /CLI to setup`. |
+| `/cli model\|effort\|access\|permissions [name] <choice>` | The controller matches the choice against the agent's advertised options and applies a unique match; otherwise it shows the menu. |
+| `/cli mode` | Explains that prompts reach the agent only through `/d` (Passthrough mode was removed). |
 | `/cli progress activity\|quiet` | Show or hide tool activity in relayed views. |
 | `/cli view on\|off` | Open or stop the local read-only agent viewer window (off by default). |
 | `/cli queue`, `/cli resume` | Inspect the queue; reattach monitoring to captured turns and restart a stopped worker when safe. |
-| `/cli cancel` | Cancel the active turn; queued follow-ups still run. |
-| `/cli stop` or `/cli off` | Gate routing, discard queued work, close owned sessions. |
-| `/d <task>`, `$d <task>` | In Direct mode, send this task to the active agent. |
+| `/cli cancel [name]` | Cancel the current (or named) agent's running turn; queued follow-ups still run. |
+| `/cli close\|stop\|off [name\|all]` | Close one agent (its turn, queue and session; the others keep working), or all of them, which gates routing. With several agents and no name, a chooser asks which. |
+| `/d [names] <task>`, `$d [names] <task>` | Send this task to the current agent, or to the agents named first, commas between (`gro-4k,elon`); each named agent gets its own request. |
+| `/cli diff [name]` | The full diff of an agent's last turn (the answer ends with its change receipt). |
+| `/cli timeout [name] <time>` | How long an idle agent keeps running (1 hour by default; 5 minutes to 24 hours). |
+| `/cli attach [name\|number]` | List, or bring here, an open agent from an earlier task in this folder. |
 | `/help` (Codex), `/cli help` (Claude Code) | The help card: the same framed menu as the others. `X` closes only help. |
 
 Invalid controls reply `/cli to activate.  Say /help to see options` while off
@@ -69,12 +74,23 @@ relayed update; post it as is. Never change access or resend the task yourself.
 
 ## Routing
 
-- **Passthrough:** ordinary prompts go unchanged to the saved agent session.
-- **Direct** (default): ordinary prompts stay with the host (Codex or Claude Code) even while an agent is
-  active; only a message starting with `/d` or `$d` goes to the agent. The worker
-  strips that token and one separator exactly once.
+Ordinary prompts stay with the host (Codex or Claude Code) even while an agent is
+active; only a message starting with `/d` or `$d` goes to an agent. The worker
+strips that token and one separator exactly once, and a leading agent name with it.
 
-On an ordinary Direct-mode turn, work normally in the host. Never forward host work
+## Several agents
+
+Up to four agents (any kinds, `/cli agents max` changes it) run side by side,
+each with its own session, queue and worker; one starts while others work. Names
+show in capitals and match in any case. A generated name (`COD-7K`) also matches
+as `cod7k`, or as `-7K` when only one running agent has that id; never as `7K`.
+Only the first words after `/d` can name agents (commas between them); a tag
+(`cod`) names the only running agent of its kind. Relays name the agent that
+answered (`Codex COD-7K says...`), and in a git repository end with what the
+turn changed. Closing the current agent makes the most
+recently used one current.
+
+On an ordinary turn, work normally in the host. Never forward host work
 just because a session is active.
 
 ## Delegated turns

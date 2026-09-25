@@ -93,7 +93,7 @@ class Confirmation(unittest.TestCase):
         source.write_text('Passing to the wrong agent...', encoding='utf-8')
         subprocess.run(base + ['format-message', '--kind', 'passing', '--agent', 'codex', '--file', str(source)],
                        env=env, capture_output=True, check=True)
-        self.assertIn('Passing to Codex...', output.read_text(encoding='utf-8'))
+        self.assertRegex(output.read_text(encoding='utf-8'), 'Passing to Codex COD-[1-9A-Z]{2}[.]{3}')
         self.assertNotIn('wrong agent', output.read_text(encoding='utf-8'))
 
     def test_all_adapters_use_workspace_and_filter_private_events(self):

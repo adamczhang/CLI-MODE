@@ -82,7 +82,7 @@ Use current conversation selections as defaults on later visits. Back preserves
 compatible drafts. A changed model clears its old effort selection; do not carry
 an incompatible effort or ID forward. Exiting setup without completion leaves
 the previously active configuration unchanged. No reply is never a selection.
-Menu replies belong to setup, not passthrough. Do not use Codex's model list,
+Menu replies belong to setup, never to the agent. Do not use Codex's model list,
 web model lists, or invented options.
 
 For R/Refresh, use shared controller `refresh` on the model page. It reads

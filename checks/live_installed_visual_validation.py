@@ -87,8 +87,7 @@ def main():
         cli('progress', '--choice', 'activity')
         cli('settings', '--dismiss')
         cli('commands')
-        cli('mode', '--choice', 'passthrough')
-        prompt = ('Read notes.txt and totals.py. Create test_totals.py using unittest with the three '
+        prompt = ('/d Read notes.txt and totals.py. Create test_totals.py using unittest with the three '
                   'requested cases; run python -m unittest -v. Give one brief progress update before '
                   'working. Finish with a Markdown heading, a nested bullet list describing changes '
                   'and test cases, a small results table, and a fenced Python example calling total. '

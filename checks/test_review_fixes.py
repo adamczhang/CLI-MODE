@@ -48,7 +48,6 @@ class Routing(unittest.TestCase):
         return hook.handle(event, self.store.root)
 
     def test_a_busy_queue_worker_does_not_fail_the_captured_prompt(self):
-        self.control.mode('direct')
         with patch.object(Controller, 'ensure_pump', side_effect=RuntimeError('CLI-MODE state is busy; retry.')):
             self.handle('/d a task')  # Captured already: failing here would invite sending it twice.
         state = self.store.read()
@@ -66,7 +65,6 @@ class Routing(unittest.TestCase):
         self.assertNotIn('installerRun', json.dumps(self.store.read()))  # Only this off cancels it.
 
     def test_compaction_does_not_cancel_again(self):
-        self.control.mode('direct')
         with patch.object(Controller, 'cancel', return_value={'canceled': True}) as cancel:
             self.handle('/cli cancel')
             hook.handle(dict(session_id='review', cwd=str(self.root), hook_event_name='SessionStart',
@@ -88,7 +86,6 @@ class Routing(unittest.TestCase):
             self.assertEqual(prefetched[2].result(timeout=5), 'summary')
 
     def test_a_prompt_reads_the_state_file_once(self):
-        self.control.mode('direct')
         with patch.object(Store, 'read', autospec=True, side_effect=Store.read) as read:
             self.handle('/cli queue')
         self.assertEqual(read.call_count, 1)  # Inside edit(), under the lock.

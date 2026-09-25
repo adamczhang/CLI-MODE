@@ -10,14 +10,14 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 90,
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 300,
            "statusMessage": "CLI-MODE"}
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Agent",
+        "matcher": "Agent|ScheduleWakeup|CronCreate|Monitor",
         "hooks": [
           {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 15}
         ]

@@ -20,7 +20,7 @@ import frontends
 import help_view
 import host
 from presentation import plain_strong, queue_text, result_text, shutdown_text, strong, unfence
-from state import INACTIVE_HINT, Store, direct_payload, route
+from state import INACTIVE_HINT, Store, agent_label, direct_payload, route
 
 CLAUDE = {'CLI_MODE_HOST': host.CLAUDE}
 
@@ -107,7 +107,7 @@ class Routing(unittest.TestCase):
             os.environ.pop('CLI_MODE_HOST', None)
             self.assertEqual(route('/cli-mode:cli', dict(self.STATE))['route'], 'host')
             self.assertIsNone(direct_payload('/cli-mode:d fix the parser'))
-            self.assertEqual(route('/cli help', dict(self.STATE, active=False))['text'], INACTIVE_HINT)
+            self.assertEqual(route('/cli help', dict(self.STATE, active=False))['route'], 'help')  # = /help.
             self.assertIn('/help', help_view.text())
             self.assertNotIn('/cli help', help_view.text())
 
@@ -151,7 +151,7 @@ class ClaudeControl(unittest.TestCase):
         self.control = Controller(self.store, self.backend)
         self.control.frontend()
         self.control.activate('gemini-3.8-flash-high', 'allow')
-        self.control.mode('passthrough')
+        self.label = agent_label(self.store.read())  # `Antigravity AGY-XY`: the agent and its generated name.
 
     def args(self, *words):
         return build_parser().parse_args(['--host', host.CLAUDE, '--thread', 'claude-session',
@@ -159,7 +159,7 @@ class ClaudeControl(unittest.TestCase):
 
     def send(self, events):
         self.backend.events = events
-        return self.control.send('task', output=lambda event: None)['requestId']
+        return self.control.send('/d task', output=lambda event: None)['requestId']
 
 
 class Controllers(ClaudeControl):
@@ -195,10 +195,10 @@ class Controllers(ClaudeControl):
         self.assertEqual(result['markdown'], '')
         self.assertIsNone(result.get('messageView'))
         self.assertIsNone(result.get('reference'))
-        self.assertEqual(result['text'].count(strong('Antigravity says...', True)), 1)
+        self.assertEqual(result['text'].count(strong(self.label + ' says...', True)), 1)
         self.assertLess(result['text'].index('I will look at the parser.'),
                         result['text'].index('Found the bug in the parser.'))  # Every word of the turn, in order.
-        self.assertIn('Antigravity work: 1 done', result['text'])
+        self.assertIn(self.label + ' work: 1 done', result['text'])
         self.assertNotIn('Passing to', plain_strong(result['text']))  # Claude's own first words, before any call.
         self.assertFalse(list(self.root.rglob('*.html')))
         progress = self.store.read()['relayProgress'][request]
@@ -354,7 +354,7 @@ class Chains(ClaudeControl):
         self.assertTrue(result['done'])
         self.assertEqual(result['markdown'], '')
         self.assertLess(result['text'].index('First answer.'), result['text'].index('Second answer.'))
-        self.assertEqual(result['text'].count(strong('Antigravity says...', True)), 2)  # Each under its own heading.
+        self.assertEqual(result['text'].count(strong(self.label + ' says...', True)), 2)  # Each under its own heading.
         progress = self.store.read()['relayProgress']
         self.assertTrue(progress[earlier]['done'] and progress[latest]['done'])
         self.assertNotIn('chain', progress[latest])
@@ -375,7 +375,7 @@ class Chains(ClaudeControl):
         self.assertTrue(final['done'])
         text = plain_strong(final['text'])
         self.assertLess(text.index('First answer.'), text.index('Second answer.'))
-        self.assertEqual(text.count('**Antigravity says...**'), 2)  # Each under its own heading.
+        self.assertEqual(text.count('**' + self.label + ' says...**'), 2)  # Each under its own heading.
         self.assertNotIn('Passing to', text)  # Claude posts it once, before its first call.
         progress = self.store.read()['relayProgress']
         self.assertTrue(progress[earlier]['done'] and progress[latest]['done'])
@@ -439,9 +439,8 @@ class FinalWords(unittest.TestCase):
             control = Controller(store, ScriptedBackend())
             control.frontend()
             control.activate('gemini-3.8-flash-high', 'allow')
-            control.mode('passthrough')
             control.backend.events = [dict(type='message', text='x\n')]
-            request = control.send('task', output=lambda event: None)['requestId']
+            request = control.send('/d task', output=lambda event: None)['requestId']
             events = [dict(type='activity', toolCallId='a', kind='read', status='completed', title='Read notes'),
                       dict(type='message', text='The answer is 42.\n')]
 
@@ -534,9 +533,9 @@ class PlainRelay(ClaudeControl):
     def test_a_finished_turn_prints_one_plain_line_then_the_message(self):
         request = self.send([dict(type='message', text='All tests pass — it’s done.\n')])
         lead, post = self.main('relay', '--request', request, '--wait', '1').split('\n\n', 1)
-        self.assertEqual(lead, 'Antigravity has finished. Post everything below this line exactly, as the last '
+        self.assertEqual(lead, self.label + ' has finished. Post everything below this line exactly, as the last '
                                'message of the turn.')
-        self.assertIn(strong('Antigravity says...', True), post)
+        self.assertIn(strong(self.label + ' says...', True), post)
         self.assertIn('All tests pass — it’s done.', post)  # Real characters, not \u escapes.
         for machine in ('"cursor"', '"done"', '\\n', '\\u'):
             self.assertNotIn(machine, lead + post)
@@ -573,10 +572,11 @@ class Colour(ClaudeControl):
     def test_relay_names_are_green_unless_colour_is_off(self):
         text = self.control.relay_chain([self.send([dict(type='message', text='Done.\n')])], 0, wait=1)['text']
         # \small: the desktop draws LaTeX at 1.21 times the text size; this keeps it just above it.
-        self.assertTrue(text.startswith('$\\color{228b22}\\small\\textsf{\\textbf{Antigravity~says...}}$'))
+        self.assertTrue(text.startswith(strong(self.label + ' says...', True)))
+        self.assertTrue(text.startswith('$\\color{228b22}\\small\\textsf{\\textbf{Antigravity~AGY-'))
         self.colour('off')
         text = self.control.relay_chain([self.send([dict(type='message', text='Done.\n')])], 0, wait=1)['text']
-        self.assertTrue(text.startswith('**Antigravity says...**'))
+        self.assertTrue(text.startswith('**' + self.label + ' says...**'))
         self.assertNotIn('\\color', text)
 
     def test_the_activation_title_is_dark_green_unless_colour_is_off(self):
@@ -637,6 +637,119 @@ class Colour(ClaudeControl):
         self.assertEqual(chat_menu('Plain words.', True), 'Plain words.')
         block = help_view.render()
         self.assertEqual(chat_menu(block, False), block)
+
+
+class Follow(ClaudeControl):
+    """`follow`: a background task whose row in Claude Code shows the agent's work, one line per step, and
+    whose end wakes Claude for one relay (the P1-P4 probes, 2026-09-24)."""
+    def follow(self, request, **options):
+        lines = []
+        result = self.control.follow(request, lines.append, poll=.05, **options)
+        return result, lines
+
+    def test_one_line_per_step_then_how_the_turn_ended(self):
+        request = self.send([
+            dict(type='message', text='I will look.\n'),
+            dict(type='plan', entries=[dict(content='Inspect', status='completed'), dict(content='Fix', status='pending')]),
+            activity('a'), activity('a', status='completed'), activity('b', kind='edit', status='failed', title='Edit'),
+            dict(type='message', text='Secret answer words.\n')])
+        result, lines = self.follow(request)
+        self.assertEqual(result, dict(requestId=request, status='completed', done=True))
+        self.assertEqual(lines, [
+            self.label + ' is writing.', self.label + ': plan 1 of 2 steps done',
+            self.label + ': Read source — src/app.py:3', self.label + ': Edit — src/app.py:3',
+            self.label + ': failed: Edit — src/app.py:3', self.label + ' is writing.', self.label + ' finished.'])
+        self.assertNotIn('Secret answer', ''.join(lines))  # The agent's words come only through the relay.
+        self.assertNotIn('relayProgress', self.store.read())  # Following never moves the relay.
+
+    def test_it_waits_for_a_queued_then_running_turn_and_keeps_a_process_file_meanwhile(self):
+        from operations import follow_path, following
+        request = self.send([dict(type='message', text='Done.\n')])
+        statuses = iter(['captured', 'captured', 'submitting', 'submitting', 'completed'])
+        seen = []
+
+        def observe(request_id, position, limit=100, **_):
+            seen.append(following(self.store, request))
+            status = next(statuses)
+            events = ([activity('a'), dict(type='error', message='Rate\x1b[31m limited')]
+                      if status == 'submitting' and position == 0 else [])
+            return dict(events=events, cursor=position + 100 * len(events), receipt=dict(status=status))
+        with patch.object(self.control, 'observe', side_effect=observe):
+            result, lines = self.follow(request)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(lines, [self.label + ' is finishing an earlier turn; this one is queued.',
+                                 self.label + ': Read source — src/app.py:3', self.label + ': error: Rate limited',
+                                 self.label + ' finished.'])
+        self.assertTrue(all(seen))  # The hook can tell that a follow runs, so it never starts a second one.
+        self.assertFalse(follow_path(self.store, request).exists())
+        self.assertFalse(following(self.store, request))
+
+    def test_a_dead_follows_process_file_does_not_count_and_long_lines_are_cut(self):
+        from operations import follow_path, following
+        request = self.send([activity('a', title='x' * 400), dict(type='message', text='Done.\n')])
+        follow_path(self.store, request).write_text('999999999', encoding='ascii')  # No such process.
+        self.assertFalse(following(self.store, request))
+        _, lines = self.follow(request)
+        self.assertEqual(len(lines[0]), self.control.FOLLOW_LINE)
+        self.assertTrue(lines[0].endswith('…'))
+
+    def test_the_exit_code_says_whether_the_turn_completed(self):
+        request = self.send([dict(type='message', text='Done.\n')])
+        argv = ['controller.py', '--host', host.CLAUDE, '--thread', 'claude-session', '--workspace', str(self.root),
+                '--data-root', str(self.store.root), 'follow', '--request', request]
+        for status, code in (('completed', 0), ('canceled', 1), ('rejected', 1), ('uncertain', 1)):
+            with self.subTest(status=status), patch.object(sys, 'argv', argv), \
+                    patch.object(controller_module, 'run', return_value=dict(status=status)), \
+                    self.assertRaises(SystemExit) as ended:
+                controller_module.main()
+            self.assertEqual(ended.exception.code, code)
+
+    def test_its_lines_survive_a_legacy_code_page(self):
+        # A background task's output went through cp1252 in the P1 probe ("·" became "?").
+        request = self.send([activity('a', title='Read café · notes'), dict(type='message', text='Done.\n')])
+        argv = ['controller.py', '--host', host.CLAUDE, '--thread', 'claude-session', '--workspace', str(self.root),
+                '--data-root', str(self.store.root), 'follow', '--request', request]
+        raw = io.BytesIO()
+        legacy = io.TextIOWrapper(raw, encoding='cp1252')
+        with patch.object(sys, 'argv', argv), patch.object(sys, 'stdout', legacy), \
+                patch.object(controller_module, 'Controller', lambda store: self.control), \
+                self.assertRaises(SystemExit) as ended:
+            controller_module.main()
+        legacy.flush()
+        self.assertEqual(ended.exception.code, 0)
+        self.assertIn('Read café · notes', raw.getvalue().decode('utf-8'))
+
+    def test_codex_never_follows(self):
+        request = self.send([dict(type='message', text='Done.\n')])
+        codex = build_parser().parse_args(['--host', host.CODEX, '--thread', 'claude-session', '--workspace',
+                                           str(self.root), '--data-root', str(self.store.root), 'follow',
+                                           '--request', request])
+        with self.assertRaises(ValueError):
+            run(codex, self.control)
+
+
+class OverlappingRelays(ClaudeControl):
+    """Background turns overlap: a relay can post a request after another relay command naming it was given."""
+    relay = Chains.relay
+
+    def test_a_request_posted_since_is_skipped_even_at_the_start_of_the_stream(self):
+        earlier = self.send([dict(type='message', text='First answer.\n')])
+        latest = self.send([dict(type='message', text='Second answer.\n')])
+        self.relay([earlier])  # The earlier follow's wake-up posted it.
+        final = self.relay([earlier, latest])  # The command given before that, run now.
+        self.assertTrue(final['done'])
+        self.assertNotIn('First answer.', final['text'])
+        self.assertIn('Second answer.', final['text'])
+
+    def test_a_relay_whose_requests_are_all_posted_posts_nothing(self):
+        from presentation import relay_plain
+        earlier = self.send([dict(type='message', text='First answer.\n')])
+        latest = self.send([dict(type='message', text='Second answer.\n')])
+        self.relay([earlier, latest])
+        again = self.relay([latest])  # A late wake-up for a request the chain already posted.
+        self.assertEqual((again['done'], again['text'], again['markdown']), (True, '', ''))
+        self.assertEqual(relay_plain(again), self.label + '\'s answer is already posted above, so there is nothing '
+                                             'more to post.')
 
 
 class CommandLine(unittest.TestCase):

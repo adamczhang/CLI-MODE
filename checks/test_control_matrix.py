@@ -9,7 +9,7 @@ import frontends
 from state import PREFIXES, route, backend_ids
 
 OFF = {'active': False}
-ON = {'active': True, 'routingMode': 'passthrough'}
+ON = {'active': True, 'routingMode': 'direct'}
 
 
 def control_words(backend_id):
@@ -29,7 +29,7 @@ class Prefixes(unittest.TestCase):
 
     def test_no_other_prefix_is_a_control(self):
         for text in ('?cli', '?help', '!cli', 'cli', 'help', '#cli'):
-            self.assertIn(route(text, OFF)['route'], ('host', 'delegate'), text)
+            self.assertEqual(route(text, OFF)['route'], 'host', text)
 
     def test_a_partial_token_is_ordinary_text(self):
         for text in ('/client', '$client', '/clip art', '/helper', '$helpme'):
@@ -66,10 +66,13 @@ class AgentControls(unittest.TestCase):
         for backend in backend_ids():
             for word in control_words(backend):
                 self.assertEqual(route('/cli %s do the thing' % word, OFF)['route'], 'hint')
-                self.assertEqual(route('/cli bind %s now' % word, OFF)['route'], 'hint')
+                # Bind takes one optional word, the new agent's name; anything more, or a bad name, is refused.
+                self.assertEqual(route('/cli bind %s do it now' % word, OFF)['route'], 'hint')
+                self.assertEqual(route('/cli bind %s it!' % word, OFF)['route'], 'hint')
+                self.assertEqual(route('/cli bind %s now' % word, OFF), dict(route='bind', agent=backend, name='NOW'))
 
     def test_near_miss_agent_names_are_never_resolved(self):
-        for text in ('/cli gro', '/cli grokbuild', '/cli claud', '/cli agyx',
+        for text in ('/cli gr', '/cli grk', '/cli grokbuild', '/cli claud', '/cli clau', '/cli agyx', '/cli co',
                      '/cli bind', '/cli bind nope'):
             self.assertEqual(route(text, OFF)['route'], 'hint', text)
 
@@ -94,9 +97,12 @@ class SharedControls(unittest.TestCase):
             self.assertEqual(route('/cli ' + verb, OFF)['route'], 'hint')
 
     def test_ordinary_text_is_never_captured(self):
-        self.assertEqual(route('fix the bug', ON)['route'], 'delegate')
-        self.assertEqual(route('fix the bug', OFF)['route'], 'host')
-        self.assertEqual(route('"/cli stop" is the control', ON)['route'], 'delegate')
+        # Only an explicit /d or $d reaches the agent (Passthrough was removed).
+        for state in (ON, OFF):
+            self.assertEqual(route('fix the bug', state)['route'], 'host')
+            self.assertEqual(route('"/cli stop" is the control', state)['route'], 'host')
+        self.assertEqual(route('/d fix the bug', ON)['route'], 'direct')
+        self.assertEqual(route('$d fix the bug', ON)['route'], 'direct')
 
 
 class AgentCapabilities(unittest.TestCase):
@@ -229,16 +235,16 @@ class HelpText(unittest.TestCase):
         commands = self.help.render()
         for backend in backend_ids():
             record = next(i for i in frontends.backends() if i['id'] == backend)
-            word = (record.get('aliases') or [record['id']])[0]
-            self.assertIn(word, commands)
+            self.assertIn(record['tag'] + ' (', self.help.text())  # Help names each agent by its tag.
         self.assertIn('/cli <agent>', commands)
-        self.assertIn('/cli bind <agent>', commands)
+        self.assertIn('/cli bind|spawn <agent> [name]', commands)
 
     def test_help_lists_every_shared_control(self):
         commands = self.help.render()
-        for control in ('/cli', '/cli <agent>', '/cli bind <agent>', '/d <PROMPT>',
-                        '/cli menu', '/cli progress <mode>', '/cli queue',
-                        '/cli resume', '/cli cancel', '/cli stop', '/cli off', '/help'):
+        for control in ('/cli', '/cli <agent>', '/cli bind|spawn <agent> [name]', '/d [names] <PROMPT>', '/cli diff [name]', '/cli timeout [name] <time>', '/cli attach [name]',
+                        '/cli list|agents', '/cli use <name>', '/cli menu|settings [name]', '/cli progress <mode>',
+                        '/cli queue', '/cli resume', '/cli cancel [name]', '/cli close|stop [name|all]', '/cli off',
+                        '/help'):
             self.assertIn(control, commands)
 
     def test_help_is_one_commands_table(self):

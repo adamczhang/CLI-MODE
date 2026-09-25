@@ -52,29 +52,30 @@ class FakeHost:
             if 'Access Level' in last:
                 d.update(active=True, backend='codex')
                 return '**CLI-MODE Activated**\n\n**Model:** gpt-big | **Effort:** Low | **Access:** Allow\n\n**Utilization:** 1%'
-            if 'Passthrough' in last:
-                return 'Routing is Passthrough.'
             if prompt == '1':
                 return menu('Select Model', ['1. gpt-big  (current)', '2. gpt-mini'])
-            return menu('Routing', ['1. Passthrough', '2. Direct'])
+            return menu('Agent Settings', ['Model: gpt-big', '1. Model', '4. Progress'])
         if prompt.startswith('/cli bind codex'):
             d.update(active=True, backend='codex')
             return '**CLI-MODE Activated**\n\n**Model:** gpt-big | **Effort:** Low | **Access:** Allow\n\n**Utilization:** 1%'
         if prompt.startswith('/cli bind'):
             return 'CLI-MODE: unknown agent'
         if prompt in ('/cli menu', '$CLI MENU'):
-            return menu('Agent Settings', ['Model: gpt-big', '1. Model', '4. Routing mode', '5. Progress'])
+            return menu('Agent Settings', ['Model: gpt-big', '1. Model', '4. Progress'])
         if prompt.startswith('/cli model') or prompt.startswith('/cli effort'):
             return 'CLI-MODE Activated'
         if prompt.startswith('/cli mode'):
-            return 'Routing is Direct.'
+            return ('Prompts reach the agent only through /d <prompt>; every other message stays with Claude Code. '
+                    'Passthrough mode was removed.')
+        if prompt.startswith('Reply with only the word'):
+            return prompt.rstrip('.').split()[-1]  # The host answers it; only /d reaches the agent.
         if not d['active'] and prompt.startswith('/d'):
             return '/cli to activate.'
         if prompt == '/d':
             return 'Nothing was sent.'
         if prompt.startswith('/d /model'):
             return 'Use /cli model instead.'
-        if prompt.startswith('/d') or prompt.startswith('Reply with only'):
+        if prompt.startswith('/d'):
             request = '%032x' % len(self.sent)
             d['requests'][request] = {}
             d['turnRoute'] = dict(route='direct', requestId=request)

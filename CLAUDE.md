@@ -1,6 +1,6 @@
 # CLI-MODE — working notes for Claude
 
-> **Written for CLI-MODE 0.3.1** (tag `v0.3.1`, 2026-09-24).
+> **Written for CLI-MODE 0.3.2** (tag `v0.3.2`, 2026-09-24).
 > If `plugins/cli-mode/.codex-plugin/plugin.json` shows a different version, parts of this file may be
 > out of date. Verify any file, function or rule named here against the code before relying on it; when
 > they disagree, the code wins. Fix this file in the same change. `checks/test_agent_docs.py` fails
@@ -17,7 +17,15 @@ lands in one of three zones below; know which before editing.
 - `scripts/controller.py`: CLI entry and `run()`. It combines `menus.py` (setup and Agent Settings),
   `binding.py` (owned sessions), `dispatch.py` (one provider turn) and `queue_worker.py` (captured requests,
   FIFO worker, receipts, `observe`, `resume_monitoring`).
-- `scripts/state.py`: `Store` plus `route()`, the prompt → route decision (Passthrough/Direct, `/d`, `/cli …`).
+- `scripts/state.py`: `Store` plus `route()`, the prompt → route decision (`/d`, `/cli …`, help, setup; everything else is the host's).
+  Several agents run at once: `owned[]` entries carry `alias` (the agent's name), `main` is the current agent,
+  and `live_agents`/`target_of`/`agent_label` resolve and name them. `VERB_ALIASES` is the one table of command
+  pairs (`close`=`stop`=`off`, `spawn`=`bind`, …). `scripts/names.py` generates, validates and resolves names.
+  Gates are per agent: `pending_work(state, session=…)`, `operations.menu_holds`, one worker per agent (`runners`).
+  `/d a,b <prompt>` captures one request per named agent (`turnRoute.requestIds`); a registry `tag` names the
+  only agent of its kind. `scripts/changes.py` takes git-tree snapshots around each turn (a temporary index copy)
+  for the change receipt and `/cli diff`. Each owned entry's `timeout` (minutes) is its ACPX owner TTL
+  (`acpx.AcpxBackend.ttl`); `/cli attach` moves an open owned entry from another conversation in the folder.
 - `hooks/route.py`: `decide()` and `task_through_settings()` (shared), `codex_output()` and
   `activation_reply()` (Codex only).
 - Menus, text and labels: `frontends.py`, `presentation.py` (`menu_block`, `menu_frame`, `options_menu`,
@@ -48,6 +56,13 @@ lands in one of three zones below; know which before editing.
   `nothing_to_do()` is a pre-import fast path.
 - `claude/hooks.json`, `claude/commands/{cli,d}.md`.
 - `QueueMixin.relay_text()` and `relay_chain()`: nothing mid-turn, then the whole output as the last message.
+- `QueueMixin.follow()` and `operations.follow_path`/`following`: a `/d` turn runs `controller.py follow` as a
+  background task (the hook's `updatedInput` forces it and labels the row), ends, and is woken for one relay.
+  The Stop guard reads `background_tasks` from Stop's input. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` keeps the
+  old 25 s relay loop.
+- The desktop app lists any tool call running past about 2-3 s as a background-tasks row. Only agent turns
+  (`follow`) may: activation runs inside the prompt hook (timeout 300 s), except an activation that widens
+  access, which stays a command so Claude Code asks first.
 - `presentation.strong`/`plain_strong`/`chat_menu`/`relay_plain` (green LaTeX, diff-coloured title rows);
   `relay_view.final_markdown`.
 - Repo-root `.claude-plugin/marketplace.json`, which `package_plugin.py --sync` keeps in sync;
@@ -61,7 +76,7 @@ files) and `dist/cli-mode-claude-<v>.zip` (without the `CODEX_ONLY` files).
 
 | Guard | Protects | Fails when |
 |---|---|---|
-| `checks/test_codex_golden.py` with `checks/fixtures/codex-golden.json` (138 steps, 29 route kinds) | every hook response and controller result **Codex** receives | a shared or Claude change alters anything Codex sees |
+| `checks/test_codex_golden.py` with `checks/fixtures/codex-golden.json` (160 steps, 31 route kinds) | every hook response and controller result **Codex** receives | a shared or Claude change alters anything Codex sees |
 | `test_claude_package.py` with `checks/fixtures/codex-package-files.txt` | the Codex zip's exact file list; the Claude zip's contents; the root marketplace in sync; Claude's hook rules | a file leaks into the wrong package, or the marketplace or hooks drift |
 | `test_host.py`, `test_claude_hook.py` | Claude routing, relay, colour, menus, the Stop guard, the fast path | a Codex or shared change breaks Claude behaviour |
 | `test_package_reproducibility.py` | identical zips from LF and CRLF checkouts | packaging depends on line endings |

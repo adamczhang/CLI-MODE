@@ -78,9 +78,8 @@ def probe(agent, folder, model=None):
         result['activationText'] = bound['activation']['text']
         owned = control.store.read()['owned'][0]
         result['advertisedCommands'] = owned.get('advertisedCommands')
-        control.mode('passthrough')
         began = time.monotonic()
-        sent = control.send(PROMPT, output=lambda event: None)
+        sent = control.send('/d ' + PROMPT, output=lambda event: None)
         result['turnSeconds'] = round(time.monotonic() - began, 1)
         events = [json.loads(line) for line in Path(sent['events']).read_text(encoding='utf-8').splitlines()]
         result['events'] = event_profile(events)

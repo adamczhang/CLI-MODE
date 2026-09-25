@@ -96,10 +96,9 @@ class Session:
     def prompt(self, text):
         return self.event('UserPromptSubmit', prompt=text)
 
-    def activate(self, mode='direct'):
+    def activate(self):
         self.control.frontend()
         self.control.activate('gemini-3.8-flash-high', 'allow')
-        self.control.mode(mode)
 
     def cli(self, *args):
         """The controller exactly as Codex runs it, in process, with its printed JSON."""
@@ -168,7 +167,8 @@ def home_flow(s):
 
 
 def frontend_each_agent(s):
-    return prompts(s, '/cli agy', '/cli claude', '/cli grok', '/cli cursor', '/cli copilot', '/cli codex')
+    return prompts(s, '/cli agy', '/cli claude', '/cli grok', '/cli cursor', '/cli copilot', '/cli codex',
+                   '/cli cla', '$cli GRO')  # Three-letter tags name the same agents.
 
 
 def setup_replies(s):
@@ -176,9 +176,9 @@ def setup_replies(s):
 
 
 def reactivation_menu(s):
-    s.activate('direct')
+    s.activate()
     return turns(s, '/cli stop', ('off', s.control.off), '/cli agy',
-                 ('frontend --agent agy', lambda: s.control.frontend('agy')), '3', '1', 'x')
+                 ('frontend --agent agy', lambda: s.control.frontend('agy')), '1', 'x')
 
 
 def help_flow(s):
@@ -190,7 +190,7 @@ def bind_routes(s):
 
 
 def active_direct(s):
-    s.activate('direct')
+    s.activate()
     steps = prompts(s, 'hello there', '/d Explain the parser', '/d', '$d  two  spaces kept')
     steps.append(dict(step='PreToolUse Agent after /d', output=s.event(
         'PreToolUse', tool_name='Agent', tool_input={'prompt': 'x'})))
@@ -202,15 +202,13 @@ def active_direct(s):
 
 
 def active_settings(s):
-    s.activate('direct')
+    s.activate()
     c = s.control
     settings = ('settings', c.settings_menu)
     return turns(s, '/cli menu', settings, '1', ('tune --phase model', lambda: c.tune('model')),
                  'x', ('settings --dismiss', lambda: c.settings_menu(True)),
                  '/cli menu', settings, '2', ('tune --phase effort', lambda: c.tune('effort')),
-                 '/cli menu', settings, '4', ('mode', c.mode), '1', ('mode --choice passthrough', lambda: c.mode('passthrough')),
-                 '/cli menu', settings, '4', ('mode', c.mode), 'x', ('mode --dismiss', lambda: c.mode(dismiss=True)),
-                 '/cli menu', settings, '5', ('progress --choice quiet', lambda: c.progress('quiet')),
+                 '/cli menu', settings, '4', ('progress --choice quiet', lambda: c.progress('quiet')),
                  '/cli menu', settings, 'x', ('settings --dismiss', lambda: c.settings_menu(True)),
                  '/cli mode', '/cli model gemini-3.7-flash',
                  ('tune --phase model --apply', lambda: c.tune_choice('model')),
@@ -219,19 +217,21 @@ def active_settings(s):
                  '/cli progress activity', ('progress --choice activity', lambda: c.progress('activity')))
 
 
-def active_passthrough(s):
-    s.activate('passthrough')
+def saved_passthrough(s):
+    """A conversation saved in Passthrough mode (removed) opens in Direct: plain text stays with Codex."""
+    s.activate()
+    with s.store.edit() as state:
+        state['routingMode'] = 'passthrough'
     steps = prompts(s, 'Explain the parser')
-    steps.append(dict(step='PreToolUse Agent delegated', output=s.event(
+    steps.append(dict(step='PreToolUse spawn_agent on host turn', output=s.event(
         'PreToolUse', tool_name='spawn_agent', tool_input={})))
-    steps.append(dict(step='SessionStart compact after delegate', output=s.event('SessionStart', source='compact')))
-    steps += prompts(s, '/cli resume', '/cli mode direct', '/d back to direct', '/cli stop', 'after stop')
+    steps += prompts(s, '/cli mode passthrough', '/d back to direct', '/cli stop', 'after stop')
     return steps
 
 
 def compaction_restores(s):
     """Each controller result that records a turn route, then the compaction restore of it."""
-    s.activate('direct')
+    s.activate()
     c = s.control
     steps = []
 
@@ -247,8 +247,6 @@ def compaction_restores(s):
     steps.append(prompt_step(s, '/cli menu'))
     then_compact('settings', c.settings_menu)
     then_compact('settings --dismiss', lambda: c.settings_menu(True))
-    then_compact('mode', c.mode)
-    then_compact('mode --choice direct', lambda: c.mode('direct'))
     then_compact('progress --choice quiet', lambda: c.progress('quiet'))
     steps.append(prompt_step(s, '/cli model gemini-3.7-flash'))
     then_compact('tune --phase model --apply', lambda: c.tune_choice('model'))
@@ -258,8 +256,8 @@ def compaction_restores(s):
 
 
 def resume_blocked(s):
-    s.activate('passthrough')
-    s.prompt('Queued task')
+    s.activate()
+    s.prompt('/d Queued task')
     blocked = {'worker': 'blocked', 'queued': 1, 'message': 'Inspect and reconcile the earlier operation before resuming the queue.'}
     with patch.object(QueueMixin, 'ensure_pump', return_value=blocked):
         first = s.prompt('/cli resume')
@@ -272,31 +270,73 @@ def controller_menus(s):
     steps = [dict(step='cli commands', output=s.cli('--menu-output', str(s.root / 'v' / 'help.html'), 'commands')),
              dict(step='cli frontend home', output=s.cli('--menu-output', str(s.root / 'v' / 'home.html'),
                                                          'frontend', '--agent', 'home'))]
-    s.activate('direct')
-    steps += [dict(step='cli mode', output=s.cli('--menu-output', str(s.root / 'v' / 'mode.html'), 'mode')),
-              dict(step='cli settings', output=s.cli('--menu-output', str(s.root / 'v' / 'settings.html'), 'settings')),
+    s.activate()
+    steps += [dict(step='cli settings', output=s.cli('--menu-output', str(s.root / 'v' / 'settings.html'), 'settings')),
               dict(step='cli queue', output=s.cli('queue')),
               dict(step='cli resume', output=s.cli('resume'))]
     return steps
 
 
 def controller_relay(s):
-    s.activate('passthrough')
+    s.activate()
     s.backend.events = [
         dict(type='plan', entries=[dict(content='Inspect', status='completed'),
                                    dict(content='Fix <b>it</b>', status='in_progress')]),
         activity('a'), activity('b', kind='execute', status='in_progress', title=None),
         dict(type='message', text='Found the bug in the parser.\n'),
         dict(type='message', text='Line 3 now handles empty input.\n')]
-    request = s.control.send('task', output=lambda event: None)['requestId']
+    request = s.control.send('/d task', output=lambda event: None)['requestId']
     return [dict(step='cli relay', output=s.cli('relay', '--request', request, '--view-dir', str(s.root / 'v'),
                                                  '--wait', '1')),
             dict(step='cli resume after completion', output=s.cli('resume'))]
 
 
+def several_agents(s):
+    """Two named agents: spawn a second, a named /d, the list, the current agent, the close chooser, close one."""
+    s.activate()
+    c = s.control
+    first = s.store.read()['owned'][0]['alias']
+
+    def spawn():  # What `bind --agent agy --name ELON` does, without scanning this machine's CLIs.
+        c.frontend('agy')
+        with s.store.edit() as state:
+            state['pending']['name'] = 'ELON'
+        return c.activate('gemini-3.8-flash-high', 'allow', agent='agy')
+
+    def named_send():
+        request = s.store.read()['turnRoute']['requestId']
+        s.backend.events = [dict(type='message', text='Parsed.\n')]
+        return c.send_request(request, output=lambda event: None)
+
+    return turns(s, '/cli spawn agy elon', ('bind --agent agy --name ELON', spawn),
+                 '/cli spawn agy ' + first.replace('-', ''), '/cli list', ('agents', c.agents),
+                 '/d elon Explain the parser', ('send --request', named_send),
+                 '/d -' + first[-2:] + ' short form', '/d COD-99 unknown', '/cli use ' + first,
+                 ('use --name ' + first, lambda: c.make_current(first)), '/cli agents max 2',
+                 ('agents --max 2', lambda: c.agents(2)), '/cli spawn agy', '/cli settings elon',
+                 '/cli close', ('close', c.close), 'x', '/cli close', ('close', c.close), '2',
+                 ('close --name ELON', lambda: c.close('ELON')), '/cli close', '/cli stop elon')
+
+
+def agent_tools(s):
+    """One prompt to two agents, a tag as a target, timeouts, a diff without a receipt, and attach."""
+    s.activate()
+    c = s.control
+    first = s.store.read()['owned'][0]['alias']
+    c.frontend('agy')
+    with s.store.edit() as state:
+        state['pending']['name'] = 'ELON'
+    c.activate('gemini-3.8-flash-high', 'allow', agent='agy')
+    return turns(s, '/d elon,' + first.lower() + ' review the parser', '/d elon, please check it',
+                 '/d agy fix it', '/d hi, can you check', '/d elon,nobody check',
+                 '/cli timeout', ('timeout', c.timeout), '/cli timeout 90m', '/cli timeout elon 2h',
+                 '/cli timeout 1', '/cli diff', ('diff', c.diff), '/cli diff elon', '/cli attach',
+                 ('attach', c.attach), '/cli attach 3')
+
+
 SCENARIOS = [inactive_basics, home_flow, frontend_each_agent, setup_replies, reactivation_menu, help_flow,
-             bind_routes, active_direct, active_settings, active_passthrough, compaction_restores, resume_blocked,
-             controller_menus, controller_relay]
+             bind_routes, active_direct, active_settings, saved_passthrough, compaction_restores, resume_blocked,
+             controller_menus, controller_relay, several_agents, agent_tools]
 
 
 def record():

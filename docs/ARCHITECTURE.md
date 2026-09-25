@@ -7,7 +7,7 @@ How CLI-MODE works under the hood. For installing and using it, see the [README]
 One source tree, `plugins/cli-mode`, serves both hosts (Codex and Claude Code) through two installers.
 
 - **Routing hooks** read each prompt. `hooks/route.py` serves Codex; `hooks/claude.py` serves Claude Code.
-  They decide whether a prompt stays with the host, goes to the active agent, or is a CLI-MODE control.
+  They decide whether a prompt stays with the host, goes to an agent, or is a CLI-MODE control.
 - **The controller** (`scripts/controller.py`) is the command-line entry point the host runs. Its
   `Controller` combines `menus.py` (setup and settings), `binding.py` (owned-session lifecycle), `dispatch.py`
   (one provider turn) and `queue_worker.py` (the detached FIFO worker, receipts and the `relay` command,
@@ -39,21 +39,45 @@ unavailable interactive approval.
 
 ## Requests, the queue and relaying
 
-The routing hook captures delegated text exactly, queues it in arrival order,
-and starts a detached worker for the active conversation. The worker forwards
-one message at a time to the saved ACPX session even if the host's response is
-interrupted by a new message. The host reads each receipt and public events
+The routing hook captures a `/d` prompt exactly, queues it in arrival order for
+its agent (the one named first, or the current agent), and starts that agent's
+detached worker. Each agent has its own session, queue and worker, so agents work
+side by side. A worker forwards one message at a time to its agent's ACPX session
+even if the host's response is interrupted by a new message. The host reads each receipt and public events
 through `observe --request <id>`; it never rewrites or resubmits the prompt.
-Captured input is removed after submission or shutdown. `/cli cancel` stops the
-active turn; `/cli stop` discards queued follow-ups and closes the session. The
+Captured input is removed after submission or shutdown. `/cli cancel` stops an
+agent's running turn; `/cli close <name>` discards that agent's queued follow-ups
+and closes its session, and `/cli stop` does so for every agent. The
 host relays public output into chat while its response is active; the worker
 cannot independently post new chat messages after that response ends.
 
-Both routing modes and file-based submissions use one controller request lifecycle.
+`/d` prompts and file-based submissions use one controller request lifecycle.
 Follow-up turns require the original provider conversation to resume successfully.
 
-After a turn, the conversation's worker stays idle for up to five minutes so the
-next message starts at once, then exits. `/cli stop` ends it immediately.
+After a turn, an agent's worker stays idle for up to five minutes so the next
+message starts at once, then exits. Closing the agent ends it immediately.
+
+## Agent names
+
+Each owned session keeps a name (`alias`): one given at spawn, or one generated
+from the agent's code and two characters derived from the session's own unique
+name, so a conversation saved before names existed gets a stable one. Generated
+names are never given out twice in a conversation (`usedNames`). Requests record
+their agent's session, kind and name, so an answer keeps its label after the agent
+closes. `main` is the current agent; `backend` and `settings` mirror it.
+
+A prompt naming several agents (`/d gro-4k,cod-7k ...`) is captured once per agent, each request in its
+agent's queue. An agent's `timeout` (minutes, 1 hour by default, saved in `agent-timeout.json`) is the ACPX
+owner's idle TTL. `/cli attach` moves an owned entry from another conversation's state in the same folder
+into this one, under both state locks, so one agent never has two owners.
+
+## Change receipts
+
+Around each agent turn, the worker writes the folder's content as a git tree (`scripts/changes.py`): it copies
+the repository's index to a temporary file, runs `git add --all` against that copy and `git write-tree`, so
+the real index never changes. `git diff-tree --numstat` between the two trees is the receipt, saved on the
+request before it settles, so the relay that follows always has it. The trees stay reachable only through
+the receipt; git's garbage collection removes them eventually, after which `/cli diff` says the diff is gone.
 
 ## Stopping
 

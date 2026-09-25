@@ -1,6 +1,6 @@
 # Backend contract, version 1 (validated descriptors)
 
-CLI-MODE is the plugin and shared passthrough controls. The only discoverable skill is `cli-mode`. Each provider has an internal
+CLI-MODE is the plugin and its shared controls. The only discoverable skill is `cli-mode`. Each provider has an internal
 `backends/<id>/backend.md` guide, selected through the menu or `/cli <id>`.
 Backend guides are supporting resources, not separately invocable skills. The catalog in `backends.json` is a discovery registry
 read by the host; it is not an executable router or a plugin hook.
@@ -17,7 +17,7 @@ Provider adapters own model names, effort IDs, access mapping, quota
 provider, authentication strategy, executable discovery and direct-message banner.
 The shared state/command parser and hooks must not branch on task modality.
 
-Direct is the default routing policy. Direct, Passthrough and controller file
+Only a `/d` or `$d` prompt reaches the agent. Those prompts and controller file
 input converge on the same captured-request admission and dispatch lifecycle.
 ACPX's pinned public runtime owns protocol handling, reconnect and canonical
 completion. Adapters must not add transport retries, fresh-session fallbacks,
@@ -78,7 +78,9 @@ the backend supplies its implementation and provider-specific exceptions.
 2. Link `../../codex/skills/cli-mode/SKILL.md` from its guide and meet the responsibilities
    above. Keep its scripts, assets, and provider references inside that folder.
 3. Add one registry record. `entrypoint` is relative to the registry directory
-   and must stay inside the plugin. Do not add placeholders for unimplemented
+   and must stay inside the plugin. `tag` is the agent's unique three-letter tag
+   (`cod`): a command word (`/cli cod`, `/cli spawn cod`) and, in capitals, the code
+   of its generated names (`COD-7K`). Do not add placeholders for unimplemented
    backends or borrow another backend's account/session.
 4. Implement and register an executable adapter alongside `scripts/agy.py` with
    catalog selection, profile/setting mapping, native-setting verification and

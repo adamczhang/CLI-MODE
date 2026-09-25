@@ -1,14 +1,15 @@
 """Claude Code hook: route prompts, approve CLI-MODE's own commands, keep relays going.
 
 Claude Code runs this file for SessionStart, UserPromptSubmit, PreToolUse (the
-Agent tool, and shell commands that start with `python`) and Stop. The shared
-route.decide() records what each prompt is, exactly as for Codex. This file
-decides how Claude Code shows it:
+Agent and scheduling tools, and shell commands that start with `python`) and
+Stop. The shared route.decide() records what each prompt is, exactly as for
+Codex. This file decides how Claude Code shows it:
 
-- Local controls (menus, help, queue, stop) answer at once, without a model
-  turn: the hook runs the controller in process and shows its text.
-- Agent turns and slow controls (activation, installation) give Claude the
-  exact controller command and say how its result is shown.
+- Local controls (menus, help, queue, stop) and activation answer in the hook,
+  without a command for Claude: the hook runs the controller in process.
+- A /d turn posts "Passing to ...", starts a background `follow` and ends; the
+  follow's notification wakes Claude for one relay. Installing and widening
+  access stay commands Claude runs, so Claude Code asks first.
 - CLI-MODE's own controller commands for this session are approved; nothing
   else is.
 - A relay that Claude ends early is resumed from its saved cursor.
@@ -28,7 +29,8 @@ def nothing_to_do(raw):
     Only certain answers are given here; anything else goes to handle(), which
     decides everything again from scratch (this is purely a shortcut).
     """
-    if '"PreToolUse"' in raw and 'controller.py' not in raw and '"Agent"' not in raw:
+    if '"PreToolUse"' in raw and 'controller.py' not in raw and not any(
+            '"' + tool + '"' in raw for tool in AGENT_TURN_TOOLS):
         return True  # Some other `python` command: only CLI-MODE's own controller is approved here.
     if '"SessionStart"' in raw and '"compact"' not in raw:
         return True  # Only a compaction has a relay or menu to restore.
@@ -39,7 +41,7 @@ def nothing_to_do(raw):
         root = os.environ.get('CLI_MODE_DATA') or os.environ.get('CLAUDE_PLUGIN_DATA')
         if name not in ('UserPromptSubmit', 'Stop', 'PreToolUse') or not root:
             return False
-        if name == 'PreToolUse' and event.get('tool_name') != 'Agent':
+        if name == 'PreToolUse' and event.get('tool_name') not in AGENT_TURN_TOOLS:
             return False  # Possibly CLI-MODE's controller: always checked for approval, active or not.
         if name == 'UserPromptSubmit' and event.get('prompt', '').lstrip()[:1] in ('/', '$'):
             return False  # A command, possibly CLI-MODE's.
@@ -53,16 +55,20 @@ def nothing_to_do(raw):
         with open(path, encoding='utf-8') as source:
             saved = json.load(source)
         if saved.get('active'):
-            # A prompt may be the agent's (passthrough), a subagent may need denying, a relay may be running.
+            # A prompt may be a /d task or a notification, a tool may need denying, a relay may be running.
             return name == 'Stop' and (saved.get('turnRoute') or {}).get('route') not in RELAY_ROUTES
         # Nothing is active: only an open menu, setup or help card can make a plain reply (such as X) CLI-MODE's.
-        return not (any(saved.get(key) for key in ('pending', 'helpMenu', 'modeMenu')) or
+        return not (any(saved.get(key) for key in ('pending', 'helpMenu')) or
                     (saved.get('turnRoute') or {}).get('route') == 'help')
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False  # handle() reports what is wrong, as it always has.
 
 
-RELAY_ROUTES = ('direct', 'delegate', 'direct-result')
+RELAY_ROUTES = ('direct', 'direct-result')
+# Claude Code tools a turn that belongs to the agent never needs: the agent runs its own subagents, and the
+# follow's end wakes the conversation by itself (live run 3 scheduled a wake-up 20 minutes out instead).
+# claude/hooks.json's PreToolUse matcher lists the same tools.
+AGENT_TURN_TOOLS = ('Agent', 'ScheduleWakeup', 'CronCreate', 'Monitor')
 if __name__ == '__main__':
     RAW = sys.stdin.buffer.read().decode('utf-8', 'replace')  # Claude Code sends UTF-8, whatever the code page.
     if nothing_to_do(RAW):
@@ -86,9 +92,10 @@ ARGUMENT = re.compile(r'[A-Za-z0-9_.:-]+')
 # Controller commands Claude may run without asking. The others (send, pump,
 # route, draft, observe, format-*) read files or bypass the queue.
 ALLOWED = frozenset((
-    'relay', 'queue', 'status', 'bind', 'activate', 'choose', 'navigate', 'settings', 'mode', 'progress', 'view', 'tune',
+    'relay', 'follow', 'queue', 'status', 'bind', 'activate', 'choose', 'navigate', 'settings', 'progress', 'view', 'tune',
     'activation-message', 'frontend', 'options', 'first-time-check', 'setup-status', 'setup-manual', 'setup-start',
-    'off', 'cancel', 'resume', 'refresh', 'commands', 'catalog'))
+    'off', 'close', 'use', 'agents', 'diff', 'timeout', 'attach', 'cancel', 'resume', 'refresh', 'commands',
+    'catalog'))
 RESET = ('/cli reset', '$cli reset', '/cli-mode:cli reset')
 MAX_NUDGES = 3
 # The skill describes CLI-MODE in general; opening it costs a turn and adds nothing to a context
@@ -103,6 +110,12 @@ ERROR = (' A command that fails exits with code 1 and returns only `error`: the 
          'that error, shown the same way, with no advice or alternatives added.')
 ACTIVATION_TIMEOUT_MS = 180000
 RELAY_TIMEOUT_MS = 30000
+FOLLOW_LABEL = 30  # Characters of the prompt in a follow's background-task row.
+
+
+def background():
+    """Claude Code runs background tasks unless CLAUDE_CODE_DISABLE_BACKGROUND_TASKS turns them off."""
+    return os.environ.get('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS', '').strip().lower() not in ('1', 'true', 'yes', 'on')
 
 
 # Commands ----------------------------------------------------------------
@@ -182,6 +195,9 @@ def show(event, fenced, plain=None):
     """A local control's reply, in the display style this user chose (see DISPLAYS)."""
     plain = fenced if plain is None else plain
     style = STYLE
+    if style != 'model':
+        import presentation
+        plain = presentation.plain_strong(plain)  # A hook notice shows green LaTeX (the activation card's) raw.
     if style == 'model':
         import presentation
         return context(event, 'CLI-MODE answered this control itself; no command needs to run.' + COMPLETE +
@@ -228,6 +244,8 @@ def handle(event, root=None):
         COLOR = host.chat_color(data_root(root), host.CLAUDE)
     except ValueError:
         STYLE, COLOR = DEFAULT_STYLE, True
+    if name == 'UserPromptSubmit' and NOTIFICATION.match(event.get('prompt', '')):
+        return notification_reply(event, root)
     if name == 'UserPromptSubmit' and event.get('prompt', '').strip().casefold() in RESET:
         return reset(event, root)
     import route
@@ -260,15 +278,18 @@ def pre_tool_use(event, root):
         if not text.startswith('python ' + quote(CONTROLLER) + ' '):
             return {}  # Not CLI-MODE's controller: leave it to Claude Code's permissions.
         return approve(event, text, root) or {}
-    if tool == 'Agent':
+    if tool in AGENT_TURN_TOOLS:
         try:
             import route
             state = route.Store(event['session_id'], workspace(event), root).read()
             if route.delegated_turn(state):
-                return {'hookSpecificOutput': {
-                    'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
-                    'permissionDecisionReason': 'This CLI-MODE turn belongs to the active agent, which runs its own '
-                                                'subagents. Claude Code subagents stay off for delegated turns.'}}
+                reason = ('This CLI-MODE turn belongs to the active agent, which runs its own subagents. Claude Code '
+                          'subagents stay off for delegated turns.' if tool == 'Agent' else
+                          'This CLI-MODE turn belongs to the active agent. Its background follow wakes this '
+                          'conversation when the agent finishes, so no wake-up, schedule or monitor is needed: the '
+                          'turn ends now.')
+                return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                                               'permissionDecisionReason': reason}}
         except (OSError, ValueError, KeyError, TypeError, RuntimeError):
             pass  # Unreadable state never blocks a tool here.
     return {}
@@ -295,17 +316,190 @@ def approve(event, text, root):
             or any("'" in token for token in tokens)
             or ' '.join(quote(token) for token in tokens) != text):
         return None
+    if rest[0] == 'follow':
+        return follow_approval(event, root, rest)
     access = rest[rest.index('--access') + 1:][:1] if '--access' in rest else []
     if ((rest[0] == 'setup-start' and '--approved' in rest) or (rest[0] == 'activate' and access != ['prompt']
                                                                 and '--access' in rest)
             or (rest[0] in ('tune', 'choose') and widens_access(event, rest, root))):
         # Installing, or letting an agent act without asking: the user's yes comes from Claude Code itself.
-        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'ask',
-                                       'permissionDecisionReason': 'CLI-MODE ' + (
-                                           'installs what setup needs' if rest[0] == 'setup-start' else
-                                           'activates the agent with wider access') + '; this needs your yes.'}}
+        return labelled(event, root, rest, {'hookEventName': 'PreToolUse', 'permissionDecision': 'ask',
+                                            'permissionDecisionReason': 'CLI-MODE ' + (
+                                                'installs what setup needs' if rest[0] == 'setup-start' else
+                                                'activates the agent with wider access') + '; this needs your yes.'})
+    return labelled(event, root, rest, {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
+                                        'permissionDecisionReason': 'CLI-MODE controller command for this session.'})
+
+
+# The only controller commands that can run past the desktop app's row threshold (about 2-3 s) as a command
+# Claude runs: an activation that widens access (13-42 s), and the relay loop without background tasks (25 s).
+ROW_LABELS = {'bind': 'starting', 'activate': 'starting', 'choose': 'starting', 'tune': 'starting', 'relay': 'answer'}
+
+
+def labelled(event, root, rest, output):
+    """Name the command's row, should it get one, after the agent rather than Claude's own words."""
+    if rest[0] in ROW_LABELS:
+        try:
+            import adapters
+            import route
+            from state import agent_label
+            state = route.Store(event['session_id'], workspace(event), root).read()
+            pending = state.get('pending') or {}
+            if pending.get('stage') and not pending.get('session'):
+                name = adapters.module(pending.get('backend') or 'agy').LABEL  # A new agent: no name yet.
+            else:
+                name = agent_label(state, pending.get('session') or (state.get('turnRoute') or {}).get('session'))
+            output['updatedInput'] = dict(event.get('tool_input') or {},
+                                          description=name + ' · ' + ROW_LABELS[rest[0]])
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+            pass  # Only the row's name: Claude's own stays.
+    return {'hookSpecificOutput': output}
+
+
+def follow_approval(event, root, rest):
+    """A follow runs as a background task with its own row in Claude Code, and once per request.
+
+    Claude Code replaces the whole tool input with `updatedInput`, so the command it runs is the one
+    approve() just checked; only the background flag and the row's label (agent and prompt) are added.
+    """
+    import operations
+    import route
+    from queue_worker import request_label
+    if len(rest) != 3 or rest[1] != '--request':
+        return None
+    try:
+        store = route.Store(event['session_id'], workspace(event), root)
+        state = store.read()
+        if rest[2] not in (state.get('requests') or {}):
+            return None  # Not a request of this session: Claude Code's own permissions decide.
+        running = operations.following(store, rest[2])
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return None
+    if running:
+        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                                       'permissionDecisionReason': 'CLI-MODE is already following this request; '
+                                                                   'when that follow ends, its relay runs.'}}
+    remember_follow(event, root, rest[2])
+    # The label is only the row's name: an older request without one still gets its follow, named by the agent.
+    label = (state.get('followLabels') or {}).get(rest[2])
+    if not isinstance(label, str) or not label:
+        label = request_label(state, rest[2])
     return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
-                                   'permissionDecisionReason': 'CLI-MODE controller command for this session.'}}
+                                   'permissionDecisionReason': 'CLI-MODE follows the agent in the background.',
+                                   'updatedInput': dict(event.get('tool_input') or {}, run_in_background=True,
+                                                        description=label)}}
+
+
+FOLLOW_LABELS_KEPT = 20
+# Claude Code wakes a session with a background task's notification as a prompt of its own, and runs
+# UserPromptSubmit on it (probe P6, 2026-09-24). It is never the user's: routed, it became a host turn (which
+# dropped the Stop guard and tool refusals of the /d turn), and an open menu would take it as a reply.
+NOTIFICATION = re.compile(r'\s*<task-notification>')
+TOOL_USE_ID = re.compile(r'<tool-use-id>\s*([A-Za-z0-9_-]{1,128})\s*</tool-use-id>')
+
+
+def remember_follow(event, root, request):
+    """Record which tool call is the request's follow: its notification names that call's ID."""
+    tool_use = event.get('tool_use_id')
+    if not isinstance(tool_use, str) or not tool_use:
+        return
+    import route
+    try:
+        with route.Store(event['session_id'], workspace(event), root).edit() as state:
+            follows = state.setdefault('followTasks', {})
+            follows.pop(tool_use, None)
+            follows[tool_use] = request
+            for stale in list(follows)[:-FOLLOW_LABELS_KEPT]:
+                follows.pop(stale)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        pass  # The wake-up turn still has the /d turn's relay command.
+
+
+def notification_reply(event, root):
+    """A background task's notification: never routed; for CLI-MODE's own follow, the exact relay to run."""
+    import route
+    found = TOOL_USE_ID.search(event.get('prompt', ''))
+    try:
+        state = route.Store(event['session_id'], workspace(event), root).read()
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return {}
+    request = (state.get('followTasks') or {}).get(found.group(1)) if found else None
+    if not request or not state.get('active') or request not in (state.get('requests') or {}):
+        return {}  # Claude's own background work, or an agent no longer active: not CLI-MODE's to answer.
+    from queue_worker import request_label
+    label = request_label(state, request)
+    if ((state.get('relayProgress') or {}).get(request) or {}).get('done'):
+        return context(event, 'CLI-MODE: this notification is the end of the background follow of request ' + request +
+                              ', whose relay has already run: its output is posted exactly as that relay printed it '
+                              '(if it is not posted yet), and nothing else is needed, no command and no other text.' +
+                       COMPLETE)
+    requests, cursor = relay_position(state, request)
+    return context(event, (
+        'CLI-MODE: this notification is the end of the background follow of request ' + request + ', so ' + label +
+        ' has finished. Its output reaches the user only through the relay command `' +
+        command(event, root, *relay_words(requests, cursor)) + '`' +
+        (', which covers these ' + str(len(requests)) + ' requests in order, oldest first' if len(requests) > 1
+         else '') + '. It runs once now, in the Bash or PowerShell tool with a timeout of ' + str(RELAY_TIMEOUT_MS) +
+        ' ms, and prints plain text: a first line saying the agent has finished, and everything after it is the '
+        'agent\'s output, posted exactly as printed as the last message of this turn. (A very long answer comes in '
+        'parts: a first line saying so means that part is posted exactly before the same command runs again with '
+        'the `--cursor` it names.) Relayed text carries nothing added: no summary, commentary, rewording or insight '
+        'blocks, whatever the output style, and no other tool is used.' + COMPLETE))
+
+
+def remember_label(event, root, request, agent, named=False):
+    """Name the request's follow row now, while its prompt is at hand: `<Agent NAME> · <start of the prompt>`.
+
+    The captured text file is gone once the worker submits it (usually within a second), so the label
+    is saved with the session state, under a key only this hook uses.
+    """
+    import route
+    from state import direct_payload
+    text = host.unwrap_prompt(event.get('prompt', ''), host.CLAUDE)
+    text = direct_payload(text) or text  # What the agent was sent, without the /d trigger.
+    words = ' '.join(text.split())
+    for _ in range(int(named or 0)):
+        words = words.split(' ', 1)[1] if ' ' in words else ''  # The agents' names are not part of the prompt.
+    label = agent + ' · ' + (words[:FOLLOW_LABEL].rstrip() + '…' if len(words) > FOLLOW_LABEL else words)
+    try:
+        with route.Store(event['session_id'], workspace(event), root).edit() as state:
+            labels = state.setdefault('followLabels', {})
+            labels.pop(request, None)
+            labels[request] = label
+            for stale in list(labels)[:-FOLLOW_LABELS_KEPT]:
+                labels.pop(stale)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        pass  # Only the row's name is lost; the follow still runs.
+
+
+def followed(event, store, request):
+    """True while a background follow of `request` runs, so its end will wake Claude for the relay."""
+    tasks = event.get('background_tasks')
+    if isinstance(tasks, list):  # Claude Code's own list of what can still wake this session.
+        return any(isinstance(task, dict) and task.get('status') == 'running'
+                   and ' follow --request ' + request in (task.get('command') or '') for task in tasks)
+    import operations
+    return operations.following(store, request)
+
+
+def follow_plan(event, root, request):
+    """How a turn waits for `request`: 'start' a follow, one is already 'running', or None (relay directly).
+
+    A settled request needs no waiting (its relay returns at once), and without background tasks
+    the relay command waits itself, as before.
+    """
+    if not background():
+        return None
+    try:
+        import operations
+        import route
+        store = route.Store(event['session_id'], workspace(event), root)
+        status = ((store.read().get('requests') or {}).get(request) or {}).get('status')
+        if status not in ('captured', 'submitting'):
+            return None
+        return 'running' if operations.following(store, request) else 'start'
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return None
 
 
 def widens_access(event, rest, root):
@@ -318,6 +512,7 @@ def widens_access(event, rest, root):
     try:
         import frontends
         import route
+        from state import agent_entry
         store = route.Store(event['session_id'], workspace(event), root)
         state = store.read()
         pending = state.get('pending') or {}
@@ -327,8 +522,9 @@ def widens_access(event, rest, root):
             choice = ((state.get('turnRoute') or {}).get('choice') or '').strip()
             if not choice:
                 return False  # No choice typed: it only opens the access menu.
-            agent = state.get('backend') or pending.get('backend')
-            options = frontends.phase_options(store.root, agent, 'access', state.get('settings'))
+            target = agent_entry(state, (state.get('turnRoute') or {}).get('session')) or {}
+            agent = target.get('backend') or pending.get('backend')
+            options = frontends.phase_options(store.root, agent, 'access', target.get('settings'))
             matches = frontends.match_choice(options, choice, 'access')
             if len(matches) != 1:
                 return False  # Ambiguous or unknown: the controller shows the menu instead.
@@ -341,7 +537,11 @@ def widens_access(event, rest, root):
             if not 1 <= number <= len(choices):
                 return False
             target = choices[number - 1]['value']
-        current = (state.get('settings') or {}).get('access') if state.get('active') else 'prompt'
+        # A setting change compares with that agent's access; a new agent starts from Prompt.
+        session = ((state.get('turnRoute') or {}).get('session') or state.get('main') if rest[0] == 'tune'
+                   else pending.get('session'))
+        entry = agent_entry(state, session) if state.get('active') and session else None
+        current = ((entry or {}).get('settings') or {}).get('access') if entry else 'prompt'
         order = frontends.ACCESS_ORDER  # Widest first.
         return target in order and (current not in order or order.index(target) < order.index(current))
     except (OSError, ValueError, KeyError, TypeError, RuntimeError, IndexError):
@@ -367,18 +567,36 @@ def stop(event, root):
         store = route.Store(event['session_id'], workspace(event), root)
         with store.edit() as state:
             turn = state.get('turnRoute') or {}
-            request = turn.get('requestId')
-            if not state['active'] or turn.get('route') not in RELAY_ROUTES or not request:
+            if not state['active'] or turn.get('route') not in RELAY_ROUTES or not turn.get('requestId'):
                 return {}
-            if ((state.get('relayProgress') or {}).get(request) or {}).get('done'):
+            # A prompt sent to several agents is one request each: the first that still needs its follow or
+            # relay gets the nudge.
+            ids = turn.get('requestIds') or [turn['requestId']]
+            for request in ids:
+                if ((state.get('relayProgress') or {}).get(request) or {}).get('done'):
+                    continue
+                requests, cursor = relay_position(state, request)
+                waiting = background() and (state['requests'].get(requests[-1]) or {}).get('status') in (
+                    'captured', 'submitting')
+                if waiting and followed(event, store, requests[-1]):
+                    continue  # The follow's end wakes Claude, and that turn runs the relay.
+                count = (state.get('relayNudges') or {}).get(request, 0)
+                if count >= MAX_NUDGES:
+                    continue
+                nudges = {key: value for key, value in (state.get('relayNudges') or {}).items() if key in ids}
+                state['relayNudges'] = dict(nudges, **{request: count + 1})  # Only this turn's requests.
+                break
+            else:
                 return {}
-            count = (state.get('relayNudges') or {}).get(request, 0)
-            if count >= MAX_NUDGES:
-                return {}
-            state['relayNudges'] = {request: count + 1}
-            requests, cursor = relay_position(state, request)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
         return {}  # A turn end is never blocked by unreadable state.
+    if waiting:
+        return context(event, 'CLI-MODE request ' + requests[-1] + ' is still with the agent, and nothing follows '
+                              'it: its output reaches the user only through the relay after it ends. Its follow '
+                              'command `' + command(event, root, 'follow', '--request', requests[-1]) + '` runs in '
+                              'the background (CLI-MODE makes it a background task), and then the turn ends; the '
+                              'follow\'s end starts a new turn for the relay command `' +
+                       command(event, root, *relay_words(requests, cursor)) + '`.')
     return context(event, 'CLI-MODE request ' + request + ' has not finished relaying; the agent\'s remaining '
                           'output reaches the user only through it. Its next relay command is `' +
                    command(event, root, *relay_words(requests, cursor, always_cursor=True)) + '`.')
@@ -390,7 +608,7 @@ def relay_position(state, request):
     chain = progress.get('chain')
     if chain:
         return chain['requests'], chain['cursor']
-    earlier = unrelayed(state, exclude=request)
+    earlier = unrelayed(state, exclude=request, session=((state.get('requests') or {}).get(request) or {}).get('session'))
     return earlier + [request], (0 if earlier else progress.get('cursor', 0))
 
 
@@ -421,12 +639,26 @@ def reset(event, root):
 # Prompt replies ----------------------------------------------------------
 
 def label_of(state, decision):
+    """The adapter of the agent this turn is about: named, being set up, or the current one."""
     import adapters
-    agent = decision.get('agent') or (state.get('pending') or {}).get('backend') or state.get('backend') or 'agy'
+    from state import agent_entry
+    named = agent_entry(state, decision.get('session')) if decision.get('session') else None
+    agent = (decision.get('agent') or (named or {}).get('backend') or (state.get('pending') or {}).get('backend')
+             or state.get('backend') or 'agy')
     try:
         return adapters.module(agent)
     except ValueError:
         return adapters.module('agy')
+
+
+def name_of(state, decision):
+    """How this turn's agent is named in CLI-MODE's lines: `Codex COD-7K` once it runs."""
+    from state import agent_label
+    return agent_label(state, decision.get('session')) if state.get('active') else label_of(state, decision).LABEL
+
+
+def named(decision):
+    return ['--name', decision['name']] if decision.get('name') else []
 
 
 def instant(event, root, *words, render=None):
@@ -475,11 +707,22 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
                              'with a number from the menu, or X to close it, then send your message again.')
         return show_result(event, result)
     if kind in ('settings', 'settings-dismiss'):
-        return instant(event, root, 'settings', *(['--dismiss'] if kind == 'settings-dismiss' else []))
-    if kind == 'mode':
-        return instant(event, root, 'mode', *(['--choice', decision['choice']] if decision.get('choice') else []))
-    if kind == 'mode-dismiss':
-        return instant(event, root, 'mode', '--dismiss')
+        return instant(event, root, 'settings', *(['--dismiss'] if kind == 'settings-dismiss' else named(decision)))
+    if kind == 'close':
+        return instant(event, root, 'close', *named(decision), render=presentation.close_text)
+    if kind == 'close-menu':
+        return instant(event, root, 'close', render=presentation.close_text)
+    if kind == 'use':
+        return instant(event, root, 'use', *named(decision))
+    if kind == 'agents':
+        return instant(event, root, 'agents', *(['--max', str(decision['max'])] if decision.get('max') else []))
+    if kind == 'diff':
+        return instant(event, root, 'diff', *named(decision), render=lambda result: result['text'])
+    if kind == 'timeout':
+        return instant(event, root, 'timeout', *named(decision),
+                       *(['--minutes', str(decision['minutes'])] if decision.get('minutes') else []))
+    if kind == 'attach':
+        return instant(event, root, 'attach', *(['--target', decision['target']] if decision.get('target') else []))
     if kind == 'progress':
         return instant(event, root, 'progress', *(['--choice', decision['choice']] if decision.get('choice') else []))
     if kind == 'view':
@@ -491,51 +734,64 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
     if kind == 'off':
         return instant(event, root, 'off', render=presentation.shutdown_text)
     if kind == 'cancel':
-        note = ('Cancel requested for the running agent turn; queued follow-ups still run.'
+        note = ('Cancel requested for ' + name_of(state, decision) + '\'s running turn; queued follow-ups still run.'
                 if cancellation and cancellation.get('canceled') else 'No agent turn was running; the queue is unchanged.')
         return instant(event, root, 'queue', render=lambda result: note + '\n\n' + presentation.queue_text(result))
     if kind == 'choose':
-        if pending.get('phase') == 'access':  # The last choice activates the agent.
+        words = ('choose', str(decision['number']))
+        if pending.get('phase') == 'access' and widens_access(event, list(words), root):
             return activation(event, root, adapter, 'applies the chosen access level and activates ' +
-                              adapter.DISPLAY_NAME, 'choose', str(decision['number']))
-        return instant(event, root, 'choose', str(decision['number']))
+                              adapter.DISPLAY_NAME, *words)
+        return instant(event, root, *words)  # The access list's choice activates here (see activation()).
     if kind == 'tune':
-        if not decision.get('text'):
-            return instant(event, root, 'tune', '--phase', decision['phase'], '--apply')
-        return activation(event, root, adapter, 'applies "' + decision['text'] + '" as ' + adapter.DISPLAY_NAME +
-                          '\'s ' + decision['phase'] + ' when it matches one advertised option exactly (otherwise its '
-                          'result is the options menu, with a message)', 'tune', '--phase', decision['phase'], '--apply')
+        words = ('tune', '--phase', decision['phase'], '--apply', *named(decision))
+        if decision.get('text') and widens_access(event, list(words), root):
+            return activation(event, root, adapter, 'applies "' + decision['text'] + '" as ' + name_of(state, decision) +
+                              '\'s ' + decision['phase'] + ' when it matches one advertised option exactly (otherwise '
+                              'its result is the options menu, with a message)', *words)
+        return instant(event, root, *words)
     if kind == 'bind':
         if pending.get('stage') == 'verifying':
             return show_text(event, 'Activation is already being verified. /cli queue shows its progress.')
-        return activation(event, root, adapter, 'activates ' + adapter.DISPLAY_NAME + ' with its saved defaults (the '
-                          'first time: ' + json.dumps(adapter.DEFAULTS) + ')', 'bind', '--agent', adapter.ID)
+        return instant(event, root, 'bind', '--agent', adapter.ID, *named(decision))
     if kind == 'setup':
         return setup_reply(event, root, state, adapter, event.get('prompt', ''))
-    if kind in ('direct', 'delegate'):
+    if kind == 'direct' and len(decision.get('requestIds') or []) > 1:
+        return context(event, several_context(event, root, state, decision, worker))
+    if kind == 'direct':
         request = decision.get('requestId')
         if not request:
             return show_text(event, 'CLI-MODE: no captured request. Send the message again.')
-        lead = ('CLI-MODE forwarded this message' + (' (without its /d trigger)' if kind == 'direct' else '') +
-                ' unchanged to the active ' + adapter.LABEL + ' session. Only its text was forwarded: images or files '
+        label = name_of(state, decision)
+        if background():
+            remember_label(event, root, request, label, decision.get('named', False))
+        lead = ('CLI-MODE forwarded this message (without its /d trigger' +
+                (' and the agent name after it' if decision.get('named') else '') + ') unchanged to ' + label +
+                '. Only its text was forwarded: images or files '
                 'attached to it stay with Claude Code, so if it had any, one short line saying the agent did not '
                 'receive them follows the opening line below, in the same message.')
-        earlier = unrelayed(state, exclude=request)
+        earlier = unrelayed(state, exclude=request, session=(state['requests'].get(request) or {}).get('session'))
         if earlier:
             lead += (' The relay also carries earlier requests whose output the user has not seen yet (a relay was '
                      'interrupted), first and in order; they are not sent again.')
-        return context(event, relay_context(event, root, adapter, earlier + [request], lead, worker, passing=True))
+        return context(event, relay_context(event, root, adapter, earlier + [request], lead, worker, passing=True,
+                                            label=label))
     if kind == 'resume':
         return resume_reply(event, root, adapter, worker, state)
     return {}
 
 
-def unrelayed(state, exclude=None, limit=3):
-    """This activation's requests whose relay never finished: their output has not reached the user."""
+def unrelayed(state, exclude=None, limit=3, session=None):
+    """This activation's requests whose relay never finished: their output has not reached the user.
+
+    With `session`, only that agent's (a turn's relay carries its own agent's earlier requests); otherwise
+    every running agent's.
+    """
     progress = state.get('relayProgress') or {}
+    sessions = {session} if session else {item['name'] for item in state.get('owned') or []}
     rows = [(record.get('capturedAt') or 0, key) for key, record in (state.get('requests') or {}).items()
             if key != exclude and record.get('generation') == state.get('generation')
-            and record.get('session') == state.get('main')
+            and record.get('session') in sessions
             and record.get('status') in ('captured', 'submitting', 'uncertain', 'completed')
             and not record.get('relayed') and not (progress.get(key) or {}).get('done')]
     return [key for _, key in sorted(rows)[-limit:]]
@@ -578,7 +834,13 @@ def color_choice(event, root, choice):
 
 
 def activation(event, root, adapter, what, *words):
-    """A control that can take minutes (it starts or reconfigures the agent): Claude runs it once."""
+    """An activation that widens the agent's access: Claude runs it once, so Claude Code asks the user first.
+
+    Every other activation (bind, the activation menu, a narrower or equal setting) runs in this hook
+    through instant(): it takes 13-42 s while the agent starts and answers one readiness prompt, and as a
+    command Claude runs, it would be a row of its own in the desktop app's background tasks, next to the
+    agent's rows. Here the prompt shows the hook's status line meanwhile (its timeout allows 300 s).
+    """
     return context(event, (
         'CLI-MODE: this control ' + what + '. Its command is `' + command(event, root, *words) + '`. It checks '
         'readiness and sends the agent one short readiness prompt, which can take a minute or two, so it runs once, '
@@ -616,8 +878,7 @@ def setup_reply(event, root, state, adapter, reply):
         if answer in ('1', 'yes', 'y'):
             if not frontends.routing_readiness(state)['ready']:
                 return instant(event, root, 'frontend', '--agent', agent)  # 1 is Recheck routing on this page.
-            return activation(event, root, adapter, 'activates ' + adapter.DISPLAY_NAME + ' with the settings on its '
-                              'menu', 'activate', '--agent', agent)
+            return instant(event, root, 'activate', '--agent', agent)
         if answer == '2':
             return instant(event, root, 'options', '--phase', 'model', '--agent', agent)
     return context(event, (
@@ -631,36 +892,71 @@ def setup_reply(event, root, state, adapter, reply):
         json.dumps(pending)))
 
 
-def relay_context(event, root, adapter, requests, lead, worker=None, cursor=0, passing=False):
+def relay_context(event, root, adapter, requests, lead, worker=None, cursor=0, passing=False, label=None):
     """The facts Claude needs to relay agent output, and how the user expects to see it.
 
     Claude Code's desktop app folds a turn's text between tool calls out of view (the user saw "Passing to"
     only inside a collapsed group), so the opening line comes before any command and the agent's output is
     the turn's last message, with nothing posted in between.
+
+    With background tasks, an unfinished request is not waited on in the turn: a background `follow`
+    shows the agent's work as a row in Claude Code's background tasks, the turn ends, and the follow's
+    end wakes Claude for one relay, which returns at once. Without them, the relay command waits itself.
     """
+    from state import passing_line
+    label = label or adapter.LABEL
     opening = ''
     if passing:
         import presentation
         # The line is its text block's last text while the relay runs, and the desktop app keeps a "$" at the
         # very end of a still-streaming block as plain text (it may become "$$"): a zero-width space after it
         # lets the green line render at once rather than when the turn ends.
-        line = presentation.strong(adapter.PASSING, COLOR) + ('​' if COLOR else '')
+        line = presentation.strong(passing_line(label), COLOR) + ('​' if COLOR else '')
         opening = (' The turn opens with this line, exactly as written on the next line, posted before any '
                    'command:\n' + line + '\n')
-    text = lead + opening + (
-             ' The agent\'s output reaches the user only through the relay command `' +
-             command(event, root, *relay_words(requests, cursor)) + '`' +
-             (', which covers these ' + str(len(requests)) + ' requests in order: its final part carries each '
-              'one\'s output, oldest first' if len(requests) > 1 else '') + '. '
-             'It runs in the Bash or PowerShell tool with a timeout of ' + str(RELAY_TIMEOUT_MS) + ' ms. Each call '
-             'waits up to 25 seconds and prints plain text. While the agent is still working, that is one line with '
-             'the `--cursor` for the next call, and the user expects the same command run again at once, with no '
-             'sleep and no text between calls (the app folds text between tool calls out of view). Once the agent '
-             'has finished, a first line says so, and everything after it is the agent\'s output, posted exactly '
-             'as printed as the last message of the turn. (A very long answer comes in parts: a first line saying '
+    relay = '`' + command(event, root, *relay_words(requests, cursor)) + '`' + (
+        ', which covers these ' + str(len(requests)) + ' requests in order: its final part carries each one\'s '
+        'output, oldest first' if len(requests) > 1 else '')
+    plan = follow_plan(event, root, requests[-1])
+    if plan == 'start' and passing:
+        # Claude Code asks a turn that ends on a tool call for visible output (live run 4: "Your previous response
+        # had no visible output"), which pushed Claude to post or run more after the follow. So the Passing line
+        # comes last, where the desktop app also keeps it open: only text between tool calls is folded away.
+        opening = ''
+    if plan is None:
+        waiting = (' The agent\'s output reaches the user only through the relay command ' + relay + '. It runs in '
+                   'the Bash or PowerShell tool with a timeout of ' + str(RELAY_TIMEOUT_MS) + ' ms. Each call waits '
+                   'up to 25 seconds and prints plain text. While the agent is still working, that is one line with '
+                   'the `--cursor` for the next call, and the user expects the same command run again at once, with '
+                   'no sleep and no text between calls (the app folds text between tool calls out of view). Once the '
+                   'agent has finished, a first line says so, and everything after it is the agent\'s output, posted '
+                   'exactly as printed as the last message of the turn.')
+    else:
+        if plan == 'running':
+            now = (' A follow of this request is already running in the background, so no other is started; this '
+                   'turn only says, in one line, that CLI-MODE is still following ' + label + '.')
+        else:
+            now = (' ' + label + ' works in the background, and the user watches it as a row in Claude '
+                   'Code\'s background tasks: this turn first runs its follow command `' +
+                   command(event, root, 'follow', '--request', requests[-1]) + '` once (CLI-MODE makes it a '
+                   'background task), then ends with ' + (
+                       'exactly this line, as written on the next line, as its only message:\n' + line + '\n'
+                       if passing else 'one line saying CLI-MODE is following ' + label + ' as its only message. ') +
+                   'The follow\'s end wakes this conversation by itself, so nothing else is needed to wait for it: '
+                   'this turn uses no other tool of any kind (no echo, sleep, check, wake-up, reminder, schedule or '
+                   'monitor) and posts nothing else, because the row already shows the agent working.')
+        waiting = now + (
+            ' The agent\'s output reaches the user only through the relay command ' + relay + ', run when the '
+            'follow ends: its task notification starts a new turn, which runs the relay in the Bash or PowerShell '
+            'tool with a timeout of ' + str(RELAY_TIMEOUT_MS) + ' ms, whatever the follow\'s exit code. The relay '
+            'prints plain text: a first line saying the agent has finished, and everything after it is the agent\'s '
+            'output, posted exactly as printed as the last message of that turn. (If it says the agent is still '
+            'working, the same command runs again at once with the `--cursor` it names.)')
+    text = lead + opening + waiting + (
+             ' (A very long answer comes in parts: a first line saying '
              'so means that part is posted exactly before the next call.) Relayed text carries nothing added: no '
              'summary, commentary, rewording or insight blocks, whatever the output style. The task belongs to ' +
-             adapter.LABEL + ', which plans and runs it with its own tools and subagents, so it is not answered, '
+             label + ', which plans and runs it with its own tools and subagents, so it is not answered, '
              'planned or split here and the Agent tool stays unused. The worker checks provider slash commands '
              'before dispatch and reports unsupported ones as an error in the relayed output. ' +
              ('Supported ' + adapter.LABEL + ' slash commands move this conversation to its native CLI, which starts a '
@@ -669,6 +965,49 @@ def relay_context(event, root, adapter, requests, lead, worker=None, cursor=0, p
              + COMPLETE)
     if worker and worker.get('worker') in ('blocked', 'start-failed'):
         text += (' The queue worker needs attention (' + json.dumps(worker) + '); /cli queue shows the blocked '
+                 'operation, and nothing is sent again.')
+    return text
+
+
+def several_context(event, root, state, decision, worker=None):
+    """One prompt sent to several agents: a background follow each, then one Passing line naming them all.
+
+    Each follow's end wakes Claude for that agent's relay alone (notification_reply), so the answers arrive one
+    by one, each under its own name. Without background tasks, one relay command waits for them all.
+    """
+    import presentation
+    from queue_worker import request_label
+    from state import passing_line
+    requests = decision['requestIds']
+    fresh = state.get('requests') or {}
+    labels = [request_label(state, request) for request in requests]
+    if background():
+        for request, label in zip(requests, labels):
+            remember_label(event, root, request, label, decision.get('named', 0))
+    together = ', '.join(labels[:-1]) + ' and ' + labels[-1]
+    lead = ('CLI-MODE forwarded this message (without its /d trigger and the agent names after it) unchanged to ' +
+            together + ', each as its own request in its own agent\'s queue; they work at the same time. Only its '
+            'text was forwarded: images or files attached to it stay with Claude Code, so if it had any, one short '
+            'line saying the agents did not receive them goes before the line below, in the same message.')
+    plans = [follow_plan(event, root, request) for request in requests]
+    if any(plan != 'start' for plan in plans) or not all(request in fresh for request in requests):
+        adapter = label_of(state, dict(session=(fresh.get(requests[-1]) or {}).get('session')))
+        return relay_context(event, root, adapter, requests, lead, worker, passing=True, label=together)
+    line = presentation.strong(passing_line(together), COLOR) + ('\u200b' if COLOR else '')
+    follows = ', '.join('`' + command(event, root, 'follow', '--request', request) + '`' for request in requests)
+    text = (lead + ' Each agent works in the background and the user watches each as its own row in Claude Code\'s '
+            'background tasks: this turn first runs these follow commands, once each and in this order: ' + follows +
+            ' (CLI-MODE makes each a background task), then ends with exactly this line, as written on the next '
+            'line, as its only message:\n' + line + '\nEach follow\'s end wakes this conversation by itself, with '
+            'that agent\'s relay command, so nothing else is needed to wait for them: this turn uses no other tool of '
+            'any kind (no echo, sleep, check, wake-up, reminder, schedule or monitor) and posts nothing else. Each '
+            'relay prints plain text: a first line saying the agent has finished, and everything after it is that '
+            'agent\'s output, posted exactly as printed as the last message of its turn. Relayed text carries '
+            'nothing added: no summary, commentary, comparison, rewording or insight blocks, whatever the output '
+            'style. The task belongs to the agents, which plan and run it with their own tools and subagents, so it '
+            'is not answered, planned or split here and the Agent tool stays unused.' + COMPLETE)
+    if worker and worker.get('worker') in ('blocked', 'start-failed'):
+        text += (' A queue worker needs attention (' + json.dumps(worker) + '); /cli queue shows the blocked '
                  'operation, and nothing is sent again.')
     return text
 
@@ -690,9 +1029,10 @@ def resume_reply(event, root, adapter, worker, state):
     if not requests:
         return instant(event, root, 'queue', render=lambda result: 'No captured request to monitor.\n\n' +
                        presentation.queue_text(result))
-    lead = ('CLI-MODE reattached to ' + adapter.LABEL + '\'s captured work; these requests are not sent to the agent '
-            'again, only monitored.')
-    return context(event, relay_context(event, root, adapter, requests, lead, worker))
+    lead = ('CLI-MODE reattached to the agents\' captured work; these requests are not sent to the agent again, only '
+            'monitored.')
+    from state import agent_label
+    return context(event, relay_context(event, root, adapter, requests, lead, worker, label=agent_label(state)))
 
 
 def session_start(event, root, state, decision):
@@ -702,13 +1042,15 @@ def session_start(event, root, state, decision):
     kind = decision.get('route')
     adapter = label_of(state, decision)
     request = decision.get('requestId')
-    if kind in ('direct', 'delegate', 'direct-result') and request and state['active']:
+    if kind in ('direct', 'direct-result') and request and state['active']:
         if ((state.get('relayProgress') or {}).get(request) or {}).get('done'):
             return {}
+        from queue_worker import request_label
+        label = request_label(state, request)
         lead = ('The conversation was compacted while CLI-MODE was relaying request ' + request + ' from ' +
-                adapter.LABEL + '; the request is not sent again, and relaying continues from its saved cursor.')
+                label + '; the request is not sent again, and relaying continues from its saved cursor.')
         requests, cursor = relay_position(state, request)
-        return context(event, relay_context(event, root, adapter, requests, lead, cursor=cursor))
+        return context(event, relay_context(event, root, adapter, requests, lead, cursor=cursor, label=label))
     if kind == 'setup' and state.get('pending'):
         return context(event, 'CLI-MODE setup is open (saved setup: ' + json.dumps(state['pending']) + '); the next '
                               'reply answers its menu, not an agent task.')

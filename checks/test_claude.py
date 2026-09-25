@@ -56,9 +56,9 @@ class Controls(unittest.TestCase):
     def test_help_lists_both_agents(self):
         import help_view
         commands = help_view.text()
-        self.assertIn('claude (Claude Code)', commands)
+        self.assertIn('cla (Claude Code)', commands)
         self.assertIn('agy (Antigravity)', commands)
-        self.assertIn('/cli bind <agent>', commands)
+        self.assertIn('/cli bind|spawn <agent> [name]', commands)
 
 
 class Catalog(unittest.TestCase):
@@ -206,7 +206,7 @@ class Verification(unittest.TestCase):
             command = claude_code.Backend().command(self.owned, ['sessions', 'show', 's'])
         self.assertIn('claude', command)
         self.assertNotIn('antigravity', command)
-        self.assertEqual(command[command.index('--ttl') + 1], '1800')
+        self.assertEqual(command[command.index('--ttl') + 1], '3600')  # One hour unless /cli timeout changes it.
         self.assertIn('--approve-all', command)
 
     def test_stricter_access_drops_host_auto_approval(self):

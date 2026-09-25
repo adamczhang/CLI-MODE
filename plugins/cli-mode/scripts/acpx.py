@@ -380,7 +380,7 @@ def bridge_request(install, payload):
 class AcpxBackend:
     """Common owned-session transport for one ACPX agent profile."""
     profile = None
-    owner_ttl = 1800
+    owner_ttl = 3600  # An agent without its own timeout (saved before it had one) idles out after an hour.
     # The bridge refuses a prompt whose saved provider conversation changed and
     # reports the identity after the turn, so ordinary turns need no separate
     # `sessions show` before or after.
@@ -409,7 +409,7 @@ class AcpxBackend:
         flags = ['--approve-all'] if s['access'] == 'allow' else [
             '--approve-reads', '--non-interactive-permissions', 'fail']
         return self.cli(owned) + ['--cwd', owned['workspace'], '--auth-policy', 'skip',
-                '--ttl', str(self.owner_ttl), '--timeout', str(timeout), '--format', 'json'] + flags + [
+                '--ttl', str(self.ttl(owned)), '--timeout', str(timeout), '--format', 'json'] + flags + [
                 owned.get('acpxProfile', self.profile)] + args
 
     @staticmethod
@@ -439,6 +439,13 @@ class AcpxBackend:
             return bridge_request(owned['acpxRuntime'], dict(self.bridge_payload(owned, timeout), action='cancel'))
         return self.spawn(self.command(owned, args, timeout))
 
+    def ttl(self, owned):
+        """Seconds the agent's process stays up without a turn: its own timeout (/cli timeout), in minutes."""
+        if 'owner_ttl' in vars(self) or self.owner_ttl != AcpxBackend.owner_ttl:
+            return self.owner_ttl  # Set on this backend itself (probes and tests that let an owner expire).
+        minutes = owned.get('timeout')
+        return int(minutes) * 60 if isinstance(minutes, int) and minutes > 0 else self.owner_ttl
+
     def bridge_ready(self, owned):
         """A binding the bridge can serve: its runtime, workspace and access are known."""
         return bool(owned.get('acpxRuntime') and owned.get('workspace') and (owned.get('settings') or {}).get('access'))
@@ -448,7 +455,7 @@ class AcpxBackend:
         return dict(install=owned['acpxRuntime'], workspace=owned['workspace'], session=owned['name'],
                     profile=owned.get('acpxProfile', self.profile), access=owned['settings']['access'], timeout=timeout,
                     cursor=owned.get('watchCursor'), recordId=owned.get('acpxRecordId'),
-                    cancelFile=owned.get('cancelFile'), ttl=self.owner_ttl,
+                    cancelFile=owned.get('cancelFile'), ttl=self.ttl(owned),
                     progressMode=owned.get('progressMode', DEFAULT_PROGRESS_MODE),
                     expectedSession=owned.get('providerSession'),
                     configCache=owned.get('configCache'))

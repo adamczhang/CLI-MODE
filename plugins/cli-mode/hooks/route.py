@@ -7,7 +7,7 @@ import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from state import Store, route, routing_mode
+from state import Store, route
 
 PLUGIN = Path(__file__).resolve().parents[1]
 
@@ -17,17 +17,16 @@ SUBAGENT_TOOLS = re.compile(r'(?:functions\.)?(?:collaboration\.)?(?:spawn_agent
 
 def delegated_turn(state):
     """True while this turn belongs to the agent, so host subagents stay off."""
-    return state['active'] and (routing_mode(state) == 'passthrough' or
-                                state.get('turnRoute', {}).get('route') in ('direct', 'direct-result'))
+    return state['active'] and state.get('turnRoute', {}).get('route') in ('direct', 'direct-result')
 
 
 def task_through_settings(state, prompt):
-    """True for a Direct task (/d with text) typed while the active agent's settings menu is open."""
+    """True for a Direct task (/d with text) typed while an agent is ready and a menu is open (Agent Settings, or
+    another agent's activation page): the task is not a menu reply. A running installer keeps its menu."""
     from state import direct_payload
     pending = state.get('pending') or {}
-    return bool(state.get('active') and pending.get('stage') == 'menu'
-                and (pending.get('phase') == 'settings' or pending.get('tuning'))
-                and routing_mode(state) == 'direct' and (direct_payload(prompt) or '').strip())
+    return bool(state.get('active') and pending.get('stage') == 'menu' and pending.get('onboarding') != 'installing'
+                and (direct_payload(prompt) or '').strip())
 
 
 def activation_reply(state, prompt):
@@ -84,24 +83,38 @@ def decide(event, root=None, workspace=None, capture=None):
                 state['helpMenu'] = 'commands'
             elif decision['route'] != 'help-invalid':
                 state['helpMenu'] = None
+            if decision['route'] != 'close-menu':
+                state.pop('closeMenu', None)  # The close chooser takes only the next reply.
         state['hookSeen'] = dict(event=name, time=time.time(), plugin=str(PLUGIN), data=str(store.root))
         if name == 'UserPromptSubmit':
-            if decision['route'] in ('home', 'frontend', 'bind', 'tune', 'settings', 'settings-dismiss'):
-                state['modeMenu'] = False
             # Remember the route, never user prose. Compaction may happen while a control is being handled.
             state['turnRoute'] = {'route': decision['route'], 'id': uuid.uuid4().hex}
-            if decision['route'] in ('direct', 'delegate'):
+            if decision['route'] == 'direct':
                 request_id = state['turnRoute']['id']
+                # One request per agent the prompt names (commas between them), each in its agent's own queue.
+                targets = decision.get('targets') or [dict(session=decision.get('session'))]
+                request_ids = [request_id] + [uuid.uuid4().hex for _ in targets[1:]]
+                text = event.get('prompt', '') if capture is None else capture
                 try:
-                    store.capture(state, request_id, event.get('prompt', '') if capture is None else capture)
+                    from state import MAX_QUEUED_REQUESTS
+                    queued = sum(record['status'] == 'captured' for record in (state.get('requests') or {}).values())
+                    if queued + len(targets) > MAX_QUEUED_REQUESTS:
+                        raise RuntimeError('CLI-MODE queue is full (32 messages); wait for earlier work to finish.')
+                    for each, target in zip(request_ids, targets):
+                        store.capture(state, each, text, session=target.get('session'),
+                                      named=decision.get('named', False))
                 except RuntimeError as exc:
                     decision = {'route': 'hint', 'text': str(exc)}
                     state['turnRoute'] = {'route': 'hint', 'id': request_id, 'text': str(exc)}
                 else:
                     state['turnRoute']['requestId'] = request_id
                     decision['requestId'] = request_id
+                    if len(request_ids) > 1:
+                        state['turnRoute']['requestIds'] = decision['requestIds'] = request_ids
             if decision['route'] == 'hint':
                 state['turnRoute']['text'] = decision['text']
+            if decision.get('session'):
+                state['turnRoute']['session'] = decision['session']  # The agent a named control is for.
             if decision['route'] == 'tune':
                 state['turnRoute']['phase'] = decision['phase']
                 # The typed setting (not task prose), matched by the controller.
@@ -118,7 +131,7 @@ def decide(event, root=None, workspace=None, capture=None):
     restored = name != 'UserPromptSubmit'
     if decision['route'] == 'cancel' and not restored:
         from controller import Controller
-        cancellation = Controller(store).cancel()
+        cancellation = Controller(store).cancel(decision.get('session'))
     if decision['route'] == 'resume':
         from controller import Controller
         worker = Controller(store).resume_monitoring()
@@ -127,12 +140,16 @@ def decide(event, root=None, workspace=None, capture=None):
         # on every message, and only an off turn needs the controller.
         from controller import Controller
         state = Controller(store).disable()
-    elif decision['route'] in ('direct', 'delegate') and state['active']:
+    elif decision['route'] == 'direct' and state['active']:
         from controller import Controller
-        try:
-            worker = Controller(store).ensure_pump()
-        except (OSError, RuntimeError) as exc:  # The request is captured; the next pump sends it.
-            worker = {'worker': 'start-failed', 'error': str(exc)}
+        control = Controller(store)
+        for target in decision.get('targets') or [dict(session=decision.get('session'))]:
+            try:
+                started = control.ensure_pump(target.get('session'))
+            except (OSError, RuntimeError) as exc:  # The request is captured; the next pump sends it.
+                started = {'worker': 'start-failed', 'error': str(exc)}
+            if worker is None or started.get('worker') in ('blocked', 'start-failed'):
+                worker = started
     return store, state, decision, worker, cancellation
 
 
@@ -140,26 +157,29 @@ def codex_output(event, store, state, decision, worker, cancellation):
     """What Codex reads for this turn: the exact commands to run and the rules for them."""
     name = event['hook_event_name']
     if (not state['active'] and not state.get('pending') and not state.get('helpMenu')
-            and not state.get('modeMenu') and decision['route'] in ('host', 'restore')
+            and decision['route'] in ('host', 'restore')
             and not (name == 'SessionStart' and event.get('source') != 'compact')):
         # Ordinary Codex work with no agent: nothing to inject, and no need to
         # load every adapter on each prompt.
         return {}
     import adapters
-    agent = (decision.get('agent') or (state.get('pending') or {}).get('backend')
+    from state import agent_entry, agent_label
+    target = agent_entry(state, decision.get('session')) if decision.get('session') else None
+    agent = (decision.get('agent') or (target or {}).get('backend') or (state.get('pending') or {}).get('backend')
              or state.get('backend') or 'agy')
     try:
         adapter = adapters.module(agent)
     except ValueError:
         adapter = adapters.module('agy')
-    label, passing = adapter.LABEL, adapter.PASSING
-    if (state['active'] and routing_mode(state) == 'direct' and
-            (decision['route'] == 'host' or decision['route'] == 'restore' and not state.get('pending') and not state.get('modeMenu') and not state.get('helpMenu'))):
+    # A running agent is named in every line (`Codex COD-7K`); a kind being set up or started is not, yet.
+    label = agent_label(state, decision.get('session')) if state['active'] and not decision.get('agent') else adapter.LABEL
+    named = ' --name ' + decision['name'] if decision.get('name') else ""
+    if (state['active'] and
+            (decision['route'] == 'host' or decision['route'] == 'restore' and not state.get('pending') and not state.get('helpMenu'))):
         return {'hookSpecificOutput': dict(hookEventName=name, additionalContext=
-            'CLI-MODE routing is Direct. Handle this turn normally in Codex; do not forward it to any CLI. '
-            'The CLI on/off state and saved session remain unchanged. Only a user message starting with '
-            'the complete /d or $d token is delegated when the CLI is active. /cli controls remain local. '
-            'Passthrough-only restrictions do not apply to this host turn.')}
+            'CLI-MODE is ON: only a user message starting with the complete /d or $d token goes to its agent. '
+            'Handle this turn normally in Codex; do not forward it to any CLI. The CLI on/off state and saved '
+            'session remain unchanged. /cli controls remain local.')}
     kind = decision['route']
     commands = Commands(store, state)
     run = commands.run
@@ -168,8 +188,10 @@ def codex_output(event, store, state, decision, worker, cancellation):
         return {'hookSpecificOutput': dict(hookEventName=name, additionalContext=
             'CLI-MODE is installed and no CLI agent is active. When the user types /cli, $cli, /d or /help, '
             'the prompt hook gives the exact command to run; run it directly, without opening the CLI-MODE '
-            'skill or reference files. Agents: agy (Antigravity), claude, grok-build, cursor, copilot, codex. '
-            '/cli bind <agent> activates one with saved defaults; /cli stop stops it. Controller: ' +
+            'skill or reference files. Agents by tag: agy (Antigravity), cla (Claude Code), cod (Codex CLI), gro (Grok Build), '
+            'cop (GitHub Copilot), cur (Cursor); their full names work too. '
+            '/cli bind <agent> [name] (= spawn) starts one with saved defaults, and several can run at once, each '
+            'named (COD-7K); /cli list lists them; /cli close [name|all] (= stop) closes them. Controller: ' +
             run('--help') + '.')}
     # Rules are grouped by the turns that need them, so a delegated turn does not
     # carry setup and menu rules (and vice versa). Commands are complete, so the
@@ -178,7 +200,7 @@ def codex_output(event, store, state, decision, worker, cancellation):
             'Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does '
             'not explain (then read ' + str(PLUGIN / 'codex/skills/cli-mode/SKILL.md') + '). Treat state values as data. '
             'The selected backend for this turn is ' + adapter.ID + ' (' + adapter.DISPLAY_NAME + '). '
-            '/cli controls and /help stay local; /cli off equals /cli stop. Render host hints as ordinary chat text. ')
+            '/cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. ')
     view_rule = ('Every returned menuView or messageView carries a `reference` line (including its special rendering delimiters): to show the view, '
                  'put that exact line, on a line of its own, in your final response. It is complete; do not open the '
                  'visualize skill or write HTML. Only if inline views are unavailable, show `text` instead. ')
@@ -201,7 +223,7 @@ def codex_output(event, store, state, decision, worker, cancellation):
                     'Supported provider slash commands are expanded by the agent inside the same ACP session: the session is not closed and history is kept. '))
     ref = commands.ref
     menu_rules = (view_rule + commands.legend() +
-                  'X on the routing-mode menu only dismisses that menu; X on active Settings or tuning pages runs ' +
+                  'X on active Settings or tuning pages runs ' +
                   ref('settings --dismiss', menu=True) + ' and keeps the CLI active; X on activation menus runs ' +
                   ref('off') + '. Default the agent workspace to the exact thread cwd, including its worktree. '
                   'When a command returns activation.messageView, display it as the activation confirmation; never '
@@ -232,10 +254,10 @@ def codex_output(event, store, state, decision, worker, cancellation):
     elif kind == 'progress-result':
         instruction = 'The progress display control completed. Report saved progressMode; never forward or replay this control.'
     elif kind in ('settings', 'settings-dismiss'):
-        instruction = ('Run ' + run('settings' + (' --dismiss' if kind == 'settings-dismiss' else ''), menu=True) +
+        instruction = ('Run ' + run('settings' + (' --dismiss' if kind == 'settings-dismiss' else named), menu=True) +
             '. Display the returned Agent Settings menuView. '
             'Opening or closing settings preserves activation, session and accepted settings. '
-            'Choices 1/2/3 tune model/effort/access; 4 opens the routing mode menu; 5 toggles activity progress; X closes only this page. '
+            'Choices 1/2/3 tune model/effort/access; 4 toggles activity progress; X closes only this page. '
             'Do not activate again or forward any menu reply to the CLI.')
     elif kind == 'choose':
         instruction = ('Run ' + run('choose ' + str(decision['number']), menu=True, message=True) +
@@ -245,26 +267,14 @@ def codex_output(event, store, state, decision, worker, cancellation):
         instruction = 'Run ' + run('navigate ' + json.dumps(decision['action']), menu=True) + '. Display the returned menu and any refresh message; never forward navigation.'
     elif kind == 'settings-result':
         instruction = 'The settings menu was closed; CLI remains active. Do not replay the closing control or dispatch it.'
-    elif kind in ('mode', 'mode-menu') or (kind == 'restore' and state.get('modeMenu') and not state.get('helpMenu')):
-        choice = decision.get('choice')
-        instruction = ('Run ' + run('mode' + (' --choice ' + choice if choice else ''), menu=True) +
-            '. Display the returned menuView. With no choice it shows the single-page routing settings menu. '
-            'After a choice display any returned Agent Settings menu and wait for selection (Yes only for initial activation). '
-            'Do not activate, deactivate, reconfigure or close any provider. Preserve other pending settings. X only dismisses this menu. '
-            'Passthrough delegates ordinary prompts; Direct delegates only /d or $d prompts. Never send this control to the CLI.')
-    elif kind == 'mode-dismiss':
-        instruction = ('Run ' + run('mode --dismiss', menu=True) + '. Display any returned Agent Settings menu and wait for Yes. '
-                       'Close only the routing-mode menu; preserve CLI on/off status, session and all other settings.')
-    elif kind == 'mode-result':
-        instruction = 'The routing-mode control has completed. Report the saved routingMode; do not rerun it, activate a CLI or dispatch task text.'
     elif kind == 'help' or kind == 'restore' and state.get('helpMenu'):
         instruction = ('Run ' + run('commands', menu=True) + ' and print its menuView reference line. X closes help. '
-                       'Preserve pending setup, routing mode and the active agent; do not dispatch this help turn.')
+                       'Preserve pending setup and the active agent; do not dispatch this help turn.')
     elif kind == 'help-invalid':
         instruction = ('Help is showing the command table. Reply: Type X to close help, or use a /cli command. '
                        'Do not forward the reply or change the saved help page.')
     elif kind == 'help-dismiss':
-        instruction = ('Help closed. The prior menu, routing mode and agent on/off state are unchanged. '
+        instruction = ('Help closed. The prior menu and agent on/off state are unchanged. '
                        'If a setup or settings menu was open, its displayed choices remain valid. '
                        'Do not run controller off, activate or dispatch an agent task for this X.')
     elif kind == 'bind':
@@ -272,15 +282,16 @@ def codex_output(event, store, state, decision, worker, cancellation):
             instruction = 'Binding verification is already running. Inspect its recorded operation and wait for the result; do not bind or dispatch again.'
         else:
             defaults = adapter.DEFAULTS
-            instruction = ('Run ' + run('bind --agent ' + adapter.ID, message=True) + '. This explicit command authorizes the saved '
+            instruction = ('Run ' + run('bind --agent ' + adapter.ID + named, message=True) + '. This explicit command authorizes the saved '
                            'defaults of this backend (initially ' + json.dumps(defaults) + '); do not ask for menu confirmation. '
-                           'It checks prerequisites, sends one readiness prompt to the agent and activates, which can take '
+                           'It starts a new agent (other running agents are unchanged), checks prerequisites, sends one '
+                           'readiness prompt to the agent and activates, which can take '
                            'a minute: give it a timeout of at least 120 seconds and wait for it to finish rather than polling. '
-                           'It returns activation.messageView with the accepted model, effort, access and usage: show it '
-                           'by its reference line and nothing else. '
+                           'It returns activation.messageView with the agent\'s name and the accepted model, effort, access '
+                           'and usage: show it by its reference line and nothing else. '
                            'Report any setup blocker from its error; never install or sign in automatically.')
     elif kind == 'tune':
-        instruction = ('Run ' + run('tune --phase ' + decision['phase'] + ' --apply', menu=True, message=True) +
+        instruction = ('Run ' + run('tune --phase ' + decision['phase'] + ' --apply' + named, menu=True, message=True) +
                        '. The controller matches the text typed after the command against ' + label + "'s advertised "
                        + decision['phase'] + ' options itself and applies a unique match to the same session. If the '
                        'result has activation.messageView, the setting was applied: print its reference line. Otherwise '
@@ -292,8 +303,35 @@ def codex_output(event, store, state, decision, worker, cancellation):
                        run('activation-message', message=True) + ' and display it.')
     elif kind == 'off':
         instruction = 'Routing is now OFF. Run ' + run('off') + ' to cancel/close owned sessions and report shutdown accurately.'
+    elif kind == 'close':
+        instruction = ('Run ' + run('close' + named) + ' to close this one agent (its running turn and queued requests); '
+                       'the other agents keep working. Reply with its `message` as given.')
+    elif kind == 'close-menu':
+        instruction = ('Run ' + run('close', menu=True) + ' and display the returned menuView: several agents are running, '
+                       'so the user chooses which to close. The reply (a number, a name, A for all or X) comes back '
+                       'through this hook as its own control; do not close anything yet.')
+    elif kind == 'use':
+        instruction = ('Run ' + run('use' + named) + ' and reply with its `message` as given. /d prompts without a '
+                       'name now go to this agent; nothing is sent to any agent.')
+    elif kind == 'timeout':
+        instruction = ('Run ' + run('timeout' + named + (' --minutes ' + str(decision['minutes'])
+                                                          if decision.get('minutes') else '')) +
+                       ' and reply with its `message` exactly as given. It saves a local setting only; nothing is sent '
+                       'to any agent.')
+    elif kind == 'attach':
+        instruction = ('Run ' + run('attach' + (' --target ' + decision['target'] if decision.get('target') else '')) +
+                       ' and reply with its `message` exactly as given. Attaching moves an open agent from an earlier '
+                       'task in this folder into this one; nothing is sent to it now.')
+    elif kind == 'diff':
+        instruction = ('Run ' + run('diff' + named) + ' and reply with its `text` exactly as given: a line saying what '
+                       'the agent\'s last turn changed, then the diff as a fenced diff block. It reads local files '
+                       'only; nothing is sent to any agent.')
+    elif kind == 'agents':
+        instruction = ('Run ' + run('agents' + (' --max ' + str(decision['max']) if decision.get('max') else '')) +
+                       ' and reply with its `message` exactly as given, as plain lines in a code block. It reads local '
+                       'state only; nothing is sent to any agent.')
     elif kind == 'cancel':
-        instruction = (('The hook has signaled cancellation of the active provider turn. '
+        instruction = (('The hook has signaled cancellation of ' + label + '\'s running turn. '
                         if cancellation and cancellation.get('canceled') else
                         'No provider turn was active; waiting requests are unchanged. ') +
                        'Do not forward this control or cancel queued follow-ups. Run ' + run('queue') + ' to inspect progress; '
@@ -337,7 +375,7 @@ def codex_output(event, store, state, decision, worker, cancellation):
                        'Follow onboarding when present. Wait for selection; do not activate yet.')
     elif kind == 'direct-result':
         request_id = decision.get('requestId')
-        instruction = ('This passthrough turn was already dispatched. Do not dispatch the original task again. ' +
+        instruction = ('This turn was already dispatched. Do not dispatch the original task again. ' +
                        ('Continue relaying it with ' + run('relay --request ' + request_id + ' --cursor <last cursor, or 0>') + '. '
                         if request_id else 'Read its saved public events and relay the existing result. ') +
                        'Inspect uncertain completion instead of retrying. Dispatch record: ' +
@@ -357,11 +395,24 @@ def codex_output(event, store, state, decision, worker, cancellation):
             instruction = 'Run ' + run('frontend --agent ' + agent, menu=True) + ' and display its returned menu.'
     elif kind == 'setup' or (kind == 'restore' and state.get('pending')):
         instruction = 'A setup menu is pending. Restore its saved phase/draft and treat the user reply as setup, not agent work. Do not forward it.'
+    elif kind == 'direct' and state['active'] and len(decision.get('requestIds') or []) > 1:
+        requests = decision['requestIds']
+        records = state.get('requests') or {}
+        named = [agent_label(state, None, records.get(each)) for each in requests]
+        instruction = ('CLI-MODE is ON. This message explicitly targets the CLI. The hook queued it once for each '
+                       'agent it names, removing /d and the names: ' +
+                       '; '.join(label + ' as request ' + each for label, each in zip(named, requests)) +
+                       '. Each agent\'s queue worker forwards its copy, and they work at the same time. Relay them one '
+                       'after another, in this order, each until done: ' +
+                       '; then '.join(run('relay --request ' + each) for each in requests) +
+                       '. Post each one\'s markdown updates and its final view as the relay rules say. Do not strip the '
+                       'trigger yourself, call send, perform this task in Codex or use Codex subagents.')
     elif kind == 'direct' and state['active']:
         request_id = decision.get('requestId')
-        instruction = ('CLI-MODE is ON in Direct mode. This message explicitly targets the CLI. ' +
-            ('The hook queued the exact original message as request ' + request_id + ', and the queue worker forwards it '
-             'to the one main ' + label + ' session (removing the /d or $d trigger exactly once). Relay it with ' +
+        instruction = ('CLI-MODE is ON. This message explicitly targets the CLI. ' +
+            ('The hook queued the exact original message as request ' + request_id + ', and ' + label + '\'s queue '
+             'worker forwards it to that agent (removing the /d or $d trigger exactly once' +
+             (', and the agent name after it' if decision.get('named') else '') + '). Relay it with ' +
              run('relay --request ' + request_id) + '. ' if request_id else
              'No captured request is available. Wait for a fresh user message; do not reconstruct or dispatch an old prompt. ') +
             'Do not strip the trigger yourself, call send, perform this task in Codex or use Codex subagents. '
@@ -413,23 +464,23 @@ class Commands:
 
 
 # Turns that relay provider output rather than render CLI-MODE menus.
-RELAY_ROUTES = ('direct', 'delegate', 'direct-result', 'cancel', 'queue', 'resume')
+RELAY_ROUTES = ('direct', 'direct-result', 'cancel', 'queue', 'resume')
 HELP_ROUTES = ('help', 'help-invalid', 'help-dismiss')
 # Relay turns need only these saved fields; menus need the pending transaction.
 RELAY_STATE = ('active', 'routingMode', 'progressMode', 'backend', 'main')
-MENU_STATE = ('active', 'routingMode', 'modeMenu', 'helpMenu', 'progressMode', 'pending', 'backend', 'settings', 'main')
+MENU_STATE = ('active', 'routingMode', 'helpMenu', 'progressMode', 'pending', 'backend', 'settings', 'main')
 
 
 def context(kind, state, instruction, core, relay_rules, menu_rules, setup_rules, help_rules):
     pending = state.get('pending') or {}
     helping = kind in HELP_ROUTES or (kind == 'restore' and state.get('helpMenu'))
     relaying = not helping and (kind in RELAY_ROUTES or (kind == 'restore' and state['active']
-                                and not pending and not state.get('modeMenu')))
+                                and not pending))
     if helping:
         rules, fields = help_rules, MENU_STATE
     elif relaying:
         rules, fields = relay_rules, RELAY_STATE
-    elif kind in ('hint', 'off'):
+    elif kind in ('hint', 'off', 'close', 'use', 'agents', 'diff', 'timeout', 'attach'):
         rules, fields = '', RELAY_STATE
     else:
         rules, fields = menu_rules, MENU_STATE
