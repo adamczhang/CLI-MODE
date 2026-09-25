@@ -241,7 +241,7 @@ class HelpText(unittest.TestCase):
 
     def test_help_lists_every_shared_control(self):
         commands = self.help.render()
-        for control in ('/cli', '/cli <agent>', '/cli bind|spawn <agent> [name]', '/d [name] <PROMPT>',
+        for control in ('/cli', '/cli <agent>', '/cli bind|spawn <agent> [name]', '/d [names] <PROMPT>', '/cli diff [name]', '/cli timeout [name] <time>', '/cli attach [name]',
                         '/cli list|agents', '/cli use <name>', '/cli menu|settings [name]', '/cli progress <mode>',
                         '/cli queue', '/cli resume', '/cli cancel [name]', '/cli close|stop [name|all]', '/cli off',
                         '/help'):

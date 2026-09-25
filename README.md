@@ -138,9 +138,24 @@ becomes the current agent, the one a plain `/d` goes to. Put a name first to sen
 ```
 
 Names match in any case, and a generated name also as `gro4k`, or as `-4K` when only one running agent has
-that ending. Each agent has its own queue, so they work side by side, and each answer is relayed under its
-own name (`Grok GRO-4K says...`). `/cli list` shows them all, `/cli use <name>` changes the current agent, and
-`/cli close <name>` closes one while the others keep working.
+that ending. A tag (`gro`, `cod`) names an agent too when only one of its kind is running. Each agent has its
+own queue, so they work side by side, and each answer is relayed under its own name (`Grok GRO-4K says...`).
+`/cli list` shows them all, `/cli use <name>` changes the current agent, and `/cli close <name>` closes one
+while the others keep working.
+
+To ask several agents the same thing, name them all, with commas between:
+
+```text
+/d gro-4k,cod-7k Review the parser changes.
+/d elon, -7K Is this migration safe?
+```
+
+Each gets its own copy and works at the same time; the answers arrive one by one, each under its own name.
+If any name matches no running agent, nothing is sent.
+
+**Agents from earlier sessions.** An agent you didn't close keeps its conversation. In a new session in the
+same folder, `/cli attach` lists them and `/cli attach <name or number>` brings one here; its next `/d`
+continues where it left off, and the earlier session no longer has it.
 
 ## Settings and commands
 
@@ -150,6 +165,11 @@ own name (`Grok GRO-4K says...`). `/cli list` shows them all, `/cli use <name>` 
 - **`/cli list`** (or **`/cli agents`**) — the running agents by name; **`/cli agents max <n>`** sets how many
   can run at once (4 by default, up to 8).
 - **`/cli use <name>`** — make that agent the current one.
+- **`/cli diff [name]`** — what an agent's last turn changed, as a diff.
+- **`/cli timeout [name] <time>`** — how long an idle agent keeps running, from 5 minutes to 24 hours
+  (`90`, `90m`, `2h`; 1 hour by default). Without a name it sets the default for every conversation and this
+  one's agents. `/cli timeout` shows the values.
+- **`/cli attach [name]`** — bring an open agent from an earlier session in this folder here.
 - **`/cli menu [name]`** (or **`/cli settings`**) — open an agent's settings page; the current agent's by
   default.
 - **`/cli model <choice>`**, **`/cli effort <choice>`**, **`/cli access <choice>`** — change a setting, with an
@@ -182,7 +202,12 @@ followed by the agent's own name for it, for example `Allow (Bypass permissions)
 ## What to expect
 
 - **Persistent context:** each agent keeps its own conversation; follow-up prompts continue it, and settings
-  changes keep it.
+  changes keep it. An agent idle for its timeout (1 hour by default) stops its process; the next `/d` starts it
+  again in the same conversation, with a slower first reply.
+- **Change receipts:** in a git repository, each answer ends with what changed in the folder during the turn:
+  files, lines added in green and removed in red, for example `Codex COD-7K changed 2 files +42 -7`.
+  `/cli diff` shows the full diff. Agents that share a folder at the same time share its changes too. Your
+  staging area is never touched.
 - **How answers arrive:** on Claude Code, the agent works as a row in Claude Code's background tasks and its
   whole answer arrives when it finishes, with a one-line work summary (see [Claude Code](#claude-code)). On
   Codex, the agent's words arrive as chat updates in readable batches, and when the turn ends, one view shows

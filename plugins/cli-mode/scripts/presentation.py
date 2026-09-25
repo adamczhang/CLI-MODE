@@ -139,6 +139,19 @@ def green(words):
     return GREEN_OPEN + ''.join(LATEX_ESCAPES.get(char, char) for char in words) + GREEN_CLOSE
 
 
+# Lines removed, in the red diffs use; it reads on both the light and the dark theme.
+CHAT_RED = 'cf222e'
+
+
+def added_removed(added, removed, color=False):
+    """`+42 -7`: lines added in green and removed in red (Claude Code's chat), or plain."""
+    plus, minus = '+' + str(added), '-' + str(removed)
+    if not color:
+        return plus + ' ' + minus
+    return ('$' + green(plus) + '$ $' + GREEN_OPEN.replace(CHAT_GREEN, CHAT_RED) +
+            ''.join(LATEX_ESCAPES.get(char, char) for char in minus) + GREEN_CLOSE + '$')
+
+
 def strong(text, color=False):
     """Bold text; with colour on (Claude Code, /cli color), green bold sans-serif.
 

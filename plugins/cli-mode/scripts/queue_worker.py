@@ -9,6 +9,7 @@ import time
 import uuid
 
 from operations import _detached_workers, emit, follow_path, menu_holds, operation_running, pending_work, status_age
+import changes
 import host
 import menu_view
 import relay_view
@@ -332,7 +333,7 @@ class QueueMixin:
             path, text, _ = relay_view.render(
                 label, [event for event in history if event.get('type') != 'context_warning'],
                 folder / (request_id + '-final-' + uuid.uuid4().hex[:6] + '.html'),
-                footer=footer, show_work=show_work, workspace=self.store.workspace)
+                footer=footer, show_work=show_work, workspace=self.store.workspace, receipt=receipt.get('changes'))
             self._prune_views(folder)
             result.update(text=text, reference=menu_view.reference(path), messageView=dict(
                 path=path, format='inline-html', label=label, kind='relay'))
@@ -398,7 +399,8 @@ class QueueMixin:
         history = [event for event in self._public_history(view['receipt'], position)
                    if event.get('type') != 'context_warning']
         return dict(result, cursor=position, done=True, artifacts=artifacts, text=relay_view.final_markdown(
-            label, public, history, footer=footer, show_work=show_work, color=color))
+            label, public, history, footer=footer, show_work=show_work, color=color,
+            receipt=view['receipt'].get('changes')))
 
     def relay_chain(self, request_ids, cursor=0, wait=25.0, poll=.25):
         """Relay a turn's requests with one command, for a text host (Claude Code).
@@ -542,8 +544,42 @@ class QueueMixin:
                     path.unlink()
             except OSError:
                 pass  # Another follow took the file over, or it is already gone.
-        say(self.FOLLOW_ENDS.get(status, '{} stopped (' + status + ').').format(label))
+        end = self.FOLLOW_ENDS.get(status, '{} stopped (' + status + ').').format(label)
+        receipt = ((self.store.read().get('requests') or {}).get(request_id) or {}).get('changes')
+        if receipt:
+            count = receipt.get('files') or 0
+            end += (' It changed ' + str(count) + (' file' if count == 1 else ' files') + ' (+' +
+                    str(receipt.get('added', 0)) + ' -' + str(receipt.get('removed', 0)) + ').' if count else
+                    ' It changed no files.')
+        say(end)
         return dict(requestId=request_id, status=status, done=True)
+
+    def diff(self, session=None):
+        """`/cli diff [name]`: what an agent's last turn changed in its folder, as a diff block."""
+        state = self.store.read()
+        session = session or state.get('main')
+        found = [(record.get('capturedAt') or 0, key, record) for key, record in (state.get('requests') or {}).items()
+                 if record.get('changes') and (session is None or record.get('session') == session)]
+        label = agent_label(state, session) if session else 'The agent'
+        if not found:
+            text = (label + ' has no change receipt yet. Receipts are taken for turns in a git repository, from '
+                    'the next turn on.')
+            return dict(message=text, text=text)
+        _, request_id, record = max(found, key=lambda item: item[0])
+        label = request_label(state, request_id)
+        receipt = record['changes']
+        head = relay_view.receipt_markdown(label, receipt).split('\n\n')[0]
+        if not receipt.get('files'):
+            return dict(message=head, text=head, requestId=request_id)
+        body = changes.diff_text(record.get('workspace') or self.store.workspace, receipt)
+        if body is None:
+            text = head + '\n\nIts diff could not be read (the snapshots may have been cleaned up by git).'
+            return dict(message=text, text=text, requestId=request_id)
+        # A fence longer than any backtick run in the diff, so file contents can't close it.
+        import re
+        fence = '`' * max([3] + [len(run) + 1 for run in re.findall('`+', body)])
+        return dict(message=head, text=head + '\n\n' + fence + 'diff\n' + body.rstrip('\n') + '\n' + fence,
+                    requestId=request_id)
 
     def _not_sent(self, request_id):
         """The footer of a request refused before it reached the agent, with the reason."""
@@ -650,13 +686,24 @@ class QueueMixin:
                           settings=deepcopy(target['settings']))
             state['inflight'][op] = dict(session=record['session'], kind='prompt', phase='admitted',
                                          requestId=request_id, submitterPid=os.getpid(), running=True)
+            workspace = target.get('workspace') or self.store.workspace
+        # The folder before the turn, for its change receipt (none outside a git repository).
+        before = changes.snapshot(workspace)
+
+        def receipt():
+            """Taken before the request settles, so a relay started by its end always finds it."""
+            return changes.compare(workspace, before, changes.snapshot(workspace)) if before else None
         try:
             result = self._send(text, output=output, timeout=timeout, request_id=request_id)
+            done = receipt()
             with self.store.edit() as state:
                 state['requests'][request_id].update(status='completed', result=result)
+                if done:
+                    state['requests'][request_id]['changes'] = done
                 state['inflight'].pop(op, None)
             return dict(requestId=request_id, **result)
         except BaseException as exc:
+            done = receipt() if not isinstance(exc, KeyboardInterrupt) else None
             with self.store.edit() as state:
                 entry = state['inflight'].get(op, {})
                 record = state['requests'][request_id]
@@ -668,6 +715,8 @@ class QueueMixin:
                 else:
                     status = 'failed' if entry.get('settled') else 'uncertain'
                 record['status'] = status
+                if done and done['files'] and status != 'rejected':
+                    record['changes'] = done  # A failed or canceled turn may still have edited files.
                 if status == 'rejected' and str(exc):
                     record['rejectedReason'] = str(exc)  # The relay shows it: the agent never saw the request.
                 if status == 'uncertain':

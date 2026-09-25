@@ -233,6 +233,130 @@ class Agents(unittest.TestCase):
         runners = self.store.read()['runners']
         self.assertEqual(set(runners), {first['name'], second['name']})
 
+    def test_timeouts_default_to_an_hour_and_can_be_changed(self):
+        import acpx
+        first = self.spawn('agy', 'FIRST')
+        self.assertEqual(first['timeout'], 60)
+        self.assertEqual(acpx.AcpxBackend().ttl(first), 3600)
+        self.assertEqual(acpx.AcpxBackend().ttl({}), 3600)  # Saved before agents had a timeout.
+        self.assertEqual(route('/cli timeout 2h', self.store.read()), {'route': 'timeout', 'minutes': 120})
+        self.assertEqual(route('/cli timeout first 90m', self.store.read())['session'], first['name'])
+        self.assertEqual(route('/cli timeout 2', self.store.read())['route'], 'hint')  # Under 5 minutes.
+        result = self.control.timeout(120)
+        self.assertIn('Agents now stop after 2 hours without a turn, in every conversation.', result['message'])
+        second = self.spawn('agy', 'SECOND')
+        self.assertEqual(second['timeout'], 120)  # The saved default applies to new agents everywhere.
+        self.control.timeout(30, first['name'])
+        items = {item['alias']: item['timeout'] for item in self.store.read()['owned']}
+        self.assertEqual(items, {'FIRST': 30, 'SECOND': 120})
+        self.assertIn('Antigravity FIRST: 30 minutes', self.control.timeout()['message'])
+
+    def other(self, thread='earlier'):
+        """Another conversation in the same folder, with its own controller."""
+        return Controller(Store(thread, self.workspace, self.store.root), self.backend)
+
+    def test_an_open_agent_from_an_earlier_session_can_be_attached(self):
+        earlier = self.other()
+        earlier.frontend('agy')
+        with earlier.store.edit() as state:
+            state['pending']['name'] = 'OLD'
+        earlier.activate('gemini-3.8-flash-high', 'allow', agent='agy')
+        hook.handle(dict(session_id='earlier', cwd=str(self.workspace), hook_event_name='UserPromptSubmit',
+                         prompt='/d first task'), self.store.root)
+        request = earlier.store.read()['turnRoute']['requestId']
+        earlier.send_request(request, output=lambda event: None)
+        listing = self.control.attach()['message']
+        self.assertIn('1. Antigravity OLD', listing)
+        self.assertIn('1 turn', listing)
+        result = self.control.attach('old')
+        self.assertIn('Antigravity OLD is attached and is the current agent.', result['message'])
+        mine, theirs = self.store.read(), earlier.store.read()
+        self.assertEqual([item['alias'] for item in mine['owned']], ['OLD'])
+        self.assertEqual(mine['main'], mine['owned'][0]['name'])
+        self.assertTrue(mine['active'])
+        self.assertEqual((theirs['owned'], theirs['active'], theirs['main']), ([], False, None))
+        self.prompt('/d continue')  # It now answers here, in the same ACPX session.
+        output = []
+        self.control.send_request(self.request(), output=output.append)
+        self.assertIn(['-s', mine['owned'][0]['name'], '--file'], [args[:3] for args in self.backend.calls])
+        self.assertIn('No agent from an earlier session', self.control.attach()['message'])
+
+    def test_busy_closed_and_clashing_agents_are_not_attached(self):
+        earlier = self.other()
+        earlier.frontend('agy')
+        earlier.activate('gemini-3.8-flash-high', 'allow', agent='agy')
+        name = earlier.store.read()['owned'][0]['alias']
+        hook.handle(dict(session_id='earlier', cwd=str(self.workspace), hook_event_name='UserPromptSubmit',
+                         prompt='/d queued'), self.store.root)
+        self.assertIn('busy', self.control.attach()['message'])
+        with self.assertRaisesRegex(RuntimeError, 'still working'):
+            self.control.attach('1')
+        earlier.off()
+        self.assertIn('No agent', self.control.attach()['message'])  # Closed: not attachable.
+        with self.assertRaisesRegex(RuntimeError, 'No open agent'):
+            self.control.attach(name)
+
+    def test_one_prompt_to_several_agents(self):
+        first = self.spawn('agy', 'FIRST')
+        second = self.spawn('codex', 'SECOND')
+        for text, words in (('/d first,second  review it', 1), ('/d first, second  review it', 2)):
+            self.prompt(text)
+            turn = self.store.read()['turnRoute']
+            self.assertEqual(len(turn['requestIds']), 2)
+            records = [self.store.read()['requests'][each] for each in turn['requestIds']]
+            self.assertEqual([record['session'] for record in records], [first['name'], second['name']])
+            self.assertEqual({record['named'] for record in records}, {words})
+            for each in turn['requestIds']:
+                output = []
+                self.control.send_request(each, output=output.append)
+                self.assertEqual(''.join(event['text'] for event in output if event['type'] == 'message'),
+                                 ' review it')
+
+    def test_a_tag_names_the_only_agent_of_its_kind(self):
+        agy = self.spawn('agy', 'FIRST')
+        codex = self.spawn('codex', 'SECOND')
+        self.assertEqual(route('/d agy go', self.store.read())['session'], agy['name'])
+        self.assertEqual(route('/d cod,agy go', self.store.read())['targets'],
+                         [dict(session=codex['name'], name='SECOND'), dict(session=agy['name'], name='FIRST')])
+        self.assertIn('No Grok agent is running', route('/d gro go', self.store.read())['text'])
+        self.spawn('agy', 'THIRD')
+        self.assertIn('could mean FIRST or THIRD', route('/d agy go', self.store.read())['text'])
+        self.assertEqual(route('/cli close cod', self.store.read())['session'], codex['name'])
+
+    def test_both_hosts_relay_each_agent(self):
+        import importlib.util
+        import host
+        from test_claude_hook import HOOK
+        self.spawn('agy', 'FIRST')
+        self.spawn('codex', 'SECOND')
+        codex = self.prompt('/d first,second review it')['hookSpecificOutput']['additionalContext']
+        requests = self.store.read()['turnRoute']['requestIds']
+        self.assertIn('Antigravity FIRST as request ' + requests[0], codex)
+        self.assertLess(codex.index('relay --request ' + requests[0]), codex.index('relay --request ' + requests[1]))
+        spec = importlib.util.spec_from_file_location('claude_hook_agents', HOOK)
+        claude = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(claude)
+        self.addCleanup(host.select, host.CODEX)
+        event = dict(session_id='agents', cwd=str(self.workspace), hook_event_name='UserPromptSubmit',
+                     prompt='/d first,second review it')
+        with unittest.mock.patch.dict(os.environ, {'CLAUDE_PROJECT_DIR': str(self.workspace)}):
+            text = claude.handle(event, self.store.root)['hookSpecificOutput']['additionalContext']
+            requests = self.store.read()['turnRoute']['requestIds']
+            for each in requests:
+                self.assertIn(' follow --request ' + each, text)
+            from presentation import plain_strong
+            self.assertIn('**Passing to Antigravity FIRST and Codex SECOND...**', plain_strong(text))
+            labels = self.store.read()['followLabels']
+            self.assertEqual(labels[requests[0]], 'Antigravity FIRST · review it')
+            # The turn ended without starting either follow: the guard asks for the first, then the second.
+            stop = dict(event, hook_event_name='Stop', stop_hook_active=False, background_tasks=[])
+            self.assertIn(' follow --request ' + requests[0], claude.handle(stop, self.store.root)
+                          ['hookSpecificOutput']['additionalContext'])
+            with self.store.edit() as state:
+                state['relayProgress'] = {requests[0]: dict(cursor=0, done=True)}
+            self.assertIn(' follow --request ' + requests[1], claude.handle(stop, self.store.root)
+                          ['hookSpecificOutput']['additionalContext'])
+
     def test_a_saved_conversation_migrates(self):
         agy = self.spawn('agy')
         raw = json.loads(self.store.path.read_text(encoding='utf-8'))

@@ -55,6 +55,7 @@ scripts/adapters.py
 scripts/agy.py
 scripts/binding.py
 scripts/catalogs.py
+scripts/changes.py
 scripts/claude_code.py
 scripts/codex_cli.py
 scripts/confirmation.py

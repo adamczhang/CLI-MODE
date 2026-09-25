@@ -50,7 +50,7 @@ VERSION = json.loads((PROJECT / 'plugins/cli-mode/.codex-plugin/plugin.json').re
     'version'].split('+')[0]
 INSTALLED = CODEX_HOME / 'plugins' / 'cache' / 'cli-mode' / 'cli-mode' / VERSION
 AGENTS = ('claude', 'copilot', 'agy', 'grok-build', 'codex', 'cursor')
-EXTRAS = ('gates', 'format', 'viewer', 'agents')
+EXTRAS = ('gates', 'format', 'viewer', 'agents', 'tools')
 LABELS = {'claude': 'Claude', 'copilot': 'Copilot', 'agy': 'Antigravity', 'grok-build': 'Grok', 'codex': 'Codex',
           'cursor': 'Cursor'}
 # CLI-MODE writes U+E200 visualize U+E202 {...} U+E201; a model has been seen to write U+E000/E002/E001.
@@ -399,6 +399,69 @@ def extra_agents(session, agent, second='codex'):
     return [row('agents', ['N1'], turns + [listed, closed, off])]
 
 
+def extra_tools(agent, evidence, second='codex'):
+    """The agent tools under Codex, in a git project: one prompt to two agents, a change receipt in the final
+    view, /cli diff, /cli timeout, then /cli attach of an open agent from an ended task, which remembers."""
+    project = fresh_project(evidence / 'tools-project')
+    (project / 'NOTES.md').write_text('# Notes\n\nfirst line\n', encoding='utf-8')
+    for args in (['init', '-q'], ['add', '.'], ['-c', 'user.name=check', '-c', 'user.email=check@example.com',
+                                                'commit', '-qm', 'start']):
+        subprocess.run(['git', '-C', str(project), *args], check=True, capture_output=True)
+    first = Session(project, evidence, name='tools-a')
+    later = None
+    turns = []
+    try:
+        def newest(session):
+            owned = session.state().get('owned') or []
+            return max(owned, key=lambda item: item.get('lastUsedAt') or 0).get('alias') if owned else None
+        turns.append(first.send('/cli spawn ' + agent, 'tools'))
+        one = newest(first)
+        turns.append(first.send('/cli spawn ' + second, 'tools'))
+        two = newest(first)
+        both = first.send('/d ' + str(one).lower() + ',' + str(two).lower() + ' Reply with only the word ready.',
+                          'tools')
+        shown = first.shown(both)
+        for kind, name in ((agent, one), (second, two)):
+            label = LABELS[kind] + ' ' + str(name)
+            scenarios.expect(both, label + ' says' in shown, 'no answer under "' + label + ' says"')
+        turns.append(both)
+        edit = first.send('/d ' + str(two) + ' Append one line with the single word checked to NOTES.md, then reply '
+                          'with only the word done.', 'tools')
+        view = first.shown(edit)
+        scenarios.expect(edit, 'changed 1 file' in view, 'no change receipt in the final view')
+        html = Path(edit['views'][-1]).read_text(encoding='utf-8') if edit['views'] else ''
+        scenarios.expect(edit, 'class="add">+1<' in html and 'NOTES.md' in html, 'the receipt is not coloured')
+        turns.append(edit)
+        diff = first.send('/cli diff ' + str(two), 'tools')
+        scenarios.expect(diff, '+checked' in first.shown(diff).casefold(), '/cli diff has no +checked')
+        turns.append(diff)
+        timed = first.send('/cli timeout 90m', 'tools')
+        scenarios.expect(timed, 'now stop after 90 minutes' in first.shown(timed), '/cli timeout did not report')
+        turns.append(timed)
+        first.close()  # The task ends with both agents open.
+        later = Session(project, evidence, name='tools-b')
+        listing = later.send('/cli attach', 'tools')
+        scenarios.expect(listing, str(two) in later.shown(listing), '/cli attach did not list ' + str(two))
+        attached = later.send('/cli attach ' + str(two).lower(), 'tools')
+        scenarios.expect(attached, 'is attached' in later.shown(attached), 'no "is attached"')
+        recall = later.send('/d What single word did you append to NOTES.md earlier? Reply with only that word.',
+                            'tools')
+        scenarios.expect(recall, 'checked' in later.shown(recall).casefold(), str(two) + ' did not remember')
+        off = later.send('/cli close all', 'tools')
+        turns += [listing, attached, recall, off]
+        return [row('tools', ['N2'], turns)], [later]
+    except Exception:
+        if later:
+            later.close()
+        raise
+    finally:
+        first.close()
+        # The ended task still owns the first agent: close it the way /cli stop would, without a Codex turn.
+        subprocess.run([sys.executable, str(INSTALLED / 'scripts' / 'controller.py'), '--host', 'codex',
+                        '--thread', first.thread, '--workspace', str(project), '--data-root', str(DATA), 'off'],
+                       capture_output=True, timeout=120)
+
+
 def run(agent, depth, extras, keep):
     if not (INSTALLED / 'scripts' / 'controller.py').is_file():
         raise SystemExit('CLI-MODE %s is not installed in %s' % (VERSION, CODEX_HOME))
@@ -420,6 +483,9 @@ def run(agent, depth, extras, keep):
                     rows = extra_format(session, agent, evidence)
                 elif name == 'agents':
                     rows = extra_agents(session, agent)
+                elif name == 'tools':
+                    rows, others = extra_tools(agent, evidence)
+                    sessions += others
                 else:
                     rows = extra_viewer(session, agent)
             except Exception as exc:

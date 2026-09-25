@@ -91,15 +91,26 @@ def decide(event, root=None, workspace=None, capture=None):
             state['turnRoute'] = {'route': decision['route'], 'id': uuid.uuid4().hex}
             if decision['route'] == 'direct':
                 request_id = state['turnRoute']['id']
+                # One request per agent the prompt names (commas between them), each in its agent's own queue.
+                targets = decision.get('targets') or [dict(session=decision.get('session'))]
+                request_ids = [request_id] + [uuid.uuid4().hex for _ in targets[1:]]
+                text = event.get('prompt', '') if capture is None else capture
                 try:
-                    store.capture(state, request_id, event.get('prompt', '') if capture is None else capture,
-                                  session=decision.get('session'), named=decision.get('named', False))
+                    from state import MAX_QUEUED_REQUESTS
+                    queued = sum(record['status'] == 'captured' for record in (state.get('requests') or {}).values())
+                    if queued + len(targets) > MAX_QUEUED_REQUESTS:
+                        raise RuntimeError('CLI-MODE queue is full (32 messages); wait for earlier work to finish.')
+                    for each, target in zip(request_ids, targets):
+                        store.capture(state, each, text, session=target.get('session'),
+                                      named=decision.get('named', False))
                 except RuntimeError as exc:
                     decision = {'route': 'hint', 'text': str(exc)}
                     state['turnRoute'] = {'route': 'hint', 'id': request_id, 'text': str(exc)}
                 else:
                     state['turnRoute']['requestId'] = request_id
                     decision['requestId'] = request_id
+                    if len(request_ids) > 1:
+                        state['turnRoute']['requestIds'] = decision['requestIds'] = request_ids
             if decision['route'] == 'hint':
                 state['turnRoute']['text'] = decision['text']
             if decision.get('session'):
@@ -131,10 +142,14 @@ def decide(event, root=None, workspace=None, capture=None):
         state = Controller(store).disable()
     elif decision['route'] == 'direct' and state['active']:
         from controller import Controller
-        try:
-            worker = Controller(store).ensure_pump(decision.get('session'))
-        except (OSError, RuntimeError) as exc:  # The request is captured; the next pump sends it.
-            worker = {'worker': 'start-failed', 'error': str(exc)}
+        control = Controller(store)
+        for target in decision.get('targets') or [dict(session=decision.get('session'))]:
+            try:
+                started = control.ensure_pump(target.get('session'))
+            except (OSError, RuntimeError) as exc:  # The request is captured; the next pump sends it.
+                started = {'worker': 'start-failed', 'error': str(exc)}
+            if worker is None or started.get('worker') in ('blocked', 'start-failed'):
+                worker = started
     return store, state, decision, worker, cancellation
 
 
@@ -298,6 +313,19 @@ def codex_output(event, store, state, decision, worker, cancellation):
     elif kind == 'use':
         instruction = ('Run ' + run('use' + named) + ' and reply with its `message` as given. /d prompts without a '
                        'name now go to this agent; nothing is sent to any agent.')
+    elif kind == 'timeout':
+        instruction = ('Run ' + run('timeout' + named + (' --minutes ' + str(decision['minutes'])
+                                                          if decision.get('minutes') else '')) +
+                       ' and reply with its `message` exactly as given. It saves a local setting only; nothing is sent '
+                       'to any agent.')
+    elif kind == 'attach':
+        instruction = ('Run ' + run('attach' + (' --target ' + decision['target'] if decision.get('target') else '')) +
+                       ' and reply with its `message` exactly as given. Attaching moves an open agent from an earlier '
+                       'task in this folder into this one; nothing is sent to it now.')
+    elif kind == 'diff':
+        instruction = ('Run ' + run('diff' + named) + ' and reply with its `text` exactly as given: a line saying what '
+                       'the agent\'s last turn changed, then the diff as a fenced diff block. It reads local files '
+                       'only; nothing is sent to any agent.')
     elif kind == 'agents':
         instruction = ('Run ' + run('agents' + (' --max ' + str(decision['max']) if decision.get('max') else '')) +
                        ' and reply with its `message` exactly as given, as plain lines in a code block. It reads local '
@@ -367,6 +395,18 @@ def codex_output(event, store, state, decision, worker, cancellation):
             instruction = 'Run ' + run('frontend --agent ' + agent, menu=True) + ' and display its returned menu.'
     elif kind == 'setup' or (kind == 'restore' and state.get('pending')):
         instruction = 'A setup menu is pending. Restore its saved phase/draft and treat the user reply as setup, not agent work. Do not forward it.'
+    elif kind == 'direct' and state['active'] and len(decision.get('requestIds') or []) > 1:
+        requests = decision['requestIds']
+        records = state.get('requests') or {}
+        named = [agent_label(state, None, records.get(each)) for each in requests]
+        instruction = ('CLI-MODE is ON. This message explicitly targets the CLI. The hook queued it once for each '
+                       'agent it names, removing /d and the names: ' +
+                       '; '.join(label + ' as request ' + each for label, each in zip(named, requests)) +
+                       '. Each agent\'s queue worker forwards its copy, and they work at the same time. Relay them one '
+                       'after another, in this order, each until done: ' +
+                       '; then '.join(run('relay --request ' + each) for each in requests) +
+                       '. Post each one\'s markdown updates and its final view as the relay rules say. Do not strip the '
+                       'trigger yourself, call send, perform this task in Codex or use Codex subagents.')
     elif kind == 'direct' and state['active']:
         request_id = decision.get('requestId')
         instruction = ('CLI-MODE is ON. This message explicitly targets the CLI. ' +
@@ -440,7 +480,7 @@ def context(kind, state, instruction, core, relay_rules, menu_rules, setup_rules
         rules, fields = help_rules, MENU_STATE
     elif relaying:
         rules, fields = relay_rules, RELAY_STATE
-    elif kind in ('hint', 'off', 'close', 'use', 'agents'):
+    elif kind in ('hint', 'off', 'close', 'use', 'agents', 'diff', 'timeout', 'attach'):
         rules, fields = '', RELAY_STATE
     else:
         rules, fields = menu_rules, MENU_STATE

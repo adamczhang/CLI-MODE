@@ -66,6 +66,19 @@ names are never given out twice in a conversation (`usedNames`). Requests record
 their agent's session, kind and name, so an answer keeps its label after the agent
 closes. `main` is the current agent; `backend` and `settings` mirror it.
 
+A prompt naming several agents (`/d gro-4k,cod-7k ...`) is captured once per agent, each request in its
+agent's queue. An agent's `timeout` (minutes, 1 hour by default, saved in `agent-timeout.json`) is the ACPX
+owner's idle TTL. `/cli attach` moves an owned entry from another conversation's state in the same folder
+into this one, under both state locks, so one agent never has two owners.
+
+## Change receipts
+
+Around each agent turn, the worker writes the folder's content as a git tree (`scripts/changes.py`): it copies
+the repository's index to a temporary file, runs `git add --all` against that copy and `git write-tree`, so
+the real index never changes. `git diff-tree --numstat` between the two trees is the receipt, saved on the
+request before it settles, so the relay that follows always has it. The trees stay reachable only through
+the receipt; git's garbage collection removes them eventually, after which `/cli diff` says the diff is gone.
+
 ## Stopping
 
 Stopping verifies closure of owned sessions and settlement of local submitters.

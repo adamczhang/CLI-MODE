@@ -318,9 +318,25 @@ def several_agents(s):
                  ('close --name ELON', lambda: c.close('ELON')), '/cli close', '/cli stop elon')
 
 
+def agent_tools(s):
+    """One prompt to two agents, a tag as a target, timeouts, a diff without a receipt, and attach."""
+    s.activate()
+    c = s.control
+    first = s.store.read()['owned'][0]['alias']
+    c.frontend('agy')
+    with s.store.edit() as state:
+        state['pending']['name'] = 'ELON'
+    c.activate('gemini-3.8-flash-high', 'allow', agent='agy')
+    return turns(s, '/d elon,' + first.lower() + ' review the parser', '/d elon, please check it',
+                 '/d agy fix it', '/d hi, can you check', '/d elon,nobody check',
+                 '/cli timeout', ('timeout', c.timeout), '/cli timeout 90m', '/cli timeout elon 2h',
+                 '/cli timeout 1', '/cli diff', ('diff', c.diff), '/cli diff elon', '/cli attach',
+                 ('attach', c.attach), '/cli attach 3')
+
+
 SCENARIOS = [inactive_basics, home_flow, frontend_each_agent, setup_replies, reactivation_menu, help_flow,
              bind_routes, active_direct, active_settings, saved_passthrough, compaction_restores, resume_blocked,
-             controller_menus, controller_relay, several_agents]
+             controller_menus, controller_relay, several_agents, agent_tools]
 
 
 def record():

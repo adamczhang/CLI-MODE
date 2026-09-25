@@ -25,6 +25,7 @@ then /cli close with one agent left, which turns CLI-MODE off.
     python scripts/package_plugin.py
     python checks/claude_background_live.py --agent grok-build [--model <id>] [--keep]
     python checks/claude_background_live.py --agents grok-build,codex [--model <id>] [--keep]
+    python checks/claude_background_live.py --agents grok-build,codex --tools [--keep]
 """
 import argparse
 import hashlib
@@ -426,10 +427,156 @@ def run_pair(agents, model, keep):
     return report
 
 
+TOOLS_ASK = 'Reply with only the codename in README.md.'
+TOOLS_EDIT = 'Append one line with the single word checked to NOTES.md, then reply with only the word done.'
+TOOLS_RECALL = 'What single word did you append to NOTES.md earlier? Reply with only that word.'
+
+
+def run_tools(agents, model, keep):
+    """The agent tools, live, in a git repository: one prompt to two agents, a change receipt and /cli diff,
+    /cli timeout, then /cli attach of an open agent from an ended session, which remembers its earlier turn."""
+    workspace = Path(tempfile.mkdtemp(prefix='cli-mode-tools-')).resolve()
+    (workspace / 'README.md').write_text('# Notes\n\nThe project codename is ' + MARKER + '.\n', encoding='utf-8')
+    (workspace / 'NOTES.md').write_text('# Notes\n\nfirst line\n', encoding='utf-8')
+    for args in (['init', '-q'], ['add', '.'], ['-c', 'user.name=check', '-c', 'user.email=check@example.com',
+                                                'commit', '-qm', 'start']):
+        subprocess.run(['git', '-C', str(workspace), *args], check=True, capture_output=True)
+    report, problems = dict(agents=list(agents), workspace=str(workspace)), []
+    sys.path.insert(0, str(DEV / 'scripts'))
+    from presentation import plain_strong
+    sessions, names = [], {}
+
+    def ask(host, prompt, timeout=300):
+        mark = host.mark()
+        host.send(prompt)
+        if not host.wait(len(host.results()) + 1, timeout):
+            raise RuntimeError(prompt[:40] + ': no result')
+        return mark
+
+    def said(host, since=0):
+        with host.lock:
+            events = list(host.events[since:])
+        texts = [block.get('text', '') for event in events if event.get('type') == 'assistant'
+                 for block in (event.get('message') or {}).get('content') or [] if block.get('type') == 'text']
+        return texts + [event.get('result') or '' for event in events if event.get('type') == 'result']
+
+    def settle(host, session, count):
+        if not host.wait(None, 900, done=lambda: len(saved_state(session, workspace).get('requests') or {}) >= count
+                         and relayed(session, workspace, every=True)):
+            raise RuntimeError('an answer was never relayed')
+        host.wait(None, 120, done=host.relay_turn_ended)
+        time.sleep(3)  # Another wake-up may still be finishing.
+
+    first = Session(workspace, model)
+    sessions.append(first)
+    session = later = None
+    try:
+        ask(first, '/cli spawn ' + agents[0])
+        with first.lock:
+            session = next(event.get('session_id') for event in first.events if event.get('session_id'))
+        names[agents[0]] = newest_name(session, workspace)
+        ask(first, '/cli spawn ' + agents[1])
+        names[agents[1]] = newest_name(session, workspace)
+        one, two = names[agents[0]], names[agents[1]]
+        report['names'] = [one, two]
+        both = first.mark()
+        first.send('/d ' + one.lower() + ',' + two.lower() + ' ' + TOOLS_ASK)
+        settle(first, session, 2)
+        texts = [plain_strong(text) for text in said(first, both)]
+        labels = [LABELS[kind] + ' ' + names[kind] for kind in agents]
+        if not any('Passing to ' + labels[0] + ' and ' + labels[1] in text for text in texts):
+            problems.append('multi: no "Passing to ' + labels[0] + ' and ' + labels[1] + '" line')
+        with first.lock:
+            rows = [event.get('description') for event in first.events[both:]
+                    if event.get('type') == 'system' and event.get('subtype') == 'task_started'
+                    and event.get('is_backgrounded')]
+        for label in labels:
+            if label + ' · ' + TOOLS_ASK[:30].rstrip() + '…' not in rows:
+                problems.append('multi: no background row for ' + label + ': ' + json.dumps(rows))
+            if not any(label + ' says...' in text and MARKER in text for text in texts):
+                problems.append('multi: ' + label + '\'s answer did not come back under its name')
+        editor = names[agents[1]]
+        edit = first.mark()
+        first.send('/d ' + editor + ' ' + TOOLS_EDIT)
+        settle(first, session, 3)
+        raw = said(first, edit)
+        state = saved_state(session, workspace)
+        latest = max(state['requests'].values(), key=lambda record: record.get('capturedAt') or 0)
+        receipt = latest.get('changes') or {}
+        report['receipt'] = {key: receipt.get(key) for key in ('files', 'added', 'removed')}
+        if receipt.get('files') != 1 or [item['path'] for item in receipt.get('paths') or []] != ['NOTES.md']:
+            problems.append('receipt: expected NOTES.md alone, got ' + json.dumps(report['receipt']))
+        if not any('changed 1 file' in plain_strong(text) and '\\color{cf222e}' in text and '\\color{228b22}' in text
+                   for text in raw):
+            problems.append('receipt: the relayed answer has no coloured "changed 1 file" line')
+        diff = ' '.join(plain_strong(text) for text in said(first, ask(first, '/cli diff ' + editor)))
+        if '```diff' not in diff or '+checked' not in diff.casefold():
+            problems.append('diff: no diff block with +checked')
+        timed = ' '.join(said(first, ask(first, '/cli timeout 90m')))
+        if 'now stop after 90 minutes' not in timed:
+            problems.append('timeout: no "now stop after 90 minutes"')
+        first.close()  # The session ends with both agents still open.
+        later = Session(workspace, model)
+        sessions.append(later)
+        listing = ' '.join(said(later, ask(later, '/cli attach')))
+        with later.lock:
+            session_two = next(event.get('session_id') for event in later.events if event.get('session_id'))
+        report['sessions'] = [session, session_two]
+        if editor not in listing:
+            problems.append('attach: ' + editor + ' not listed: ' + listing[:300])
+        attached = ' '.join(said(later, ask(later, '/cli attach ' + editor.lower())))
+        if 'is attached' not in attached:
+            problems.append('attach: no "is attached": ' + attached[:300])
+        if any(item['alias'] == editor for item in saved_state(session, workspace)['owned']):
+            problems.append('attach: the earlier session still owns ' + editor)
+        recall = later.mark()
+        later.send('/d ' + TOOLS_RECALL)
+        settle(later, session_two, 1)
+        if not any('checked' in text.casefold() and editor + ' says' in plain_strong(text)
+                   for text in said(later, recall)):
+            problems.append('attach: ' + editor + ' did not remember its earlier turn')
+        closed = ' '.join(plain_strong(text) for text in said(later, ask(later, '/cli close all')))
+        if 'CLI-MODE is off' not in closed:
+            problems.append('close all: no "CLI-MODE is off"')
+    except (RuntimeError, StopIteration) as exc:
+        problems.append(str(exc))
+    finally:
+        for host in sessions:
+            host.close()
+    for index, host in enumerate(sessions):
+        with host.lock:
+            events = list(host.events)
+        (workspace / ('host-events-%d.jsonl' % index)).write_text('\n'.join(json.dumps(event) for event in events),
+                                                                  encoding='utf-8')
+        for event in events:
+            for block in (event.get('message') or {}).get('content') or [] if event.get('type') == 'assistant' else []:
+                command = (block.get('input') or {}).get('command') or ''
+                if block.get('type') == 'tool_use' and not (
+                        block.get('name') in ('Bash', 'PowerShell') and 'controller.py' in command
+                        and (' follow --request ' in command or ' relay --request ' in command)):
+                    problems.append('session %d used %s %s' % (index, block.get('name'), command[-100:]))
+    report['problems'] = problems
+    report['passed'] = not problems
+    import host as host_module
+    from controller import Controller
+    from state import Store
+    host_module.select(host_module.CLAUDE)
+    for each in report.get('sessions') or ([session] if session else []):
+        store = Store(each, workspace, claude_data())
+        if store.path.exists():
+            Controller(store).off()
+    (workspace / 'host-report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+    if not keep:
+        shutil.rmtree(workspace, ignore_errors=True)
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--agent', default='grok-build', help='agy, claude, grok-build, cursor, copilot or codex.')
     parser.add_argument('--agents', help='Two agents at once, comma-separated (for example grok-build,codex).')
+    parser.add_argument('--tools', action='store_true', help='With --agents: one prompt to both, a change receipt, '
+                        '/cli diff, /cli timeout and /cli attach, in a git repository.')
     parser.add_argument('--model', help='Claude Code model for the host turns (default: your configured model).')
     parser.add_argument('--keep', action='store_true', help='Keep the workspace and CLI-MODE state for inspection.')
     args = parser.parse_args()
@@ -438,7 +585,7 @@ def main():
         pair = [item.strip() for item in args.agents.split(',') if item.strip()]
         if len(pair) != 2:
             raise SystemExit('--agents takes exactly two agents.')
-        report = run_pair(pair, args.model, args.keep)
+        report = (run_tools if args.tools else run_pair)(pair, args.model, args.keep)
         print(json.dumps(dict(marker=MARKER, report=report), indent=2, ensure_ascii=False))
         raise SystemExit(0 if report['passed'] else 1)
     report = run(args.agent, args.model, args.keep)

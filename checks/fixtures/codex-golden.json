@@ -148,6 +148,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -493,6 +494,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -563,6 +565,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -908,6 +911,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -987,6 +991,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -1065,6 +1070,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -1143,6 +1149,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -1223,6 +1230,7 @@
        "model": "gemini-3.7-flash-high",
        "modelName": "Gemini 3.7 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -1296,6 +1304,7 @@
        "model": "gemini-3.7-flash-high",
        "modelName": "Gemini 3.7 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -1389,6 +1398,7 @@
        "model": "gemini-3.7-flash-high",
        "modelName": "Gemini 3.7 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -1415,6 +1425,391 @@
     "workspace": "<ROOT>\\work space & co"
    },
    "step": "host runs progress --choice activity"
+  }
+ ],
+ "agent_tools": [
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Relay a request by running the relay command given below. It waits up to 8 seconds for new output by itself, so give it a timeout of at least 20 seconds and never sleep between calls. After each result, post its `markdown` right away as a message, exactly as given: it is the agent's mid-turn update (passing line, the agent's words, errors such as a permission stop, and a one-line work summary). Never re-word, summarize, restyle or add to it; post nothing when it is empty. While `done` is false, run the command again at once with --cursor set to the returned cursor. When `done` is true, end the turn with a final response that is the returned `reference` line, on a line of its own: the complete view of the agent's final words and its collapsible work. Do not use observe, format-message or format-progress, and do not open the visualize skill. When idleSeconds reaches 60 and the markdown is empty, say at most once a minute how long the agent has been quiet, without guessing what it is doing. Never relay private reasoning or raw tool payloads. Provider slash commands are capability-checked by the queue worker before dispatch; relay an unsupported-command error rather than retrying the text. Do not issue raw provider CLI commands. Supported provider slash commands switch this conversation to the native CLI, which starts a fresh conversation. CLI-MODE is ON. This message explicitly targets the CLI. The hook queued it once for each agent it names, removing /d and the names: Antigravity ELON as request 0000000000000000000000000000000f; Antigravity AGY-22 as request 00000000000000000000000000000010. Each agent's queue worker forwards its copy, and they work at the same time. Relay them one after another, in this order, each until done: `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" relay --request 0000000000000000000000000000000f`; then `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" relay --request 00000000000000000000000000000010`. Post each one's markdown updates and its final view as the relay rules say. Do not strip the trigger yourself, call send, perform this task in Codex or use Codex subagents. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "direct",
+   "step": "/d elon,agy-22 review the parser"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Relay a request by running the relay command given below. It waits up to 8 seconds for new output by itself, so give it a timeout of at least 20 seconds and never sleep between calls. After each result, post its `markdown` right away as a message, exactly as given: it is the agent's mid-turn update (passing line, the agent's words, errors such as a permission stop, and a one-line work summary). Never re-word, summarize, restyle or add to it; post nothing when it is empty. While `done` is false, run the command again at once with --cursor set to the returned cursor. When `done` is true, end the turn with a final response that is the returned `reference` line, on a line of its own: the complete view of the agent's final words and its collapsible work. Do not use observe, format-message or format-progress, and do not open the visualize skill. When idleSeconds reaches 60 and the markdown is empty, say at most once a minute how long the agent has been quiet, without guessing what it is doing. Never relay private reasoning or raw tool payloads. Provider slash commands are capability-checked by the queue worker before dispatch; relay an unsupported-command error rather than retrying the text. Do not issue raw provider CLI commands. Supported provider slash commands switch this conversation to the native CLI, which starts a fresh conversation. CLI-MODE is ON. This message explicitly targets the CLI. The hook queued the exact original message as request 00000000000000000000000000000011, and Antigravity ELON's queue worker forwards it to that agent (removing the /d or $d trigger exactly once, and the agent name after it). Relay it with `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" relay --request 00000000000000000000000000000011`. Do not strip the trigger yourself, call send, perform this task in Codex or use Codex subagents. If the request is queued behind another turn, the view says so. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "direct",
+   "step": "/d elon, please check it"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"agy could mean AGY-22 or ELON; use its name. Nothing was sent.\"; ignore trailing text, no dispatch. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "hint",
+   "step": "/d agy fix it"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Relay a request by running the relay command given below. It waits up to 8 seconds for new output by itself, so give it a timeout of at least 20 seconds and never sleep between calls. After each result, post its `markdown` right away as a message, exactly as given: it is the agent's mid-turn update (passing line, the agent's words, errors such as a permission stop, and a one-line work summary). Never re-word, summarize, restyle or add to it; post nothing when it is empty. While `done` is false, run the command again at once with --cursor set to the returned cursor. When `done` is true, end the turn with a final response that is the returned `reference` line, on a line of its own: the complete view of the agent's final words and its collapsible work. Do not use observe, format-message or format-progress, and do not open the visualize skill. When idleSeconds reaches 60 and the markdown is empty, say at most once a minute how long the agent has been quiet, without guessing what it is doing. Never relay private reasoning or raw tool payloads. Provider slash commands are capability-checked by the queue worker before dispatch; relay an unsupported-command error rather than retrying the text. Do not issue raw provider CLI commands. Supported provider slash commands switch this conversation to the native CLI, which starts a fresh conversation. CLI-MODE is ON. This message explicitly targets the CLI. The hook queued the exact original message as request 00000000000000000000000000000013, and Antigravity ELON's queue worker forwards it to that agent (removing the /d or $d trigger exactly once). Relay it with `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" relay --request 00000000000000000000000000000013`. Do not strip the trigger yourself, call send, perform this task in Codex or use Codex subagents. If the request is queued behind another turn, the view says so. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "direct",
+   "step": "/d hi, can you check"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"No running agent is named NOBODY. /cli list shows them. Nothing was sent.\"; ignore trailing text, no dispatch. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "hint",
+   "step": "/d elon,nobody check"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Run `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" timeout` and reply with its `message` exactly as given. It saves a local setting only; nothing is sent to any agent. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "timeout",
+   "step": "/cli timeout"
+  },
+  {
+   "output": {
+    "active": true,
+    "backend": "agy",
+    "generation": 0,
+    "helpMenu": null,
+    "hookSeen": {
+     "data": "<ROOT>\\data",
+     "event": "UserPromptSubmit",
+     "plugin": "<PLUGIN>",
+     "time": "<time>"
+    },
+    "inflight": {},
+    "main": "cli-mode-d5c6491f668d-000000000000-1",
+    "message": "Agents stop after 1 hour without a turn (the default for every conversation).\nAntigravity AGY-22: 1 hour\nAntigravity ELON: 1 hour\nThe next /d starts a stopped agent again, in the same conversation. /cli timeout <minutes> sets the default; /cli timeout <name> <minutes> sets one agent.",
+    "owned": [
+     {
+      "alias": "AGY-22",
+      "backend": "agy",
+      "lastUsedAt": "<lastUsedAt>",
+      "name": "cli-mode-d5c6491f668d-000000000000",
+      "providerSession": "cli-mode-d5c6491f668d-000000000000-provider",
+      "ready": true,
+      "role": "main",
+      "settings": {
+       "access": "allow",
+       "accessName": "YOLO",
+       "effort": "High",
+       "mode": "yolo",
+       "modeKey": "mode",
+       "model": "gemini-3.8-flash-high",
+       "modelName": "Gemini 3.8 Flash"
+      },
+      "timeout": 60,
+      "workspace": "<ROOT>\\work space & co"
+     },
+     {
+      "alias": "ELON",
+      "backend": "agy",
+      "lastUsedAt": "<lastUsedAt>",
+      "name": "cli-mode-d5c6491f668d-000000000000-1",
+      "providerSession": "cli-mode-d5c6491f668d-000000000000-1-provider",
+      "ready": true,
+      "role": "main",
+      "settings": {
+       "access": "allow",
+       "accessName": "YOLO",
+       "effort": "High",
+       "mode": "yolo",
+       "modeKey": "mode",
+       "model": "gemini-3.8-flash-high",
+       "modelName": "Gemini 3.8 Flash"
+      },
+      "timeout": 60,
+      "workspace": "<ROOT>\\work space & co"
+     }
+    ],
+    "pending": null,
+    "progressMode": "activity",
+    "requests": {
+     "0000000000000000000000000000000f": {
+      "agent": "agy",
+      "capturedAt": "<capturedAt>",
+      "generation": 0,
+      "name": "ELON",
+      "named": 1,
+      "routingMode": "direct",
+      "session": "cli-mode-d5c6491f668d-000000000000-1",
+      "status": "captured"
+     },
+     "00000000000000000000000000000010": {
+      "agent": "agy",
+      "capturedAt": "<capturedAt>",
+      "generation": 0,
+      "name": "AGY-22",
+      "named": 1,
+      "routingMode": "direct",
+      "session": "cli-mode-d5c6491f668d-000000000000",
+      "status": "captured"
+     },
+     "00000000000000000000000000000011": {
+      "agent": "agy",
+      "capturedAt": "<capturedAt>",
+      "generation": 0,
+      "name": "ELON",
+      "named": 1,
+      "routingMode": "direct",
+      "session": "cli-mode-d5c6491f668d-000000000000-1",
+      "status": "captured"
+     },
+     "00000000000000000000000000000013": {
+      "agent": "agy",
+      "capturedAt": "<capturedAt>",
+      "generation": 0,
+      "name": "ELON",
+      "routingMode": "direct",
+      "session": "cli-mode-d5c6491f668d-000000000000-1",
+      "status": "captured"
+     }
+    },
+    "routingMode": "direct",
+    "schema": 1,
+    "settings": {
+     "access": "allow",
+     "accessName": "YOLO",
+     "effort": "High",
+     "mode": "yolo",
+     "modeKey": "mode",
+     "model": "gemini-3.8-flash-high",
+     "modelName": "Gemini 3.8 Flash"
+    },
+    "thread": "golden-thread",
+    "turnRoute": {
+     "id": "00000000000000000000000000000015",
+     "route": "timeout"
+    },
+    "usedNames": [
+     "AGY-22"
+    ],
+    "workspace": "<ROOT>\\work space & co"
+   },
+   "step": "host runs timeout"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Run `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" timeout --minutes 90` and reply with its `message` exactly as given. It saves a local setting only; nothing is sent to any agent. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "timeout",
+   "step": "/cli timeout 90m"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Run `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" timeout --name ELON --minutes 120` and reply with its `message` exactly as given. It saves a local setting only; nothing is sent to any agent. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "timeout",
+   "step": "/cli timeout elon 2h"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"Use /cli timeout <minutes>, or /cli timeout <name> <minutes>: from 5 minutes to 24 hours, for example 90, 90m or 2h.\"; ignore trailing text, no dispatch. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "hint",
+   "step": "/cli timeout 1"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Run `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" diff` and reply with its `text` exactly as given: a line saying what the agent's last turn changed, then the diff as a fenced diff block. It reads local files only; nothing is sent to any agent. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "diff",
+   "step": "/cli diff"
+  },
+  {
+   "output": {
+    "message": "Antigravity ELON has no change receipt yet. Receipts are taken for turns in a git repository, from the next turn on.",
+    "text": "Antigravity ELON has no change receipt yet. Receipts are taken for turns in a git repository, from the next turn on."
+   },
+   "step": "host runs diff"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Run `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" diff --name ELON` and reply with its `text` exactly as given: a line saying what the agent's last turn changed, then the diff as a fenced diff block. It reads local files only; nothing is sent to any agent. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "diff",
+   "step": "/cli diff elon"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Run `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" attach` and reply with its `message` exactly as given. Attaching moves an open agent from an earlier task in this folder into this one; nothing is sent to it now. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "attach",
+   "step": "/cli attach"
+  },
+  {
+   "output": {
+    "active": true,
+    "backend": "agy",
+    "generation": 0,
+    "helpMenu": null,
+    "hookSeen": {
+     "data": "<ROOT>\\data",
+     "event": "UserPromptSubmit",
+     "plugin": "<PLUGIN>",
+     "time": "<time>"
+    },
+    "inflight": {},
+    "main": "cli-mode-d5c6491f668d-000000000000-1",
+    "message": "No agent from an earlier session in this folder is still open. (An agent closed with /cli close can't be attached.)",
+    "owned": [
+     {
+      "alias": "AGY-22",
+      "backend": "agy",
+      "lastUsedAt": "<lastUsedAt>",
+      "name": "cli-mode-d5c6491f668d-000000000000",
+      "providerSession": "cli-mode-d5c6491f668d-000000000000-provider",
+      "ready": true,
+      "role": "main",
+      "settings": {
+       "access": "allow",
+       "accessName": "YOLO",
+       "effort": "High",
+       "mode": "yolo",
+       "modeKey": "mode",
+       "model": "gemini-3.8-flash-high",
+       "modelName": "Gemini 3.8 Flash"
+      },
+      "timeout": 60,
+      "workspace": "<ROOT>\\work space & co"
+     },
+     {
+      "alias": "ELON",
+      "backend": "agy",
+      "lastUsedAt": "<lastUsedAt>",
+      "name": "cli-mode-d5c6491f668d-000000000000-1",
+      "providerSession": "cli-mode-d5c6491f668d-000000000000-1-provider",
+      "ready": true,
+      "role": "main",
+      "settings": {
+       "access": "allow",
+       "accessName": "YOLO",
+       "effort": "High",
+       "mode": "yolo",
+       "modeKey": "mode",
+       "model": "gemini-3.8-flash-high",
+       "modelName": "Gemini 3.8 Flash"
+      },
+      "timeout": 60,
+      "workspace": "<ROOT>\\work space & co"
+     }
+    ],
+    "pending": null,
+    "progressMode": "activity",
+    "requests": {
+     "0000000000000000000000000000000f": {
+      "agent": "agy",
+      "capturedAt": "<capturedAt>",
+      "generation": 0,
+      "name": "ELON",
+      "named": 1,
+      "routingMode": "direct",
+      "session": "cli-mode-d5c6491f668d-000000000000-1",
+      "status": "captured"
+     },
+     "00000000000000000000000000000010": {
+      "agent": "agy",
+      "capturedAt": "<capturedAt>",
+      "generation": 0,
+      "name": "AGY-22",
+      "named": 1,
+      "routingMode": "direct",
+      "session": "cli-mode-d5c6491f668d-000000000000",
+      "status": "captured"
+     },
+     "00000000000000000000000000000011": {
+      "agent": "agy",
+      "capturedAt": "<capturedAt>",
+      "generation": 0,
+      "name": "ELON",
+      "named": 1,
+      "routingMode": "direct",
+      "session": "cli-mode-d5c6491f668d-000000000000-1",
+      "status": "captured"
+     },
+     "00000000000000000000000000000013": {
+      "agent": "agy",
+      "capturedAt": "<capturedAt>",
+      "generation": 0,
+      "name": "ELON",
+      "routingMode": "direct",
+      "session": "cli-mode-d5c6491f668d-000000000000-1",
+      "status": "captured"
+     }
+    },
+    "routingMode": "direct",
+    "schema": 1,
+    "settings": {
+     "access": "allow",
+     "accessName": "YOLO",
+     "effort": "High",
+     "mode": "yolo",
+     "modeKey": "mode",
+     "model": "gemini-3.8-flash-high",
+     "modelName": "Gemini 3.8 Flash"
+    },
+    "thread": "golden-thread",
+    "turnRoute": {
+     "id": "0000000000000000000000000000001b",
+     "route": "attach"
+    },
+    "usedNames": [
+     "AGY-22"
+    ],
+    "workspace": "<ROOT>\\work space & co"
+   },
+   "step": "host runs attach"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Run `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" attach --target 3` and reply with its `message` exactly as given. Attaching moves an open agent from an earlier task in this folder into this one; nothing is sent to it now. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "attach",
+   "step": "/cli attach 3"
   }
  ],
  "bind_routes": [
@@ -1521,6 +1916,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -1631,6 +2027,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -1733,6 +2130,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -1845,6 +2243,7 @@
        "model": "gemini-3.7-flash-high",
        "modelName": "Gemini 3.7 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -1942,16 +2341,16 @@
   {
    "output": {
     "result": {
-     "activationMenu": "```text\n+--------------------------------------+\n| CLI-MODE                             |\n| Help                                 |\n+--------------------------------------+\n|                                      |\n| /cli                                 |\n|   Choose an agent and open its       |\n|   setup.                             |\n| /cli <agent>                         |\n|   Open agy (Antigravity), cla        |\n|   (Claude Code), cod (Codex CLI),    |\n|   gro (Grok Build), cop (GitHub      |\n|   Copilot) or cur (Cursor). Full     |\n|   names work too.                    |\n| /cli bind|spawn <agent> [name]       |\n|   Start an agent with its saved      |\n|   settings. Several can run at once, |\n|   each with a name: yours (letters   |\n|   and digits) or one like COD-7K.    |\n| /d [name] <PROMPT>                   |\n|   Send a prompt to the current       |\n|   agent, or to the agent named       |\n|   first. Nothing else reaches an     |\n|   agent.                             |\n| /cli list|agents                     |\n|   List the running agents. /cli      |\n|   agents max <n> sets how many can   |\n|   run (4).                           |\n| /cli use <name>                      |\n|   Make an agent the current one.     |\n| /cli menu|settings [name]            |\n|   Agent Settings: model, effort,     |\n|   access and progress.               |\n| /cli progress <mode>                 |\n|   activity shows tool work and       |\n|   usage; quiet shows messages and    |\n|   plans only.                        |\n| /cli view on|off                     |\n|   Watch each agent turn live in a    |\n|   PowerShell window. Off by default. |\n| /cli queue                           |\n|   Show queued, running and completed |\n|   requests.                          |\n| /cli cancel [name]                   |\n|   Cancel an agent's running turn;    |\n|   keep queued follow-ups.            |\n| /cli resume                          |\n|   Reattach status monitoring and     |\n|   restart a stopped queue worker     |\n|   without resending a prompt.        |\n| /cli close|stop [name|all]           |\n|   Close one agent, or all of them.   |\n|   With several running and no name,  |\n|   it asks which. Same as /cli off.   |\n| /help                                |\n|   Show this page.                    |\n|                                      |\n| $ works in place of / for these      |\n| commands.                            |\n| X. Close help                        |\n+--------------------------------------+\n```",
+     "activationMenu": "```text\n+--------------------------------------+\n| CLI-MODE                             |\n| Help                                 |\n+--------------------------------------+\n|                                      |\n| /cli                                 |\n|   Choose an agent and open its       |\n|   setup.                             |\n| /cli <agent>                         |\n|   Open agy (Antigravity), cla        |\n|   (Claude Code), cod (Codex CLI),    |\n|   gro (Grok Build), cop (GitHub      |\n|   Copilot) or cur (Cursor). Full     |\n|   names work too.                    |\n| /cli bind|spawn <agent> [name]       |\n|   Start an agent with its saved      |\n|   settings. Several can run at once, |\n|   each with a name: yours (letters   |\n|   and digits) or one like COD-7K.    |\n| /d [names] <PROMPT>                  |\n|   Send a prompt to the current       |\n|   agent, or to the agents named      |\n|   first, commas between (gro-4k,elon |\n|   or a tag like cod). Nothing else   |\n|   reaches an agent.                  |\n| /cli list|agents                     |\n|   List the running agents. /cli      |\n|   agents max <n> sets how many can   |\n|   run (4).                           |\n| /cli use <name>                      |\n|   Make an agent the current one.     |\n| /cli diff [name]                     |\n|   Show what an agent's last turn     |\n|   changed, as a diff.                |\n| /cli timeout [name] <time>           |\n|   How long an idle agent keeps       |\n|   running (1 hour by default), e.g.  |\n|   90m or 2h.                         |\n| /cli attach [name]                   |\n|   Bring an open agent from an        |\n|   earlier session in this folder     |\n|   here.                              |\n| /cli menu|settings [name]            |\n|   Agent Settings: model, effort,     |\n|   access and progress.               |\n| /cli progress <mode>                 |\n|   activity shows tool work and       |\n|   usage; quiet shows messages and    |\n|   plans only.                        |\n| /cli view on|off                     |\n|   Watch each agent turn live in a    |\n|   PowerShell window. Off by default. |\n| /cli queue                           |\n|   Show queued, running and completed |\n|   requests.                          |\n| /cli cancel [name]                   |\n|   Cancel an agent's running turn;    |\n|   keep queued follow-ups.            |\n| /cli resume                          |\n|   Reattach status monitoring and     |\n|   restart a stopped queue worker     |\n|   without resending a prompt.        |\n| /cli close|stop [name|all]           |\n|   Close one agent, or all of them.   |\n|   With several running and no name,  |\n|   it asks which. Same as /cli off.   |\n| /help                                |\n|   Show this page.                    |\n|                                      |\n| $ works in place of / for these      |\n| commands.                            |\n| X. Close help                        |\n+--------------------------------------+\n```",
      "menuView": {
       "format": "inline-html",
       "path": "<ROOT>\\v\\help.html",
       "reference": "\ue200visualize\ue202{\"path\": \"<ROOT>\\\\v\\\\help.html\"}\ue201"
      },
-     "text": "```text\n+--------------------------------------+\n| CLI-MODE                             |\n| Help                                 |\n+--------------------------------------+\n|                                      |\n| /cli                                 |\n|   Choose an agent and open its       |\n|   setup.                             |\n| /cli <agent>                         |\n|   Open agy (Antigravity), cla        |\n|   (Claude Code), cod (Codex CLI),    |\n|   gro (Grok Build), cop (GitHub      |\n|   Copilot) or cur (Cursor). Full     |\n|   names work too.                    |\n| /cli bind|spawn <agent> [name]       |\n|   Start an agent with its saved      |\n|   settings. Several can run at once, |\n|   each with a name: yours (letters   |\n|   and digits) or one like COD-7K.    |\n| /d [name] <PROMPT>                   |\n|   Send a prompt to the current       |\n|   agent, or to the agent named       |\n|   first. Nothing else reaches an     |\n|   agent.                             |\n| /cli list|agents                     |\n|   List the running agents. /cli      |\n|   agents max <n> sets how many can   |\n|   run (4).                           |\n| /cli use <name>                      |\n|   Make an agent the current one.     |\n| /cli menu|settings [name]            |\n|   Agent Settings: model, effort,     |\n|   access and progress.               |\n| /cli progress <mode>                 |\n|   activity shows tool work and       |\n|   usage; quiet shows messages and    |\n|   plans only.                        |\n| /cli view on|off                     |\n|   Watch each agent turn live in a    |\n|   PowerShell window. Off by default. |\n| /cli queue                           |\n|   Show queued, running and completed |\n|   requests.                          |\n| /cli cancel [name]                   |\n|   Cancel an agent's running turn;    |\n|   keep queued follow-ups.            |\n| /cli resume                          |\n|   Reattach status monitoring and     |\n|   restart a stopped queue worker     |\n|   without resending a prompt.        |\n| /cli close|stop [name|all]           |\n|   Close one agent, or all of them.   |\n|   With several running and no name,  |\n|   it asks which. Same as /cli off.   |\n| /help                                |\n|   Show this page.                    |\n|                                      |\n| $ works in place of / for these      |\n| commands.                            |\n| X. Close help                        |\n+--------------------------------------+\n```"
+     "text": "```text\n+--------------------------------------+\n| CLI-MODE                             |\n| Help                                 |\n+--------------------------------------+\n|                                      |\n| /cli                                 |\n|   Choose an agent and open its       |\n|   setup.                             |\n| /cli <agent>                         |\n|   Open agy (Antigravity), cla        |\n|   (Claude Code), cod (Codex CLI),    |\n|   gro (Grok Build), cop (GitHub      |\n|   Copilot) or cur (Cursor). Full     |\n|   names work too.                    |\n| /cli bind|spawn <agent> [name]       |\n|   Start an agent with its saved      |\n|   settings. Several can run at once, |\n|   each with a name: yours (letters   |\n|   and digits) or one like COD-7K.    |\n| /d [names] <PROMPT>                  |\n|   Send a prompt to the current       |\n|   agent, or to the agents named      |\n|   first, commas between (gro-4k,elon |\n|   or a tag like cod). Nothing else   |\n|   reaches an agent.                  |\n| /cli list|agents                     |\n|   List the running agents. /cli      |\n|   agents max <n> sets how many can   |\n|   run (4).                           |\n| /cli use <name>                      |\n|   Make an agent the current one.     |\n| /cli diff [name]                     |\n|   Show what an agent's last turn     |\n|   changed, as a diff.                |\n| /cli timeout [name] <time>           |\n|   How long an idle agent keeps       |\n|   running (1 hour by default), e.g.  |\n|   90m or 2h.                         |\n| /cli attach [name]                   |\n|   Bring an open agent from an        |\n|   earlier session in this folder     |\n|   here.                              |\n| /cli menu|settings [name]            |\n|   Agent Settings: model, effort,     |\n|   access and progress.               |\n| /cli progress <mode>                 |\n|   activity shows tool work and       |\n|   usage; quiet shows messages and    |\n|   plans only.                        |\n| /cli view on|off                     |\n|   Watch each agent turn live in a    |\n|   PowerShell window. Off by default. |\n| /cli queue                           |\n|   Show queued, running and completed |\n|   requests.                          |\n| /cli cancel [name]                   |\n|   Cancel an agent's running turn;    |\n|   keep queued follow-ups.            |\n| /cli resume                          |\n|   Reattach status monitoring and     |\n|   restart a stopped queue worker     |\n|   without resending a prompt.        |\n| /cli close|stop [name|all]           |\n|   Close one agent, or all of them.   |\n|   With several running and no name,  |\n|   it asks which. Same as /cli off.   |\n| /help                                |\n|   Show this page.                    |\n|                                      |\n| $ works in place of / for these      |\n| commands.                            |\n| X. Close help                        |\n+--------------------------------------+\n```"
     },
     "views": {
-     "<ROOT>\\v\\help.html": "<section id=\"cli-menu-00000000000000000000000000000001\" aria-label=\"CLI-MODE Help\">\n<style>\n#cli-menu-00000000000000000000000000000001{color:var(--card-foreground,#fff);background:var(--card,#202124);border:1px solid var(--border,#92979b);box-sizing:border-box;max-width:40ch;width:100%;font-family:ui-monospace,Consolas,monospace;font-size:14px;line-height:1.5;overflow-wrap:anywhere;}\n#cli-menu-00000000000000000000000000000001 .heading{padding:10px 12px;border-bottom:1px solid var(--border,#92979b);}\n#cli-menu-00000000000000000000000000000001 .title{color:var(--green,#42d392);font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .subtitle{color:var(--card-foreground,#fff);font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .body{padding:10px 12px;}\n#cli-menu-00000000000000000000000000000001 .row{min-width:0;white-space:pre-wrap;}\n#cli-menu-00000000000000000000000000000001 .ok{color:var(--green,#42d392);}\n#cli-menu-00000000000000000000000000000001 .command{font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .warning,#cli-menu-00000000000000000000000000000001 .exit{color:var(--red,#ff4d4f);}\n</style>\n<header class=\"heading\"><div class=\"title\">CLI-MODE</div><div class=\"subtitle\">Help</div></header>\n<div class=\"body\">\n<div class=\"row\">&#160;</div>\n<div class=\"row\"><span class=\"command\">/cli</span></div>\n<div class=\"row\">  Choose an agent and open its</div>\n<div class=\"row\">  setup.</div>\n<div class=\"row\"><span class=\"command\">/cli &lt;agent&gt;</span></div>\n<div class=\"row\">  Open agy (Antigravity), cla</div>\n<div class=\"row\">  (Claude Code), cod (Codex CLI),</div>\n<div class=\"row\">  gro (Grok Build), cop (GitHub</div>\n<div class=\"row\">  Copilot) or cur (Cursor). Full</div>\n<div class=\"row\">  names work too.</div>\n<div class=\"row\"><span class=\"command\">/cli bind|spawn &lt;agent&gt; [name]</span></div>\n<div class=\"row\">  Start an agent with its saved</div>\n<div class=\"row\">  settings. Several can run at once,</div>\n<div class=\"row\">  each with a name: yours (letters</div>\n<div class=\"row\">  and digits) or one like COD-7K.</div>\n<div class=\"row\"><span class=\"command\">/d [name] &lt;PROMPT&gt;</span></div>\n<div class=\"row\">  Send a prompt to the current</div>\n<div class=\"row\">  agent, or to the agent named</div>\n<div class=\"row\">  first. Nothing else reaches an</div>\n<div class=\"row\">  agent.</div>\n<div class=\"row\"><span class=\"command\">/cli list|agents</span></div>\n<div class=\"row\">  List the running agents. /cli</div>\n<div class=\"row\">  agents max &lt;n&gt; sets how many can</div>\n<div class=\"row\">  run (4).</div>\n<div class=\"row\"><span class=\"command\">/cli use &lt;name&gt;</span></div>\n<div class=\"row\">  Make an agent the current one.</div>\n<div class=\"row\"><span class=\"command\">/cli menu|settings [name]</span></div>\n<div class=\"row\">  Agent Settings: model, effort,</div>\n<div class=\"row\">  access and progress.</div>\n<div class=\"row\"><span class=\"command\">/cli progress &lt;mode&gt;</span></div>\n<div class=\"row\">  activity shows tool work and</div>\n<div class=\"row\">  usage; quiet shows messages and</div>\n<div class=\"row\">  plans only.</div>\n<div class=\"row\"><span class=\"command\">/cli view on|off</span></div>\n<div class=\"row\">  Watch each agent turn live in a</div>\n<div class=\"row\">  PowerShell window. Off by default.</div>\n<div class=\"row\"><span class=\"command\">/cli queue</span></div>\n<div class=\"row\">  Show queued, running and completed</div>\n<div class=\"row\">  requests.</div>\n<div class=\"row\"><span class=\"command\">/cli cancel [name]</span></div>\n<div class=\"row\">  Cancel an agent&#x27;s running turn;</div>\n<div class=\"row\">  keep queued follow-ups.</div>\n<div class=\"row\"><span class=\"command\">/cli resume</span></div>\n<div class=\"row\">  Reattach status monitoring and</div>\n<div class=\"row\">  restart a stopped queue worker</div>\n<div class=\"row\">  without resending a prompt.</div>\n<div class=\"row\"><span class=\"command\">/cli close|stop [name|all]</span></div>\n<div class=\"row\">  Close one agent, or all of them.</div>\n<div class=\"row\">  With several running and no name,</div>\n<div class=\"row\">  it asks which. Same as /cli off.</div>\n<div class=\"row\"><span class=\"command\">/help</span></div>\n<div class=\"row\">  Show this page.</div>\n<div class=\"row\">&#160;</div>\n<div class=\"row\">$ works in place of / for these</div>\n<div class=\"row\">commands.</div>\n<div class=\"row\">X. <span class=\"exit\">Close help</span></div>\n</div>\n</section>\n"
+     "<ROOT>\\v\\help.html": "<section id=\"cli-menu-00000000000000000000000000000001\" aria-label=\"CLI-MODE Help\">\n<style>\n#cli-menu-00000000000000000000000000000001{color:var(--card-foreground,#fff);background:var(--card,#202124);border:1px solid var(--border,#92979b);box-sizing:border-box;max-width:40ch;width:100%;font-family:ui-monospace,Consolas,monospace;font-size:14px;line-height:1.5;overflow-wrap:anywhere;}\n#cli-menu-00000000000000000000000000000001 .heading{padding:10px 12px;border-bottom:1px solid var(--border,#92979b);}\n#cli-menu-00000000000000000000000000000001 .title{color:var(--green,#42d392);font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .subtitle{color:var(--card-foreground,#fff);font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .body{padding:10px 12px;}\n#cli-menu-00000000000000000000000000000001 .row{min-width:0;white-space:pre-wrap;}\n#cli-menu-00000000000000000000000000000001 .ok{color:var(--green,#42d392);}\n#cli-menu-00000000000000000000000000000001 .command{font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .warning,#cli-menu-00000000000000000000000000000001 .exit{color:var(--red,#ff4d4f);}\n</style>\n<header class=\"heading\"><div class=\"title\">CLI-MODE</div><div class=\"subtitle\">Help</div></header>\n<div class=\"body\">\n<div class=\"row\">&#160;</div>\n<div class=\"row\"><span class=\"command\">/cli</span></div>\n<div class=\"row\">  Choose an agent and open its</div>\n<div class=\"row\">  setup.</div>\n<div class=\"row\"><span class=\"command\">/cli &lt;agent&gt;</span></div>\n<div class=\"row\">  Open agy (Antigravity), cla</div>\n<div class=\"row\">  (Claude Code), cod (Codex CLI),</div>\n<div class=\"row\">  gro (Grok Build), cop (GitHub</div>\n<div class=\"row\">  Copilot) or cur (Cursor). Full</div>\n<div class=\"row\">  names work too.</div>\n<div class=\"row\"><span class=\"command\">/cli bind|spawn &lt;agent&gt; [name]</span></div>\n<div class=\"row\">  Start an agent with its saved</div>\n<div class=\"row\">  settings. Several can run at once,</div>\n<div class=\"row\">  each with a name: yours (letters</div>\n<div class=\"row\">  and digits) or one like COD-7K.</div>\n<div class=\"row\"><span class=\"command\">/d [names] &lt;PROMPT&gt;</span></div>\n<div class=\"row\">  Send a prompt to the current</div>\n<div class=\"row\">  agent, or to the agents named</div>\n<div class=\"row\">  first, commas between (gro-4k,elon</div>\n<div class=\"row\">  or a tag like cod). Nothing else</div>\n<div class=\"row\">  reaches an agent.</div>\n<div class=\"row\"><span class=\"command\">/cli list|agents</span></div>\n<div class=\"row\">  List the running agents. /cli</div>\n<div class=\"row\">  agents max &lt;n&gt; sets how many can</div>\n<div class=\"row\">  run (4).</div>\n<div class=\"row\"><span class=\"command\">/cli use &lt;name&gt;</span></div>\n<div class=\"row\">  Make an agent the current one.</div>\n<div class=\"row\"><span class=\"command\">/cli diff [name]</span></div>\n<div class=\"row\">  Show what an agent&#x27;s last turn</div>\n<div class=\"row\">  changed, as a diff.</div>\n<div class=\"row\"><span class=\"command\">/cli timeout [name] &lt;time&gt;</span></div>\n<div class=\"row\">  How long an idle agent keeps</div>\n<div class=\"row\">  running (1 hour by default), e.g.</div>\n<div class=\"row\">  90m or 2h.</div>\n<div class=\"row\"><span class=\"command\">/cli attach [name]</span></div>\n<div class=\"row\">  Bring an open agent from an</div>\n<div class=\"row\">  earlier session in this folder</div>\n<div class=\"row\">  here.</div>\n<div class=\"row\"><span class=\"command\">/cli menu|settings [name]</span></div>\n<div class=\"row\">  Agent Settings: model, effort,</div>\n<div class=\"row\">  access and progress.</div>\n<div class=\"row\"><span class=\"command\">/cli progress &lt;mode&gt;</span></div>\n<div class=\"row\">  activity shows tool work and</div>\n<div class=\"row\">  usage; quiet shows messages and</div>\n<div class=\"row\">  plans only.</div>\n<div class=\"row\"><span class=\"command\">/cli view on|off</span></div>\n<div class=\"row\">  Watch each agent turn live in a</div>\n<div class=\"row\">  PowerShell window. Off by default.</div>\n<div class=\"row\"><span class=\"command\">/cli queue</span></div>\n<div class=\"row\">  Show queued, running and completed</div>\n<div class=\"row\">  requests.</div>\n<div class=\"row\"><span class=\"command\">/cli cancel [name]</span></div>\n<div class=\"row\">  Cancel an agent&#x27;s running turn;</div>\n<div class=\"row\">  keep queued follow-ups.</div>\n<div class=\"row\"><span class=\"command\">/cli resume</span></div>\n<div class=\"row\">  Reattach status monitoring and</div>\n<div class=\"row\">  restart a stopped queue worker</div>\n<div class=\"row\">  without resending a prompt.</div>\n<div class=\"row\"><span class=\"command\">/cli close|stop [name|all]</span></div>\n<div class=\"row\">  Close one agent, or all of them.</div>\n<div class=\"row\">  With several running and no name,</div>\n<div class=\"row\">  it asks which. Same as /cli off.</div>\n<div class=\"row\"><span class=\"command\">/help</span></div>\n<div class=\"row\">  Show this page.</div>\n<div class=\"row\">&#160;</div>\n<div class=\"row\">$ works in place of / for these</div>\n<div class=\"row\">commands.</div>\n<div class=\"row\">X. <span class=\"exit\">Close help</span></div>\n</div>\n</section>\n"
     }
    },
    "step": "cli commands"
@@ -2064,6 +2463,7 @@
         "model": "gemini-3.8-flash-high",
         "modelName": "Gemini 3.8 Flash"
        },
+       "timeout": 60,
        "workspace": "<ROOT>\\work space & co"
       }
      ],
@@ -2158,7 +2558,7 @@
      "text": "Antigravity AGY-22 says...\nFound the bug in the parser.\nLine 3 now handles empty input.\n\nPlan: 1 of 2 done\nAntigravity AGY-22 work \u00b7 1 running \u00b7 1 done"
     },
     "views": {
-     "<ROOT>\\v\\00000000000000000000000000000008-final-000000.html": "<section id=\"cli-relay-0000000000000000000000000000000b\" aria-label=\"Antigravity AGY-22 update\"><style>#cli-relay-0000000000000000000000000000000b{color:var(--foreground,inherit);background:transparent;font:inherit;line-height:1.5;overflow-wrap:anywhere;max-width:100%;}#cli-relay-0000000000000000000000000000000b .attrib,#cli-relay-0000000000000000000000000000000b summary{color:var(--green,#42d392);}#cli-relay-0000000000000000000000000000000b .attrib,#cli-relay-0000000000000000000000000000000b .work>summary{font-weight:700;}#cli-relay-0000000000000000000000000000000b .body{white-space:normal;min-width:0;}#cli-relay-0000000000000000000000000000000b .body p{margin:.5em 0;}#cli-relay-0000000000000000000000000000000b .body h1,#cli-relay-0000000000000000000000000000000b .body h2,#cli-relay-0000000000000000000000000000000b .body h3,#cli-relay-0000000000000000000000000000000b .body h4,#cli-relay-0000000000000000000000000000000b .body h5,#cli-relay-0000000000000000000000000000000b .body h6{font-size:1.1em;line-height:1.35;margin:1em 0 .4em;}#cli-relay-0000000000000000000000000000000b .body ul,#cli-relay-0000000000000000000000000000000b .body ol{padding-left:1.4em;margin:.35em 0;}#cli-relay-0000000000000000000000000000000b .body li{margin:.2em 0;}#cli-relay-0000000000000000000000000000000b .body pre{white-space:pre;overflow-x:auto;padding:.7em;background:var(--card,#202124);color:var(--card-foreground,#fff);border-radius:6px;}#cli-relay-0000000000000000000000000000000b .body .table-scroll{max-width:100%;overflow-x:auto;margin:.7em 0;}#cli-relay-0000000000000000000000000000000b .body table{border-collapse:collapse;font-size:.9em;width:max-content;min-width:100%;}#cli-relay-0000000000000000000000000000000b .body th,#cli-relay-0000000000000000000000000000000b .body td{padding:.35em .6em;border:1px solid var(--border,#92979b);text-align:left;white-space:nowrap;overflow-wrap:normal;}#cli-relay-0000000000000000000000000000000b .body blockquote{margin:.5em 0;padding-left:1em;border-left:2px solid var(--border,#92979b);}#cli-relay-0000000000000000000000000000000b .body code{font-family:ui-monospace,Consolas,monospace;background:transparent;color:inherit;}#cli-relay-0000000000000000000000000000000b .error{color:var(--destructive,inherit);}#cli-relay-0000000000000000000000000000000b details{margin:4px 0;}#cli-relay-0000000000000000000000000000000b details details{margin-left:1.1em;}#cli-relay-0000000000000000000000000000000b summary{cursor:pointer;}#cli-relay-0000000000000000000000000000000b ul{padding-left:1.3em;margin:4px 0;}#cli-relay-0000000000000000000000000000000b li i{display:inline-block;width:14px;height:14px;vertical-align:-2px;}#cli-relay-0000000000000000000000000000000b .mark{display:inline-block;width:1.1em;}#cli-relay-0000000000000000000000000000000b .state,#cli-relay-0000000000000000000000000000000b .usage{color:var(--muted-foreground,inherit);margin:4px 0;}@media (prefers-color-scheme:light){#cli-relay-0000000000000000000000000000000b .attrib,#cli-relay-0000000000000000000000000000000b summary{color:var(--green,#0b7a55);}}</style><div class=\"attrib\">Antigravity AGY-22 says...</div><div class=\"body\"><p>Found the bug in the parser.</p><p>Line 3 now handles empty input.</p></div><details class=\"work\"><summary>Antigravity AGY-22 work \u00b7 1 running \u00b7 1 done</summary><details open><summary>Plan \u00b7 1 of 2 done</summary><div class=\"progress\" role=\"progressbar\" aria-label=\"Plan progress\" aria-valuenow=\"50\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"progress-bar\" style=\"width:50%\"></div></div><ul><li><span class=\"mark\">\u2713</span> Inspect</li><li><span class=\"mark\">\u2192</span> Fix &lt;b&gt;it&lt;/b&gt;</li></ul></details><details><summary>Reading \u00b7 1 done</summary><ul><li><i data-lucide=\"check\" aria-hidden=\"true\"></i> <strong>Completed</strong> <span title=\"Read source \u2014 src/app.py:3\">Read source \u2014 src/app.py:3</span></li></ul></details><details><summary>Running commands \u00b7 1 running</summary><ul><li><i data-lucide=\"loader\" aria-hidden=\"true\"></i> <strong>Running</strong> <span title=\"Running commands \u2014 src/app.py:3\">Running commands \u2014 src/app.py:3</span></li></ul></details></details></section>\n"
+     "<ROOT>\\v\\00000000000000000000000000000008-final-000000.html": "<section id=\"cli-relay-0000000000000000000000000000000b\" aria-label=\"Antigravity AGY-22 update\"><style>#cli-relay-0000000000000000000000000000000b{color:var(--foreground,inherit);background:transparent;font:inherit;line-height:1.5;overflow-wrap:anywhere;max-width:100%;}#cli-relay-0000000000000000000000000000000b .attrib,#cli-relay-0000000000000000000000000000000b summary{color:var(--green,#42d392);}#cli-relay-0000000000000000000000000000000b .attrib,#cli-relay-0000000000000000000000000000000b .work>summary{font-weight:700;}#cli-relay-0000000000000000000000000000000b .body{white-space:normal;min-width:0;}#cli-relay-0000000000000000000000000000000b .body p{margin:.5em 0;}#cli-relay-0000000000000000000000000000000b .body h1,#cli-relay-0000000000000000000000000000000b .body h2,#cli-relay-0000000000000000000000000000000b .body h3,#cli-relay-0000000000000000000000000000000b .body h4,#cli-relay-0000000000000000000000000000000b .body h5,#cli-relay-0000000000000000000000000000000b .body h6{font-size:1.1em;line-height:1.35;margin:1em 0 .4em;}#cli-relay-0000000000000000000000000000000b .body ul,#cli-relay-0000000000000000000000000000000b .body ol{padding-left:1.4em;margin:.35em 0;}#cli-relay-0000000000000000000000000000000b .body li{margin:.2em 0;}#cli-relay-0000000000000000000000000000000b .body pre{white-space:pre;overflow-x:auto;padding:.7em;background:var(--card,#202124);color:var(--card-foreground,#fff);border-radius:6px;}#cli-relay-0000000000000000000000000000000b .body .table-scroll{max-width:100%;overflow-x:auto;margin:.7em 0;}#cli-relay-0000000000000000000000000000000b .body table{border-collapse:collapse;font-size:.9em;width:max-content;min-width:100%;}#cli-relay-0000000000000000000000000000000b .body th,#cli-relay-0000000000000000000000000000000b .body td{padding:.35em .6em;border:1px solid var(--border,#92979b);text-align:left;white-space:nowrap;overflow-wrap:normal;}#cli-relay-0000000000000000000000000000000b .body blockquote{margin:.5em 0;padding-left:1em;border-left:2px solid var(--border,#92979b);}#cli-relay-0000000000000000000000000000000b .body code{font-family:ui-monospace,Consolas,monospace;background:transparent;color:inherit;}#cli-relay-0000000000000000000000000000000b .error{color:var(--destructive,inherit);}#cli-relay-0000000000000000000000000000000b details{margin:4px 0;}#cli-relay-0000000000000000000000000000000b details details{margin-left:1.1em;}#cli-relay-0000000000000000000000000000000b summary{cursor:pointer;}#cli-relay-0000000000000000000000000000000b ul{padding-left:1.3em;margin:4px 0;}#cli-relay-0000000000000000000000000000000b li i{display:inline-block;width:14px;height:14px;vertical-align:-2px;}#cli-relay-0000000000000000000000000000000b .mark{display:inline-block;width:1.1em;}#cli-relay-0000000000000000000000000000000b .state,#cli-relay-0000000000000000000000000000000b .usage{color:var(--muted-foreground,inherit);margin:4px 0;}#cli-relay-0000000000000000000000000000000b .changes{margin:6px 0;}#cli-relay-0000000000000000000000000000000b .changes .add{color:var(--green,#42d392);font-weight:700;}#cli-relay-0000000000000000000000000000000b .changes .del{color:#cf222e;font-weight:700;}@media (prefers-color-scheme:light){#cli-relay-0000000000000000000000000000000b .attrib,#cli-relay-0000000000000000000000000000000b summary{color:var(--green,#0b7a55);}}</style><div class=\"attrib\">Antigravity AGY-22 says...</div><div class=\"body\"><p>Found the bug in the parser.</p><p>Line 3 now handles empty input.</p></div><details class=\"work\"><summary>Antigravity AGY-22 work \u00b7 1 running \u00b7 1 done</summary><details open><summary>Plan \u00b7 1 of 2 done</summary><div class=\"progress\" role=\"progressbar\" aria-label=\"Plan progress\" aria-valuenow=\"50\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"progress-bar\" style=\"width:50%\"></div></div><ul><li><span class=\"mark\">\u2713</span> Inspect</li><li><span class=\"mark\">\u2192</span> Fix &lt;b&gt;it&lt;/b&gt;</li></ul></details><details><summary>Reading \u00b7 1 done</summary><ul><li><i data-lucide=\"check\" aria-hidden=\"true\"></i> <strong>Completed</strong> <span title=\"Read source \u2014 src/app.py:3\">Read source \u2014 src/app.py:3</span></li></ul></details><details><summary>Running commands \u00b7 1 running</summary><ul><li><i data-lucide=\"loader\" aria-hidden=\"true\"></i> <strong>Running</strong> <span title=\"Running commands \u2014 src/app.py:3\">Running commands \u2014 src/app.py:3</span></li></ul></details></details></section>\n"
     }
    },
    "step": "cli relay"
@@ -3032,6 +3432,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      },
      {
@@ -3051,6 +3452,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -3132,6 +3534,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      },
      {
@@ -3151,6 +3554,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -3260,6 +3664,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      },
      {
@@ -3279,6 +3684,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -3291,7 +3697,7 @@
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000013.jsonl",
       "generation": 0,
       "name": "ELON",
-      "named": true,
+      "named": 1,
       "operation": "00000000000000000000000000000013",
       "providerOutcome": {
        "status": "completed",
@@ -3321,7 +3727,7 @@
       "capturedAt": "<capturedAt>",
       "generation": 0,
       "name": "AGY-22",
-      "named": true,
+      "named": 1,
       "routingMode": "direct",
       "session": "cli-mode-d5c6491f668d-000000000000",
       "status": "captured"
@@ -3395,6 +3801,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      },
      {
@@ -3414,6 +3821,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -3426,7 +3834,7 @@
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000013.jsonl",
       "generation": 0,
       "name": "ELON",
-      "named": true,
+      "named": 1,
       "operation": "00000000000000000000000000000013",
       "providerOutcome": {
        "status": "completed",
@@ -3456,7 +3864,7 @@
       "capturedAt": "<capturedAt>",
       "generation": 0,
       "name": "AGY-22",
-      "named": true,
+      "named": 1,
       "routingMode": "direct",
       "session": "cli-mode-d5c6491f668d-000000000000",
       "status": "captured"
@@ -3553,6 +3961,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      },
      {
@@ -3572,6 +3981,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -3584,7 +3994,7 @@
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000013.jsonl",
       "generation": 0,
       "name": "ELON",
-      "named": true,
+      "named": 1,
       "operation": "00000000000000000000000000000013",
       "providerOutcome": {
        "status": "completed",
@@ -3614,7 +4024,7 @@
       "capturedAt": "<capturedAt>",
       "generation": 0,
       "name": "AGY-22",
-      "named": true,
+      "named": 1,
       "routingMode": "direct",
       "session": "cli-mode-d5c6491f668d-000000000000",
       "status": "captured"
@@ -3701,6 +4111,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      },
      {
@@ -3720,6 +4131,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -3732,7 +4144,7 @@
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000013.jsonl",
       "generation": 0,
       "name": "ELON",
-      "named": true,
+      "named": 1,
       "operation": "00000000000000000000000000000013",
       "providerOutcome": {
        "status": "completed",
@@ -3762,7 +4174,7 @@
       "capturedAt": "<capturedAt>",
       "generation": 0,
       "name": "AGY-22",
-      "named": true,
+      "named": 1,
       "routingMode": "direct",
       "session": "cli-mode-d5c6491f668d-000000000000",
       "status": "captured"
@@ -3837,6 +4249,7 @@
        "model": "gemini-3.8-flash-high",
        "modelName": "Gemini 3.8 Flash"
       },
+      "timeout": 60,
       "workspace": "<ROOT>\\work space & co"
      }
     ],
@@ -3849,7 +4262,7 @@
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000013.jsonl",
       "generation": 0,
       "name": "ELON",
-      "named": true,
+      "named": 1,
       "operation": "00000000000000000000000000000013",
       "providerOutcome": {
        "status": "completed",
@@ -3879,7 +4292,7 @@
       "capturedAt": "<capturedAt>",
       "generation": 0,
       "name": "AGY-22",
-      "named": true,
+      "named": 1,
       "routingMode": "direct",
       "session": "cli-mode-d5c6491f668d-000000000000",
       "status": "captured"

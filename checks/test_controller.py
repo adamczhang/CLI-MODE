@@ -725,7 +725,7 @@ class Tests(unittest.TestCase):
                 command = agy.Backend().command(owned, ['status'])
                 self.assertEqual('--approve-all' in command, access == 'allow')
                 self.assertEqual('--approve-reads' in command, access != 'allow')
-                self.assertIn('1800', command)
+                self.assertIn('3600', command)
 
     def test_doctor_is_read_only(self):
         old = self.root / 'fake-home/skills/cli-mode-agy/SKILL.md'

@@ -8,10 +8,13 @@ COMMANDS = (
                      'cop (GitHub Copilot) or cur (Cursor). Full names work too.'),
     ('/cli bind|spawn <agent> [name]', 'Start an agent with its saved settings. Several can run at once, each with '
                                        'a name: yours (letters and digits) or one like COD-7K.'),
-    ('/d [name] <PROMPT>', 'Send a prompt to the current agent, or to the agent named first. Nothing else reaches '
-                           'an agent.'),
+    ('/d [names] <PROMPT>', 'Send a prompt to the current agent, or to the agents named first, commas between '
+                            '(gro-4k,elon or a tag like cod). Nothing else reaches an agent.'),
     ('/cli list|agents', 'List the running agents. /cli agents max <n> sets how many can run (4).'),
     ('/cli use <name>', 'Make an agent the current one.'),
+    ('/cli diff [name]', 'Show what an agent\'s last turn changed, as a diff.'),
+    ('/cli timeout [name] <time>', 'How long an idle agent keeps running (1 hour by default), e.g. 90m or 2h.'),
+    ('/cli attach [name]', 'Bring an open agent from an earlier session in this folder here.'),
     ('/cli menu|settings [name]', 'Agent Settings: model, effort, access and progress.'),
     ('/cli progress <mode>', 'activity shows tool work and usage; quiet shows messages and plans only.'),
     ('/cli view on|off', 'Watch each agent turn live in a PowerShell window. Off by default.'),

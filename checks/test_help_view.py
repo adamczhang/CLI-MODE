@@ -12,7 +12,7 @@ class CardHelp(unittest.TestCase):
         self.assertTrue(page.startswith('```text\n+---'))
         rows = [line[2:-2].strip() for line in page.splitlines() if line.startswith('| ')]
         self.assertEqual(rows[:2], ['CLI-MODE', 'Help'])
-        self.assertEqual(len(help_view.COMMANDS), 14)
+        self.assertEqual(len(help_view.COMMANDS), 17)
         for command, _ in help_view.COMMANDS:
             self.assertIn(command, rows)
         self.assertEqual(rows[-1], 'X. Close help')

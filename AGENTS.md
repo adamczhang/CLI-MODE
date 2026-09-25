@@ -13,7 +13,7 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
 
 - **Two hosts, one plugin folder.** `plugins/cli-mode` serves Codex and Claude Code. Most code is shared;
   each host has a thin layer of its own.
-- **Codex's behaviour is pinned by a golden record** (`checks/fixtures/codex-golden.json`, 144 steps),
+- **Codex's behaviour is pinned by a golden record** (`checks/fixtures/codex-golden.json`, 160 steps),
   recorded before the port and re-recorded only for intended Codex changes (the Agent Settings "Done" row,
   the skill path, Claude's default model, the final relay HTML and the removal of Passthrough mode).
 - **Shared pieces added by the port:** `scripts/host.py` (the host switch), `route.decide()` (split out of

@@ -94,7 +94,8 @@ ARGUMENT = re.compile(r'[A-Za-z0-9_.:-]+')
 ALLOWED = frozenset((
     'relay', 'follow', 'queue', 'status', 'bind', 'activate', 'choose', 'navigate', 'settings', 'progress', 'view', 'tune',
     'activation-message', 'frontend', 'options', 'first-time-check', 'setup-status', 'setup-manual', 'setup-start',
-    'off', 'close', 'use', 'agents', 'cancel', 'resume', 'refresh', 'commands', 'catalog'))
+    'off', 'close', 'use', 'agents', 'diff', 'timeout', 'attach', 'cancel', 'resume', 'refresh', 'commands',
+    'catalog'))
 RESET = ('/cli reset', '$cli reset', '/cli-mode:cli reset')
 MAX_NUDGES = 3
 # The skill describes CLI-MODE in general; opening it costs a turn and adds nothing to a context
@@ -457,8 +458,8 @@ def remember_label(event, root, request, agent, named=False):
     text = host.unwrap_prompt(event.get('prompt', ''), host.CLAUDE)
     text = direct_payload(text) or text  # What the agent was sent, without the /d trigger.
     words = ' '.join(text.split())
-    if named:
-        words = words.split(' ', 1)[1] if ' ' in words else ''  # The agent's name already starts the row.
+    for _ in range(int(named or 0)):
+        words = words.split(' ', 1)[1] if ' ' in words else ''  # The agents' names are not part of the prompt.
     label = agent + ' · ' + (words[:FOLLOW_LABEL].rstrip() + '…' if len(words) > FOLLOW_LABEL else words)
     try:
         with route.Store(event['session_id'], workspace(event), root).edit() as state:
@@ -566,20 +567,27 @@ def stop(event, root):
         store = route.Store(event['session_id'], workspace(event), root)
         with store.edit() as state:
             turn = state.get('turnRoute') or {}
-            request = turn.get('requestId')
-            if not state['active'] or turn.get('route') not in RELAY_ROUTES or not request:
+            if not state['active'] or turn.get('route') not in RELAY_ROUTES or not turn.get('requestId'):
                 return {}
-            if ((state.get('relayProgress') or {}).get(request) or {}).get('done'):
+            # A prompt sent to several agents is one request each: the first that still needs its follow or
+            # relay gets the nudge.
+            ids = turn.get('requestIds') or [turn['requestId']]
+            for request in ids:
+                if ((state.get('relayProgress') or {}).get(request) or {}).get('done'):
+                    continue
+                requests, cursor = relay_position(state, request)
+                waiting = background() and (state['requests'].get(requests[-1]) or {}).get('status') in (
+                    'captured', 'submitting')
+                if waiting and followed(event, store, requests[-1]):
+                    continue  # The follow's end wakes Claude, and that turn runs the relay.
+                count = (state.get('relayNudges') or {}).get(request, 0)
+                if count >= MAX_NUDGES:
+                    continue
+                nudges = {key: value for key, value in (state.get('relayNudges') or {}).items() if key in ids}
+                state['relayNudges'] = dict(nudges, **{request: count + 1})  # Only this turn's requests.
+                break
+            else:
                 return {}
-            requests, cursor = relay_position(state, request)
-            waiting = background() and (state['requests'].get(requests[-1]) or {}).get('status') in (
-                'captured', 'submitting')
-            if waiting and followed(event, store, requests[-1]):
-                return {}  # The follow's end wakes Claude, and that turn runs the relay.
-            count = (state.get('relayNudges') or {}).get(request, 0)
-            if count >= MAX_NUDGES:
-                return {}
-            state['relayNudges'] = {request: count + 1}
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
         return {}  # A turn end is never blocked by unreadable state.
     if waiting:
@@ -708,6 +716,13 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
         return instant(event, root, 'use', *named(decision))
     if kind == 'agents':
         return instant(event, root, 'agents', *(['--max', str(decision['max'])] if decision.get('max') else []))
+    if kind == 'diff':
+        return instant(event, root, 'diff', *named(decision), render=lambda result: result['text'])
+    if kind == 'timeout':
+        return instant(event, root, 'timeout', *named(decision),
+                       *(['--minutes', str(decision['minutes'])] if decision.get('minutes') else []))
+    if kind == 'attach':
+        return instant(event, root, 'attach', *(['--target', decision['target']] if decision.get('target') else []))
     if kind == 'progress':
         return instant(event, root, 'progress', *(['--choice', decision['choice']] if decision.get('choice') else []))
     if kind == 'view':
@@ -741,6 +756,8 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
         return instant(event, root, 'bind', '--agent', adapter.ID, *named(decision))
     if kind == 'setup':
         return setup_reply(event, root, state, adapter, event.get('prompt', ''))
+    if kind == 'direct' and len(decision.get('requestIds') or []) > 1:
+        return context(event, several_context(event, root, state, decision, worker))
     if kind == 'direct':
         request = decision.get('requestId')
         if not request:
@@ -948,6 +965,49 @@ def relay_context(event, root, adapter, requests, lead, worker=None, cursor=0, p
              + COMPLETE)
     if worker and worker.get('worker') in ('blocked', 'start-failed'):
         text += (' The queue worker needs attention (' + json.dumps(worker) + '); /cli queue shows the blocked '
+                 'operation, and nothing is sent again.')
+    return text
+
+
+def several_context(event, root, state, decision, worker=None):
+    """One prompt sent to several agents: a background follow each, then one Passing line naming them all.
+
+    Each follow's end wakes Claude for that agent's relay alone (notification_reply), so the answers arrive one
+    by one, each under its own name. Without background tasks, one relay command waits for them all.
+    """
+    import presentation
+    from queue_worker import request_label
+    from state import passing_line
+    requests = decision['requestIds']
+    fresh = state.get('requests') or {}
+    labels = [request_label(state, request) for request in requests]
+    if background():
+        for request, label in zip(requests, labels):
+            remember_label(event, root, request, label, decision.get('named', 0))
+    together = ', '.join(labels[:-1]) + ' and ' + labels[-1]
+    lead = ('CLI-MODE forwarded this message (without its /d trigger and the agent names after it) unchanged to ' +
+            together + ', each as its own request in its own agent\'s queue; they work at the same time. Only its '
+            'text was forwarded: images or files attached to it stay with Claude Code, so if it had any, one short '
+            'line saying the agents did not receive them goes before the line below, in the same message.')
+    plans = [follow_plan(event, root, request) for request in requests]
+    if any(plan != 'start' for plan in plans) or not all(request in fresh for request in requests):
+        adapter = label_of(state, dict(session=(fresh.get(requests[-1]) or {}).get('session')))
+        return relay_context(event, root, adapter, requests, lead, worker, passing=True, label=together)
+    line = presentation.strong(passing_line(together), COLOR) + ('\u200b' if COLOR else '')
+    follows = ', '.join('`' + command(event, root, 'follow', '--request', request) + '`' for request in requests)
+    text = (lead + ' Each agent works in the background and the user watches each as its own row in Claude Code\'s '
+            'background tasks: this turn first runs these follow commands, once each and in this order: ' + follows +
+            ' (CLI-MODE makes each a background task), then ends with exactly this line, as written on the next '
+            'line, as its only message:\n' + line + '\nEach follow\'s end wakes this conversation by itself, with '
+            'that agent\'s relay command, so nothing else is needed to wait for them: this turn uses no other tool of '
+            'any kind (no echo, sleep, check, wake-up, reminder, schedule or monitor) and posts nothing else. Each '
+            'relay prints plain text: a first line saying the agent has finished, and everything after it is that '
+            'agent\'s output, posted exactly as printed as the last message of its turn. Relayed text carries '
+            'nothing added: no summary, commentary, comparison, rewording or insight blocks, whatever the output '
+            'style. The task belongs to the agents, which plan and run it with their own tools and subagents, so it '
+            'is not answered, planned or split here and the Agent tool stays unused.' + COMPLETE)
+    if worker and worker.get('worker') in ('blocked', 'start-failed'):
+        text += (' A queue worker needs attention (' + json.dumps(worker) + '); /cli queue shows the blocked '
                  'operation, and nothing is sent again.')
     return text
 

@@ -20,6 +20,9 @@ DEFAULT_ROUTING_MODE = 'direct'
 MAX_QUEUED_REQUESTS = 32
 DEFAULT_AGENT_LIMIT = 4
 MAX_AGENT_LIMIT = 8
+# An idle agent's process exits after this long; its next /d starts it again in the same conversation.
+DEFAULT_TIMEOUT = 60
+TIMEOUT_RANGE = (5, 1440)
 _BACKENDS = None
 _BACKEND_IDS = None
 _BACKEND_WORDS = None
@@ -228,8 +231,8 @@ class Store:
     def capture(self, state, request_id, text, session=None, named=False):
         """Persist exact hook input separately from routing metadata, under lock.
 
-        The request goes to `session` (the current agent's unless the prompt named another); `named` means
-        its first word after /d is that agent's name, which is removed before it is sent.
+        The request goes to `session` (the current agent's unless the prompt named another); `named` is how many
+        words after /d name the agents it went to, which are removed before it is sent.
         """
         if sum(record['status'] == 'captured' for record in state.get('requests', {}).values()) >= MAX_QUEUED_REQUESTS:
             raise RuntimeError('CLI-MODE queue is full (32 messages); wait for earlier work to finish.')
@@ -247,7 +250,7 @@ class Store:
             # Kept with the request, so its answer is still labelled after the agent is closed.
             record.update(agent=target.get('backend'), name=target.get('alias'))
         if named:
-            record['named'] = True
+            record['named'] = int(named)
         state.setdefault('requests', {})[request_id] = record
 
     @contextmanager
@@ -335,6 +338,35 @@ def last_used(state, session):
                                                  if record.get('session') == session])
 
 
+def parse_minutes(text):
+    """`90`, `90m`, `2h` or `1.5h` as whole minutes within TIMEOUT_RANGE, else None."""
+    match = re.fullmatch(r'(\d+(?:\.\d+)?)\s*(m|min|mins|minutes?|h|hr|hrs|hours?)?', (text or '').strip().casefold())
+    if not match:
+        return None
+    minutes = float(match.group(1)) * (60 if (match.group(2) or 'm').startswith('h') else 1)
+    minutes = int(round(minutes))
+    return minutes if TIMEOUT_RANGE[0] <= minutes <= TIMEOUT_RANGE[1] else None
+
+
+def timeout_path(root):
+    return Path(root) / 'agent-timeout.json'
+
+
+def default_timeout(root):
+    """Minutes an idle agent keeps running: the saved default for every conversation, else one hour."""
+    try:
+        minutes = json.loads(timeout_path(root).read_text(encoding='utf-8')).get('minutes')
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_TIMEOUT
+    return minutes if isinstance(minutes, int) and TIMEOUT_RANGE[0] <= minutes <= TIMEOUT_RANGE[1] else DEFAULT_TIMEOUT
+
+
+def save_default_timeout(root, minutes):
+    path = timeout_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'minutes': minutes}) + '\n', encoding='utf-8')
+
+
 def agent_limit(state):
     return state.get('agentLimit') or DEFAULT_AGENT_LIMIT
 
@@ -360,8 +392,19 @@ def passing_line(label):
     return 'Passing to ' + label + '...'
 
 
+def tag_kind(word):
+    """The agent kind a three-letter tag (`gro`) names, or None. Only tags: a kind's full name (`codex`) is too
+    likely to start an ordinary prompt."""
+    _registry()
+    return next((item['id'] for item in _BACKENDS if item['tag'] == (word or '').casefold()), None)
+
+
 def target_of(word, state, every=False):
-    """(session, name) for a word naming a live agent, or a hint route explaining why it doesn't."""
+    """(session, name) for a word naming a live agent, or a hint route explaining why it doesn't.
+
+    A word names an agent by its name (`COD-7K`, `cod7k`, `-7K`, a custom name) or by its kind's tag (`cod`)
+    when exactly one agent of that kind is running.
+    """
     agents = live_agents(state, every)
     found = names.resolve(word, agents)
     if found and found[0] == 'match':
@@ -370,6 +413,17 @@ def target_of(word, state, every=False):
     if found:
         return None, {'route': 'hint', 'text': word + ' could mean ' + ' or '.join(found[1]) +
                       '; use the full name. Nothing was sent.'}
+    kind = tag_kind(word)
+    if kind:
+        import adapters
+        same = [(alias, session) for alias, session in agents.items()
+                if (agent_entry(state, session) or {}).get('backend') == kind]
+        if len(same) == 1:
+            return same[0][1], same[0][0]
+        if same:
+            return None, {'route': 'hint', 'text': word + ' could mean ' + ' or '.join(sorted(alias for alias, _ in same)) +
+                          '; use its name. Nothing was sent.'}
+        return None, {'route': 'hint', 'text': 'No ' + adapters.module(kind).LABEL + ' agent is running. Nothing was sent.'}
     return None, None
 
 
@@ -493,6 +547,28 @@ def cli_route(verb, choice, state):
     if verb in ('use', 'cancel', 'queue', 'resume', 'menu', 'model', 'effort', 'access') and not state['active']:
         return {'route': 'hint', 'text': 'CLI-MODE: Agent not activated. /CLI to setup'
                 if verb in ('menu', 'model') else inactive_hint()}
+    if verb == 'timeout':
+        words = choice.split()
+        if not words:
+            return {'route': 'timeout'}
+        minutes = parse_minutes(words[-1])
+        if minutes is None or len(words) > 2:
+            return {'route': 'hint', 'text': 'Use /cli timeout <minutes>, or /cli timeout <name> <minutes>: from ' +
+                    str(TIMEOUT_RANGE[0]) + ' minutes to 24 hours, for example 90, 90m or 2h.'}
+        if len(words) == 1:
+            return {'route': 'timeout', 'minutes': minutes}
+        session, name = target_of(words[0], state, every=True)
+        return ({'route': 'timeout', 'minutes': minutes, 'session': session, 'name': name} if session
+                else name or no_agent(words[0]))
+    if verb == 'attach':
+        if len(choice.split()) > 1:
+            return {'route': 'hint', 'text': 'Use /cli attach, or /cli attach <name or number>.'}
+        return dict({'route': 'attach'}, **({'target': choice} if choice else {}))
+    if verb == 'diff':
+        if not choice:
+            return {'route': 'diff'}
+        session, name = target_of(choice, state, every=True) if len(choice.split()) == 1 else (None, None)
+        return {'route': 'diff', 'session': session, 'name': name} if session else name or no_agent(choice)
     if verb == 'use':
         session, name = target_of(choice, state) if len(choice.split()) == 1 else (None, None)
         if session:
@@ -526,23 +602,59 @@ def cli_route(verb, choice, state):
     return {'route': 'hint', 'text': inactive_hint() if not state['active'] else help_hint()}
 
 
+def direct_targets(payload, state):
+    """The agents a /d payload starts by naming: ([(session, name)...], words used, problem hint or None).
+
+    Targets are separated by commas: `gro-4k,elon` or `gro-4k, elon`. A word after a comma joins the list only
+    if every part of it names an agent, so `/d elon, please fix it` goes to ELON with "please fix it".
+    """
+    words = payload.split()
+    found, used, unknown = [], 0, []
+    for index, word in enumerate(words):
+        if index and not words[index - 1].endswith(','):
+            break
+        parts = [part for part in word.split(',') if part]
+        resolved = [(part, target_of(part, state)) for part in parts]
+        if index and (not parts or any(not session for _, (session, _) in resolved)):
+            break  # Not a target: the prompt starts here.
+        for part, (session, name) in resolved:
+            if session:
+                found.append((session, name))
+            else:
+                unknown.append((part, name))
+        used = index + 1
+    if unknown and found:  # Some targets named agents and some didn't: nothing goes to any of them.
+        part, hint = unknown[0]
+        return found, used, hint or {'route': 'hint', 'text': no_agent(part)['text'] + ' Nothing was sent.'}
+    if unknown:
+        part, hint = unknown[0]
+        if hint:
+            return [], 0, hint  # A short form or tag several agents share, or a tag with no agent.
+        if names.looks_like_name(part):
+            return [], 0, {'route': 'hint', 'text': no_agent(part)['text'] + ' Nothing was sent.'}
+        return [], 0, None  # An ordinary first word: the whole payload is the task.
+    unique = list(dict.fromkeys(found))
+    return unique, used, None
+
+
 def direct_route(payload, state):
-    """A /d task: to the agent its first word names, else to the current agent."""
+    """A /d task: to the agents its first words name (commas between them), else to the current agent."""
     if not state['active']:
         return {'route': 'hint', 'text': inactive_hint()}
     if not payload.strip():
         return {'route': 'hint', 'text': 'Add a task after /d or $d. Nothing was sent.'}
-    words = payload.split(None, 1)
-    session, name = target_of(words[0], state)
-    if session:
-        if len(words) < 2:
-            return {'route': 'hint', 'text': 'Add a task after /d ' + name + '. Nothing was sent.'}
-        return {'route': 'direct', 'session': session, 'name': name, 'named': True}
-    if name:
-        return name  # A short form several agents share: nothing is sent.
-    if names.looks_like_name(words[0]):
-        return {'route': 'hint', 'text': no_agent(words[0])['text'] + ' Nothing was sent.'}
-    return {'route': 'direct'}
+    found, used, problem = direct_targets(payload, state)
+    if problem:
+        return problem
+    if not found:
+        return {'route': 'direct'}
+    if len(payload.split()) <= used:
+        return {'route': 'hint', 'text': 'Add a task after /d ' + ', '.join(name for _, name in found) +
+                '. Nothing was sent.'}
+    if len(found) == 1:
+        return {'route': 'direct', 'session': found[0][0], 'name': found[0][1], 'named': used}
+    return {'route': 'direct', 'targets': [dict(session=session, name=name) for session, name in found],
+            'named': used}
 
 
 def route(message, state):

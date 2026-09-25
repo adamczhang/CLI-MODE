@@ -146,7 +146,7 @@ class Verification(unittest.TestCase):
         self.assertNotIn('antigravity', command)
         self.assertNotIn('claude', command)
         self.assertIn('--approve-all', command)
-        self.assertEqual(command[command.index('--ttl') + 1], '1800')
+        self.assertEqual(command[command.index('--ttl') + 1], '3600')  # One hour unless /cli timeout changes it.
 
     def test_prompt_access_drops_host_auto_approval(self):
         owned = dict(self.owned, settings=grok_build.selection(self.root, 'grok-4.7', 'prompt', 'high'))

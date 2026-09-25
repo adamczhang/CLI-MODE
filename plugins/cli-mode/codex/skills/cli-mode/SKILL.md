@@ -38,7 +38,10 @@ ordinary text.
 | `/cli queue`, `/cli resume` | Inspect the queue; reattach monitoring to captured turns and restart a stopped worker when safe. |
 | `/cli cancel [name]` | Cancel the current (or named) agent's running turn; queued follow-ups still run. |
 | `/cli close\|stop\|off [name\|all]` | Close one agent (its turn, queue and session; the others keep working), or all of them, which gates routing. With several agents and no name, a chooser asks which. |
-| `/d [name] <task>`, `$d [name] <task>` | Send this task to the current agent, or to the agent named first. |
+| `/d [names] <task>`, `$d [names] <task>` | Send this task to the current agent, or to the agents named first, commas between (`gro-4k,elon`); each named agent gets its own request. |
+| `/cli diff [name]` | The full diff of an agent's last turn (the answer ends with its change receipt). |
+| `/cli timeout [name] <time>` | How long an idle agent keeps running (1 hour by default; 5 minutes to 24 hours). |
+| `/cli attach [name\|number]` | List, or bring here, an open agent from an earlier task in this folder. |
 | `/help` (Codex), `/cli help` (Claude Code) | The help card: the same framed menu as the others. `X` closes only help. |
 
 Invalid controls reply `/cli to activate.  Say /help to see options` while off
@@ -81,8 +84,10 @@ Up to four agents (any kinds, `/cli agents max` changes it) run side by side,
 each with its own session, queue and worker; one starts while others work. Names
 show in capitals and match in any case. A generated name (`COD-7K`) also matches
 as `cod7k`, or as `-7K` when only one running agent has that id; never as `7K`.
-Only the first word after `/d` can name an agent. Relays name the agent that
-answered (`Codex COD-7K says...`). Closing the current agent makes the most
+Only the first words after `/d` can name agents (commas between them); a tag
+(`cod`) names the only running agent of its kind. Relays name the agent that
+answered (`Codex COD-7K says...`), and in a git repository end with what the
+turn changed. Closing the current agent makes the most
 recently used one current.
 
 On an ordinary turn, work normally in the host. Never forward host work

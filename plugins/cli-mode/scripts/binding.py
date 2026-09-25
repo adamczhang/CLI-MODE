@@ -10,7 +10,30 @@ import names
 import native_agy
 import native_commands
 from operations import operation_running, pending_work
-from state import agent_entry, agent_label, agent_limit, last_used, live_agents
+import json
+from pathlib import Path
+
+from state import (Store, TIMEOUT_RANGE, agent_entry, agent_label, agent_limit, default_timeout, last_used, live_agents,
+                   save_default_timeout)
+
+
+def duration(minutes):
+    return (str(minutes // 60) + (' hour' if minutes == 60 else ' hours') if minutes % 60 == 0
+            else str(minutes) + ' minutes')
+
+
+def ago(stamp):
+    """`just now`, `12 min ago`, `3 h ago`, `2 days ago`."""
+    seconds = max(0, time.time() - (stamp or 0))
+    if not stamp:
+        return 'at an unknown time'
+    if seconds < 90:
+        return 'just now'
+    if seconds < 5400:
+        return str(int(seconds // 60)) + ' min ago'
+    if seconds < 172800:
+        return str(int(seconds // 3600)) + ' h ago'
+    return str(int(seconds // 86400)) + ' days ago'
 
 
 class OwnerNotRunning(RuntimeError):
@@ -207,6 +230,130 @@ class BindingMixin:
         if limit is not None:
             message = 'Up to ' + str(limit) + ' agents can run at once.\n' + message
         return dict(state, message=message)
+
+    def timeout(self, minutes=None, session=None):
+        """`/cli timeout [name] [minutes]`: how long an idle agent's process keeps running.
+
+        Without a name the minutes become the default for every conversation and apply to this one's running
+        agents; with a name, to that agent only. Either takes effect from the agent's next turn. An agent whose
+        process has exited starts again on its next /d, in the same conversation.
+        """
+        if minutes is not None and not TIMEOUT_RANGE[0] <= minutes <= TIMEOUT_RANGE[1]:
+            raise ValueError('Choose from 5 minutes to 24 hours.')
+        if minutes is not None and session is None:
+            save_default_timeout(self.store.root, minutes)
+        with self.store.edit() as state:
+            for item in state['owned']:
+                if minutes is not None and (session is None or item['name'] == session):
+                    item['timeout'] = minutes
+        default = default_timeout(self.store.root)
+        lines = []
+        if minutes is not None:
+            lines.append((agent_label(state, session) if session else 'Agents') + ' now stop after ' +
+                         duration(minutes) + ' without a turn' + ('' if session else ', in every conversation') + '.')
+        else:
+            lines.append('Agents stop after ' + duration(default) + ' without a turn (the default for every '
+                         'conversation).')
+        for item in state['owned']:
+            lines.append(agent_label(state, item['name']) + ': ' + duration(item.get('timeout') or 60))
+        lines.append('The next /d starts a stopped agent again, in the same conversation. /cli timeout <minutes> sets '
+                     'the default; /cli timeout <name> <minutes> sets one agent.')
+        return dict(state, message='\n'.join(lines))
+
+    def attachable(self):
+        """Agents from this folder's other conversations that were never closed, most recently used first."""
+        found = []
+        for path in sorted((self.store.root / 'sessions').glob('*.json')):
+            if path == self.store.path:
+                continue
+            try:
+                other = json.loads(path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                continue
+            if (not isinstance(other, dict) or other.get('schema') != 1 or not isinstance(other.get('thread'), str)
+                    or os.path.normcase(str(other.get('workspace'))) != os.path.normcase(self.store.workspace)):
+                continue
+            for item in other.get('owned') or []:
+                if not item.get('ready') or not item.get('alias'):
+                    continue
+                records = [record for record in (other.get('requests') or {}).values()
+                           if record.get('session') == item['name']]
+                busy = any(record.get('status') in ('captured', 'submitting', 'uncertain') for record in records) or any(
+                    operation.get('session') == item['name'] for operation in (other.get('inflight') or {}).values())
+                found.append(dict(thread=other['thread'], session=item['name'], name=item['alias'],
+                                  label=agent_label(other, item['name']), used=last_used(other, item['name']),
+                                  turns=len(records), busy=busy))
+        found.sort(key=lambda item: -item['used'])
+        return found
+
+    def attach(self, target=None):
+        """`/cli attach [name|number]`: list this folder's agents from earlier conversations, or move one here.
+
+        The agent keeps its ACPX session and so its conversation; the earlier conversation loses it, so two
+        never drive one agent. Only agents that were never closed can be attached.
+        """
+        found = self.attachable()
+        if not target:
+            if not found:
+                return dict(self.store.read(), message='No agent from an earlier session in this folder is still open. '
+                            '(An agent closed with /cli close can\'t be attached.)')
+            lines = ['Agents from earlier sessions in this folder:']
+            lines += [str(number) + '. ' + item['label'] + ' \u00b7 ' + ago(item['used']) + ' \u00b7 ' +
+                      str(item['turns']) + (' turn' if item['turns'] == 1 else ' turns') +
+                      (' \u00b7 busy' if item['busy'] else '') for number, item in enumerate(found, 1)]
+            lines.append('/cli attach <name or number> brings one here; its next /d continues its conversation.')
+            return dict(self.store.read(), message='\n'.join(lines))
+        if target.isdigit() and 1 <= int(target) <= len(found):
+            chosen = found[int(target) - 1]
+        else:
+            matches = [item for item in found
+                       if (names.resolve(target, {item['name']: item['session']}) or ('',))[0] == 'match']
+            if len(matches) > 1:
+                raise RuntimeError('Several earlier agents are named ' + target.upper() + '; use its number from '
+                                   '/cli attach.')
+            if not matches:
+                raise RuntimeError('No open agent from an earlier session here is named ' + target.upper() +
+                                   '. /cli attach lists them.')
+            chosen = matches[0]
+        if chosen['busy']:
+            raise RuntimeError(chosen['label'] + ' is still working in its earlier session; attach it when it is idle.')
+        current = self.store.read()
+        if len(current['owned']) >= agent_limit(current):
+            raise RuntimeError(str(len(current['owned'])) + ' agents are running, the limit. Close one first '
+                               '(/cli close <name>), or raise the limit with /cli agents max <n>.')
+        if any((item.get('alias') or '').casefold() == chosen['name'].casefold() for item in current['owned']):
+            raise RuntimeError('An agent named ' + chosen['name'] + ' is already running here; close it first.')
+        if (current.get('pending') or {}).get('stage') == 'verifying':
+            raise RuntimeError('An activation is being verified; attach when it finishes.')
+        earlier = Store(chosen['thread'], self.store.workspace, self.store.root)
+        with earlier.edit() as other:  # Taken from the earlier conversation first: never two owners.
+            entry = agent_entry(other, chosen['session'])
+            if not entry or not entry.get('ready'):
+                raise RuntimeError(chosen['label'] + ' is no longer open in its earlier session.')
+            other['owned'] = [item for item in other['owned'] if item['name'] != chosen['session']]
+            (other.get('runners') or {}).pop(chosen['session'], None)
+            if other.get('main') == chosen['session']:
+                rest = [item for item in other['owned'] if item.get('ready')]
+                successor = max(rest, key=lambda item: last_used(other, item['name'])) if rest else None
+                other.update(main=successor['name'] if successor else None,
+                             backend=successor['backend'] if successor else other.get('backend'),
+                             settings=successor['settings'] if successor else other.get('settings'))
+            other['active'] = any(item.get('ready') for item in other['owned'])
+        try:
+            with self.store.edit() as state:
+                entry = dict(entry, lastUsedAt=time.time())
+                entry.pop('watchCursor', None)  # Its event journal position belonged to the earlier session.
+                state['owned'].append(entry)
+                state.update(active=True, main=entry['name'], backend=entry['backend'], settings=entry['settings'])
+                if names.GENERATED.fullmatch(entry['alias']):
+                    state['usedNames'] = (state.get('usedNames') or []) + [entry['alias']]
+        except BaseException:
+            with earlier.edit() as other:  # Put it back rather than lose it.
+                other['owned'].append(entry)
+                other['active'] = True
+            raise
+        return dict(state, attached=entry['alias'], message=chosen['label'] + ' is attached and is the current agent. '
+                    'It was last used ' + ago(chosen['used']) + '; its next /d continues that conversation.')
 
     @staticmethod
     def agent_activity(state):
@@ -450,6 +597,7 @@ class BindingMixin:
                     name = names.generate(target, owned['name'], [alias for alias in taken if alias])
                     state['usedNames'] = (state.get('usedNames') or []) + [name]  # Never given out again.
                 owned['alias'] = name
+                owned['timeout'] = default_timeout(self.store.root)  # Minutes idle before its process exits.
             if not reuse and getattr(self.backend, 'profile', None):
                 owned['acpxProfile'] = self.backend.profile
             if hasattr(self.backend, 'prepare'):

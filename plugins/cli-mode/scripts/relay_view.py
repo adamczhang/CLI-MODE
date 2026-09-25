@@ -170,7 +170,53 @@ def markdown(label, batch, history, passing=None, footer=None, show_work=True, c
     return '\n\n'.join(parts)
 
 
-def final_markdown(label, batch, history, footer=None, show_work=True, color=False):
+RECEIPT_PATHS = 6
+
+
+def receipt_markdown(label, receipt, color=False):
+    """What the turn changed in the folder: files, and lines added (green) and removed (red)."""
+    from presentation import added_removed
+    if not receipt:
+        return None
+    count = receipt.get('files') or 0
+    if not count:
+        return '_' + label + ' changed no files._'
+    head = (label + ' changed ' + str(count) + (' file ' if count == 1 else ' files ') +
+            added_removed(receipt.get('added', 0), receipt.get('removed', 0), color))
+    rows = []
+    for item in (receipt.get('paths') or [])[:RECEIPT_PATHS]:
+        path = defuse(item['path'])
+        shown = '`' + path + '`' if '`' not in path else path
+        rows.append(shown + ' ' + ('binary' if item.get('added') is None else
+                                   added_removed(item['added'], item['removed'], color)))
+    more = count - len(rows)
+    return head + '\n\n' + ' \u00b7 '.join(rows) + (' \u00b7 and ' + str(more) + ' more' if more > 0 else '')
+
+
+def receipt_html(label, receipt):
+    """The same receipt in a view: visible, not folded into the work section."""
+    if not receipt:
+        return '', None
+    count = receipt.get('files') or 0
+    if not count:
+        text = label + ' changed no files.'
+        return '<div class="changes state">' + escape(text) + '</div>', text
+
+    def numbers(added, removed):
+        return ('<span class="add">+' + str(added) + '</span> <span class="del">-' + str(removed) + '</span>')
+    rows = ''.join('<li><code>' + escape(item['path']) + '</code> ' +
+                   ('binary' if item.get('added') is None else numbers(item['added'], item['removed'])) + '</li>'
+                   for item in (receipt.get('paths') or [])[:RECEIPT_PATHS])
+    more = count - min(len(receipt.get('paths') or []), RECEIPT_PATHS)
+    if more > 0:
+        rows += '<li>and ' + str(more) + ' more</li>'
+    head = label + ' changed ' + str(count) + (' file' if count == 1 else ' files')
+    text = head + ' (+' + str(receipt.get('added', 0)) + ' -' + str(receipt.get('removed', 0)) + ')'
+    return ('<div class="changes"><strong>' + escape(head) + '</strong> ' +
+            numbers(receipt.get('added', 0), receipt.get('removed', 0)) + '<ul>' + rows + '</ul></div>'), text
+
+
+def final_markdown(label, batch, history, footer=None, show_work=True, color=False, receipt=None):
     """The end of a turn for hosts without inline views (Claude Code), as chat Markdown.
 
     It carries the agent's words, artifacts and errors (all of the turn's, unless
@@ -196,6 +242,9 @@ def final_markdown(label, batch, history, footer=None, show_work=True, color=Fal
             facts.append(usage_text(usage))
         if facts:
             parts.append('_' + defuse(label + ' work: ' + ' · '.join(facts)).replace('_', '\\_') + '_')
+    changed = receipt_markdown(label, receipt, color)
+    if changed:
+        parts.append(changed)
     if footer:
         parts.append('_' + footer + '_')
     if not parts and not messages(history):
@@ -203,7 +252,7 @@ def final_markdown(label, batch, history, footer=None, show_work=True, color=Fal
     return '\n\n'.join(parts)
 
 
-def render(label, history, destination, footer=None, show_work=True, workspace=None):
+def render(label, history, destination, footer=None, show_work=True, workspace=None, receipt=None):
     """The turn's one inline view: final words, artifacts, errors and nested work.
 
     Returns (path, plain-text fallback, artifacts).
@@ -259,6 +308,10 @@ def render(label, history, destination, footer=None, show_work=True, workspace=N
         heading = label + ' work' + (' \u00b7 ' + summary if summary else '')
         html.append('<details class="work"><summary>' + escape(heading) + '</summary>' + ''.join(inner) + '</details>')
         plain.append(heading)
+    changed, changed_text = receipt_html(label, receipt)
+    if changed:
+        html.append(changed)
+        plain.append(changed_text)
     if footer:
         html.append('<div class="state">' + escape(footer) + '</div>')
         plain.append(footer)
@@ -281,6 +334,9 @@ def render(label, history, destination, footer=None, show_work=True, workspace=N
         '#' + ident + ' li i{display:inline-block;width:14px;height:14px;vertical-align:-2px;}'
         '#' + ident + ' .mark{display:inline-block;width:1.1em;}'
         '#' + ident + ' .state,#' + ident + ' .usage{color:' + muted + ';margin:4px 0;}'
+        '#' + ident + ' .changes{margin:6px 0;}'
+        '#' + ident + ' .changes .add{color:' + GREEN + ';font-weight:700;}'
+        '#' + ident + ' .changes .del{color:#cf222e;font-weight:700;}'
         '@media (prefers-color-scheme:light){#' + ident + ' .attrib,#' + ident + ' summary{color:' + GREEN_LIGHT + ';}}'
         '</style>' + ''.join(html) + '</section>\n')
     path = Path(destination).resolve()

@@ -206,7 +206,7 @@ class Verification(unittest.TestCase):
             command = claude_code.Backend().command(self.owned, ['sessions', 'show', 's'])
         self.assertIn('claude', command)
         self.assertNotIn('antigravity', command)
-        self.assertEqual(command[command.index('--ttl') + 1], '1800')
+        self.assertEqual(command[command.index('--ttl') + 1], '3600')  # One hour unless /cli timeout changes it.
         self.assertIn('--approve-all', command)
 
     def test_stricter_access_drops_host_auto_approval(self):

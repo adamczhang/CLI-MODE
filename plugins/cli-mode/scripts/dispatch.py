@@ -16,10 +16,12 @@ from progress import progress_mode, public_progress
 from state import agent_entry, agent_label, routing_mode, direct_payload
 
 
-def without_name(payload):
-    """A /d payload without the agent name it starts with (and one separator after it)."""
-    rest = payload.lstrip()
-    rest = rest[len(rest.split(None, 1)[0]):]
+def without_name(payload, words=1):
+    """A /d payload without the `words` agent-name words it starts with (`gro-4k,`, `elon`) and one separator."""
+    rest = payload
+    for _ in range(max(1, int(words))):
+        rest = rest.lstrip()
+        rest = rest[len(rest.split(None, 1)[0]):] if rest.strip() else ''
     if rest.startswith('\r\n'):
         return rest[2:]
     return rest[1:] if rest and rest[0].isspace() else rest
@@ -288,7 +290,7 @@ class DispatchMixin:
         if direct:
             payload = direct_payload(text)
             if payload is not None and record.get('named'):
-                payload = without_name(payload)  # The agent's name picked the agent; it is not part of the task.
+                payload = without_name(payload, record['named'])  # The names picked the agents, not part of the task.
             if payload is None or not payload.strip():
                 raise RuntimeError('Direct mode requires /d or $d followed by a task; nothing was sent.')
             text = payload

@@ -22,6 +22,10 @@ lands in one of three zones below; know which before editing.
   and `live_agents`/`target_of`/`agent_label` resolve and name them. `VERB_ALIASES` is the one table of command
   pairs (`close`=`stop`=`off`, `spawn`=`bind`, …). `scripts/names.py` generates, validates and resolves names.
   Gates are per agent: `pending_work(state, session=…)`, `operations.menu_holds`, one worker per agent (`runners`).
+  `/d a,b <prompt>` captures one request per named agent (`turnRoute.requestIds`); a registry `tag` names the
+  only agent of its kind. `scripts/changes.py` takes git-tree snapshots around each turn (a temporary index copy)
+  for the change receipt and `/cli diff`. Each owned entry's `timeout` (minutes) is its ACPX owner TTL
+  (`acpx.AcpxBackend.ttl`); `/cli attach` moves an open owned entry from another conversation in the folder.
 - `hooks/route.py`: `decide()` and `task_through_settings()` (shared), `codex_output()` and
   `activation_reply()` (Codex only).
 - Menus, text and labels: `frontends.py`, `presentation.py` (`menu_block`, `menu_frame`, `options_menu`,
@@ -72,7 +76,7 @@ files) and `dist/cli-mode-claude-<v>.zip` (without the `CODEX_ONLY` files).
 
 | Guard | Protects | Fails when |
 |---|---|---|
-| `checks/test_codex_golden.py` with `checks/fixtures/codex-golden.json` (144 steps, 28 route kinds) | every hook response and controller result **Codex** receives | a shared or Claude change alters anything Codex sees |
+| `checks/test_codex_golden.py` with `checks/fixtures/codex-golden.json` (160 steps, 31 route kinds) | every hook response and controller result **Codex** receives | a shared or Claude change alters anything Codex sees |
 | `test_claude_package.py` with `checks/fixtures/codex-package-files.txt` | the Codex zip's exact file list; the Claude zip's contents; the root marketplace in sync; Claude's hook rules | a file leaks into the wrong package, or the marketplace or hooks drift |
 | `test_host.py`, `test_claude_hook.py` | Claude routing, relay, colour, menus, the Stop guard, the fast path | a Codex or shared change breaks Claude behaviour |
 | `test_package_reproducibility.py` | identical zips from LF and CRLF checkouts | packaging depends on line endings |

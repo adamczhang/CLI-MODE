@@ -72,6 +72,9 @@ def build_parser():
     p = sub.add_parser('close'); p.add_argument('--name')
     p = sub.add_parser('use'); p.add_argument('--name', required=True)
     p = sub.add_parser('agents'); p.add_argument('--max', type=int)
+    p = sub.add_parser('diff'); p.add_argument('--name')
+    p = sub.add_parser('timeout'); p.add_argument('--minutes', type=int); p.add_argument('--name')
+    p = sub.add_parser('attach'); p.add_argument('--target')
     p = sub.add_parser('observe'); p.add_argument('--request', required=True)
     p.add_argument('--cursor', type=int, default=0); p.add_argument('--limit', type=int, default=100)
     p = sub.add_parser('relay'); p.add_argument('--request', required=True, action='append')
@@ -231,6 +234,9 @@ def run(args, control=None):
     elif command == 'close': result = control.close(args.name)
     elif command == 'use': result = control.make_current(args.name)
     elif command == 'agents': result = control.agents(args.max)
+    elif command == 'diff': result = control.diff(control.session_of(args.name))
+    elif command == 'timeout': result = control.timeout(args.minutes, control.session_of(args.name))
+    elif command == 'attach': result = control.attach(args.target)
     elif command == 'send':
         if args.request:
             result = control.send_request(args.request)
