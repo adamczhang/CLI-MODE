@@ -98,6 +98,13 @@ class Words(unittest.TestCase):
         self.assertEqual(presentation.approval_rule({'kind': 'other', 'title': 'Use browser'}), 'Use browser')
         self.assertIn('use this tool: Use browser', presentation.permission_stop('X', 'Prompt', {'title': 'Use browser'}))
 
+    def test_an_agent_that_acts_without_asking_is_told_honestly(self):
+        text = presentation.permission_stop('Grok GRO-4K', 'Prompt', {'kind': 'execute', 'detail': 'git status'},
+                                            direct=True)
+        self.assertIn('for that one turn it can also run commands and edit files without asking', text)
+        self.assertNotIn('approve always', text)
+        self.assertIn('/cli access allow', text)
+
     def test_an_unreadable_request_still_explains_access(self):
         self.assertIn('/cli access', presentation.permission_stop('Grok GRO-4K', 'Prompt'))
 
@@ -167,6 +174,23 @@ class Flow(unittest.TestCase):
         self.ask('execute', 'npm test')
         self.prompt('/cli approve ' + self.alias + ' always')
         self.assertEqual(self.store.read()['owned'][0]['approveAlways'], ['execute'])
+
+    def test_always_is_refused_for_an_agent_that_acts_without_asking(self):
+        self.ask()
+        with self.store.edit() as state:
+            state['owned'][0]['actsWithoutAsking'] = True
+        self.prompt('/cli approve always')
+        state = self.store.read()
+        self.assertEqual(state['turnRoute']['route'], 'hint')
+        self.assertIn('runs commands and edits files without asking first', state['turnRoute']['text'])
+        self.assertIn('approval', state['owned'][0])  # Still waiting: /cli approve answers it for one turn.
+        self.prompt('/cli approve')
+        self.assertEqual(self.store.read()['turnRoute']['route'], 'direct')
+
+    def test_grok_is_known_to_act_without_asking_from_the_start(self):
+        from state import ACTS_WITHOUT_ASKING
+        self.assertIn('grok-build', ACTS_WITHOUT_ASKING)
+        self.assertNotIn('actsWithoutAsking', self.store.read()['owned'][0])  # This fixture agent is Antigravity.
 
     def test_deny_tells_the_agent_no(self):
         self.ask()

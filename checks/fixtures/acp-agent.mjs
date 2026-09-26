@@ -57,6 +57,27 @@ createInterface({input: process.stdin}).on('line', line => {
       setTimeout(() => { message(request, 'slow completed'); finish(request); }, 2000);
       return;
     }
+    if (text === 'direct-command') {
+      // A command sent straight to the client's terminal, without asking first, as Grok Build does.
+      pending.set('direct-fixture', response => {
+        message(request, response.error ? 'The command was refused.' : 'The command ran.');
+        finish(request);
+      });
+      send({id: 'direct-fixture', method: 'terminal/create',
+        params: {sessionId: params.sessionId, command: 'git', args: ['status']}});
+      return;
+    }
+    if (text === 'split-message') {
+      // One message ID around a tool call, as Grok Build sends it: two paragraphs, not one run-on line.
+      const chunk = words => update(request, {sessionUpdate: 'agent_message_chunk', messageId: 'one-message',
+        content: {type: 'text', text: words}});
+      chunk('I will run the tests.');
+      update(request, {sessionUpdate: 'tool_call', toolCallId: 'tests', kind: 'execute', title: 'Run tests',
+        status: 'completed'});
+      chunk('The tests passed.');
+      finish(request);
+      return;
+    }
     if (text === 'activity') {
       const tool = {sessionUpdate: 'tool_call', toolCallId: 'read-file', kind: 'read',
         title: 'Read fixture source', status: 'pending', locations: [{path: 'src/fixture.js', line: 3}],

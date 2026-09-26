@@ -388,6 +388,12 @@ def agent_label(state, session=None, record=None):
     return label + (' ' + name if name else '')
 
 
+# Agents that run commands (and write files) straight through ACPX without asking first, so an approval can't be
+# limited to one kind for them (dispatch.approval_policy). Seen in the 0.3.7 Codex validation; any other agent seen
+# doing it is marked the same way as it works (dispatch.acts_without_asking).
+ACTS_WITHOUT_ASKING = frozenset(('grok-build',))
+
+
 def team_lines(state):
     """The brief's list of agents running now: each one's name, folder, whether it is working, its last answer.
 
@@ -560,7 +566,13 @@ def approval_route(verb, choice, state):
                 ' are waiting for an answer: add a name, for example /cli ' + verb + ' ' + next(iter(waiting)) + '.'}
     else:
         return {'route': 'hint', 'text': 'No agent is waiting for an approval.'}
-    asked = agent_entry(state, session)['approval']
+    entry = agent_entry(state, session)
+    if always and entry.get('actsWithoutAsking'):
+        # Its commands and file writes skip the question, so "always" for one kind would really be "everything".
+        return {'route': 'hint', 'text': agent_label(state, session) + ' runs commands and edits files without asking '
+                'first, so approving always would let it do anything, from now on. To allow that, use /cli access '
+                'allow. /cli approve answers this question for one turn. Nothing was sent.'}
+    asked = entry['approval']
     words, what = presentation.approval_words(asked), ' '.join((asked.get('detail') or asked.get('title') or '').split())
     if verb == 'approve':
         note = ('Approved: you may ' + words + (' (' + what + ')' if what else '') + (' from now on' if always else '') +

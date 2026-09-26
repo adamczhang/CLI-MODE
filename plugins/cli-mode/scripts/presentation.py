@@ -95,15 +95,22 @@ def approval_words(asked):
     return KIND_WORDS.get(asked.get('kind'), 'use this tool')
 
 
-def permission_stop(label, access_name, asked=None):
+def permission_stop(label, access_name, asked=None, direct=False):
+    """The question a stopped turn asks. `direct`: the agent runs commands and writes files without asking first,
+    so an approved turn can't be limited to one kind for it, and the question says so."""
     if not asked or not approval_rule(asked):
         return (label + ' asked for a permission that CLI-MODE could not read, so the turn stopped there under ' +
                 access_name + ' access. Use /cli access and choose allow to let it continue, or ask for work that '
                 'needs no approval.')
     words = approval_words(asked)
-    return (label + ' asks to ' + words + ': ' + ' '.join((asked.get('detail') or asked.get('title')).split()) +
-            '\nIts turn stopped for your answer (' + access_name + ' access). /cli approve lets it ' + words +
-            ' and carry on, /cli approve always lets it ' + words + ' from now on, /cli deny tells it no.')
+    head = (label + ' asks to ' + words + ': ' + ' '.join((asked.get('detail') or asked.get('title')).split()) +
+            '\nIts turn stopped for your answer (' + access_name + ' access). ')
+    if direct:
+        return head + ('/cli approve lets it carry on, and for that one turn it can also run commands and edit files '
+                       'without asking (it does not ask first). /cli deny tells it no. To let it act freely, '
+                       '/cli access allow.')
+    return head + ('/cli approve lets it ' + words + ' and carry on, /cli approve always lets it ' + words +
+                   ' from now on, /cli deny tells it no.')
 
 
 def paginate(items, reserved=0, page=1, limit=MENU_MAX_OPTIONS):

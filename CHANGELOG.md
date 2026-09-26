@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Found by a full live validation of 0.3.7 on the Codex host (`checks/codex-validation-plan.md`).
+
+### Approvals (both hosts)
+- **Honest approvals for agents that act without asking.** Grok Build runs commands and writes files straight through ACPX's terminal and file system, without asking first. An approved turn runs at ACPX's approve-all (its own write and terminal checks read only the mode), so for such an agent an approval could not be limited to one kind: after `/cli approve always` for edits, Grok also ran commands freely. Now such an agent is marked (Grok from the start, any other agent as soon as it is seen doing this): its question says that approving lets it act freely for that one turn, and `/cli approve always` is refused with a pointer to `/cli access allow`. Agents that ask first keep kind-limited approvals.
+- **A command run without asking is a question too.** When ACPX refused such a command (or file write) because nobody could be asked, the answer said the permission "could not be read" and `/cli approve` had nothing to approve. It now asks "Grok GRO-4K asks to run commands: git status" like any other request.
+
+### Relays (both hosts)
+- **An agent's paragraphs no longer run together with `/cli progress quiet`.** Text sent before and after a tool call under one message ID (as Grok Build does) was joined mid-line ("I will run the tests.The tests passed."), because quiet progress drops the tool events that separate them. The bridge now starts a new paragraph after any tool call.
+
+### Validation tools
+- `checks/codex_release_validation.py` runs the plan's Part 2 (brief, approvals, attachments, undo, quiet relays) against the installed Codex plugin through `codex app-server`. `codex_user_validation.py` accepts the host's brief note edit and the host's own work on turns that are not CLI-MODE's.
+
 ## 0.3.7 — Agents that know each other — 2026-09-26
 
 ### The project brief tells agents about each other (both hosts)
