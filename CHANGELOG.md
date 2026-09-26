@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.8 — Honest approvals and /cli usage — 2026-09-26
 
 Found by a full live validation of 0.3.7 on the Codex host (`checks/codex-validation-plan.md`).
 
