@@ -7,6 +7,10 @@
 - **Saved-files receipt.** Each answer ends with what the agent saved there (new, changed, removed), under the change receipt, in the Claude Code chat, the Codex view and the background-task row. It comes from listing the agent's folder, so it works outside git, stays fast for images and audio, and names the right agent even while several work at once.
 - The folder holds a `.gitignore` of `*`, so agent files stay out of git and out of the change receipt; the project's own `.gitignore` is untouched.
 
+### Claude Code
+- **Agents that finish at the same time no longer lose an answer.** When several agents' turns ended together, Claude ran one relay per agent in a single turn and posted only the last one's answer. The wake-up now relays every agent that has finished but not been posted with one command, so their answers arrive together, oldest first. An agent that finishes during that turn gets its own relay, and each relay now asks for the turn's last message to carry every relay's output, so none is folded out of view or dropped.
+- A wake-up that carries several task notifications, Claude's own among them, still finds CLI-MODE's follow.
+
 ## 0.3.3 — Antigravity's temp folder — 2026-09-25
 
 ### Antigravity

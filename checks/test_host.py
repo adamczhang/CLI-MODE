@@ -534,7 +534,8 @@ class PlainRelay(ClaudeControl):
         request = self.send([dict(type='message', text='All tests pass — it’s done.\n')])
         lead, post = self.main('relay', '--request', request, '--wait', '1').split('\n\n', 1)
         self.assertEqual(lead, self.label + ' has finished. Post everything below this line exactly, as the last '
-                               'message of the turn.')
+                               'message of the turn. If another CLI-MODE relay ran in this turn too, that last '
+                               'message carries every relay\'s output, in the order they ran, each exactly as printed.')
         self.assertIn(strong(self.label + ' says...', True), post)
         self.assertIn('All tests pass — it’s done.', post)  # Real characters, not \u escapes.
         for machine in ('"cursor"', '"done"', '\\n', '\\u'):
