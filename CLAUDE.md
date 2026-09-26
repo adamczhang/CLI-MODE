@@ -30,7 +30,10 @@ lands in one of three zones below; know which before editing.
   becomes the request's `saved`. After a turn the answer is kept in `answers/` (the copy box, `refs`), a
   project test command runs (`scripts/test_gate.py`, `/cli test`), and files another agent's tools also edited
   meanwhile are flagged (`overlaps`); `/cli undo` puts a turn back from its snapshots (`changes.undo`), and
-  the project brief (`/cli brief`, a BRIEF file in the working folder's root) is named in every task. Each owned entry's `timeout` (minutes) is its ACPX owner TTL
+  the project brief (`/cli brief`, a BRIEF file in the working folder's root) is named in every task. The brief
+  has three sections (`agent_folder.read_brief`/`write_brief`): your points, the host's dated notes (a new agent's
+  activation returns `hostNote` and the host fills it in, `presentation.HOST_NOTE_RULE`) and the running agents
+  (`state.team_lines`, rewritten before each task, after each turn and on close). Each owned entry's `timeout` (minutes) is its ACPX owner TTL
   (`acpx.AcpxBackend.ttl`); `/cli attach` moves an open owned entry from another conversation in the folder.
 - Approvals are stop, ask, continue (ACPX shared sessions can't hold a request open): the bridge reports the
   agent's ACP permission request, `dispatch.remember_approval` keeps it on the owned entry as `approval`,
@@ -65,7 +68,8 @@ lands in one of three zones below; know which before editing.
 - `.agents/plugins/marketplace.json`.
 
 **Claude Code only:**
-- `hooks/claude.py`: SessionStart, UserPromptSubmit, PreToolUse approval, the Stop guard and `/cli reset`.
+- `hooks/claude.py`: SessionStart, UserPromptSubmit, PreToolUse approval (CLI-MODE's controller commands, and
+  `brief_note_approval`: only the host's note edit in the project brief), the Stop guard and `/cli reset`.
   `nothing_to_do()` is a pre-import fast path.
 - `claude/hooks.json`, `claude/commands/{cli,d}.md`.
 - `QueueMixin.relay_text()` and `relay_chain()`: nothing mid-turn, then the whole output as the last message.

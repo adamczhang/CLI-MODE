@@ -14,7 +14,7 @@ import viewer
 from operations import emit, menu_holds, pending_work
 from presentation import PERMISSION_CODES, permission_stop
 from progress import progress_mode, public_progress
-from state import agent_entry, agent_label, routing_mode, direct_payload
+from state import agent_entry, agent_label, routing_mode, direct_payload, team_lines
 
 
 def without_name(payload, words=1):
@@ -341,7 +341,10 @@ class DispatchMixin:
         # A task names the agent's working folder (agent_folder); an agent's own slash command goes as typed.
         workspace = owned.get('workspace') or self.store.workspace
         if working_folder and not provider_command and agent_folder.ensure(workspace, owned.get('alias')) is not None:
-            text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file())
+            # The brief's list of running agents, current as this task leaves (one closed since is gone).
+            agent_folder.write_team(workspace, team_lines(state))
+            text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file(),
+                                             label=agent_label(state, session))
             text += agent_folder.attachments_note(record.get('attachments'))
         if hasattr(self.backend, 'validate_prompt'):
             self.backend.validate_prompt(owned)

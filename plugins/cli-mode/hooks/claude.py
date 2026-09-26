@@ -29,9 +29,9 @@ def nothing_to_do(raw):
     Only certain answers are given here; anything else goes to handle(), which
     decides everything again from scratch (this is purely a shortcut).
     """
-    if '"PreToolUse"' in raw and 'controller.py' not in raw and not any(
+    if '"PreToolUse"' in raw and 'controller.py' not in raw and 'BRIEF.md' not in raw and not any(
             '"' + tool + '"' in raw for tool in AGENT_TURN_TOOLS):
-        return True  # Some other `python` command: only CLI-MODE's own controller is approved here.
+        return True  # Some other `python` command: only CLI-MODE's own controller (or the brief) is approved here.
     if '"SessionStart"' in raw and '"compact"' not in raw:
         return True  # Only a compaction has a relay or menu to restore.
     import json
@@ -191,8 +191,12 @@ def display_style(root=None):
         return DEFAULT_STYLE
 
 
-def show(event, fenced, plain=None):
-    """A local control's reply, in the display style this user chose (see DISPLAYS)."""
+def show(event, fenced, plain=None, step=None):
+    """A local control's reply, in the display style this user chose (see DISPLAYS).
+
+    `step` is one thing Claude does first in the same turn (writing the host's note in the project brief); only a
+    chat reply has a model turn to do it in.
+    """
     plain = fenced if plain is None else plain
     style = STYLE
     if style != 'model':
@@ -200,8 +204,11 @@ def show(event, fenced, plain=None):
         plain = presentation.plain_strong(plain)  # A hook notice shows green LaTeX (the activation card's) raw.
     if style == 'model':
         import presentation
-        return context(event, 'CLI-MODE answered this control itself; no command needs to run.' + COMPLETE +
-                              ' Its reply is below, to be ' + ALONE + ':\n\n' + presentation.chat_menu(fenced, COLOR))
+        lead = ('CLI-MODE answered this control itself; no command needs to run.' + COMPLETE if not step else
+                'CLI-MODE answered this control itself; no command needs to run. ' + step + ' Then the reply below is '
+                'this turn\'s last message,')
+        return context(event, lead + ' Its reply is below, to be ' + ALONE + ':\n\n' +
+                       presentation.chat_menu(fenced, COLOR))
     if style == 'stop':
         return {'continue': False, 'stopReason': '\n' + plain}
     return {'decision': 'block', 'reason': plain, 'suppressOriginalPrompt': True}
@@ -211,7 +218,8 @@ def show_result(event, result):
     import presentation
     if isinstance(result.get('setup'), dict):
         result = result['setup']  # A finished install: the menu setup continues with, not the setup window's words.
-    return show(event, presentation.result_text(result), presentation.result_text(result, fenced=False))
+    return show(event, presentation.result_text(result), presentation.result_text(result, fenced=False),
+                step=presentation.host_note_step(result.get('hostNote')))
 
 
 def show_text(event, text):
@@ -342,8 +350,37 @@ def with_images(event, typed, root=None):
     return dict(event, attachments=(event.get('attachments') or []) + images)
 
 
+def brief_note_approval(event):
+    """Allow the host's note in the project brief, and only that: an Edit of this project's BRIEF.md that replaces
+    one of its "not written yet" lines (it must be in the file, whole) with plain lines, no heading.
+
+    Asking the user for this one edit on every agent start would make the note a chore; any other edit of the
+    brief, or of any other file, is left to Claude Code's own permissions.
+    """
+    import agent_folder
+    request = event.get('tool_input') or {}
+    old, new = request.get('old_string') or '', request.get('new_string') or ''
+    try:
+        brief = agent_folder.brief_path(workspace(event))
+        if os.path.normcase(os.path.realpath(request.get('file_path') or '')) != os.path.normcase(
+                os.path.realpath(brief)):
+            return None
+        lines = brief.read_text(encoding='utf-8').splitlines()
+    except (OSError, KeyError, TypeError, ValueError):
+        return None
+    waiting = agent_folder.HOST_NOTE_WAITING[:-2]  # `(The host has not written this note yet`
+    if (request.get('replace_all') or not old.startswith(waiting) or '\n' in old or lines.count(old) != 1
+            or not new.strip() or len(new) > 2000
+            or any(line.lstrip().startswith('#') for line in new.splitlines())):
+        return None
+    return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
+                                   'permissionDecisionReason': 'CLI-MODE: the host\'s note in the project brief.'}}
+
+
 def pre_tool_use(event, root):
     tool = event.get('tool_name', '')
+    if tool == 'Edit':
+        return brief_note_approval(event) or {}
     if tool in ('Bash', 'PowerShell'):
         text = (event.get('tool_input') or {}).get('command') or ''
         if not text.startswith('python ' + quote(CONTROLLER) + ' '):
@@ -947,7 +984,12 @@ def activation(event, root, adapter, what, *words):
         'with a timeout of ' + str(ACTIVATION_TIMEOUT_MS) + ' ms, and is not polled or retried. Its JSON result '
         'carries `activation.text`, the confirmation the user expects ' + ALONE + '; or else a menu '
         '(`activationMenu`, with any `message`) shown the same way.' + ERROR + ' An error says what setup still '
-        'needs; installing or signing in happens only when the user asks for it.' + COMPLETE))
+        'needs; installing or signing in happens only when the user asks for it. ' + host_note_rule() + COMPLETE))
+
+
+def host_note_rule():
+    import presentation
+    return presentation.HOST_NOTE_RULE
 
 
 def setup_reply(event, root, state, adapter, reply):

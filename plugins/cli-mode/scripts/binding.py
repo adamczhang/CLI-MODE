@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from state import (Store, TIMEOUT_RANGE, agent_entry, agent_label, agent_limit, default_timeout, last_used, live_agents,
-                   save_default_timeout)
+                   save_default_timeout, team_lines)
 
 
 def duration(minutes):
@@ -118,7 +118,9 @@ class BindingMixin:
                         and not any(op.get('requestId') == request_id for op in state['inflight'].values())):
                     record['status'] = 'canceled'
         # Its attached-file copies go with it (agent_folder.attach); its own files and saved answers stay.
-        agent_folder.clear_attachments(owned.get('workspace') or self.store.workspace, owned.get('alias'))
+        workspace = owned.get('workspace') or self.store.workspace
+        agent_folder.clear_attachments(workspace, owned.get('alias'))
+        agent_folder.write_team(workspace, team_lines(self.store.read()))  # The brief no longer lists it.
         return None
 
     def off(self):
@@ -639,7 +641,16 @@ class BindingMixin:
                 if (completed_control and origin_route and state.get('turnRoute') == origin_route
                         and origin_route['route'] in ('bind', 'tune', 'setup')):
                     state['turnRoute']['route'] = 'control-result'
-            return dict(self.store.read(), activated=owned['name'])
+            latest = self.store.read()
+            if reuse:
+                return dict(latest, activated=owned['name'])
+            # A new agent: the brief lists it now, and gets an entry for the host's note on what the conversation
+            # has been working on, which the host writes as it shows this activation (hostNote).
+            workspace = owned.get('workspace') or self.store.workspace
+            agent_folder.write_team(workspace, team_lines(latest))
+            note = agent_folder.add_host_note(workspace, time.strftime('%Y-%m-%d %H:%M'),
+                                              agent_label(latest, owned['name']))
+            return dict(latest, activated=owned['name'], **({'hostNote': note} if note else {}))
         except BaseException:
             if not reuse:
                 self.cleanup(owned)

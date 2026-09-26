@@ -187,8 +187,18 @@ Files: docs/engine-report.md
 none changed since); another agent's edits made meanwhile are left as they are. When two agents working at once edit the same file, the later answer warns you. After every turn that
 changes files, CLI-MODE runs your project's tests (found automatically: `npm test`, `python -m pytest`,
 `cargo test` or `go test ./...`) and the answer says whether they passed; `/cli test <command>` sets another,
-`/cli test off` turns them off. `/cli brief-add <text>` builds a short brief, `Agent_Working_Folder/BRIEF.md`, that every agent reads
-before its task; `/cli brief` shows it and `/cli brief clear` removes it.
+`/cli test off` turns them off.
+
+**The project brief.** Every agent reads `Agent_Working_Folder/BRIEF.md` before each task. It has three parts:
+
+- **Agents running now:** each agent's name, working folder, whether it is working, and its last saved answer.
+  CLI-MODE rewrites this before every task, so an agent closed in the meantime is gone from it.
+- **From the host:** when an agent starts, your host (Claude Code or Codex) adds a dated note on what the
+  conversation has been working on, or "Nothing yet". Notes are kept, so they read as a history. (With
+  `/cli display instant` on Claude Code there is no model turn to write one.)
+- **Your points:** `/cli brief-add <text>` adds one.
+
+`/cli brief` shows it; `/cli brief clear` removes your points and the host's notes.
 
 **Agents from earlier sessions.** An agent you didn't close keeps its conversation. In a new session in the
 same folder, `/cli attach` lists them and `/cli attach <name or number>` brings one here; its next `/d`

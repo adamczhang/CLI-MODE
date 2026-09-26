@@ -76,32 +76,103 @@ def brief_path(workspace):
     return Path(workspace) / ROOT / BRIEF
 
 
-def brief_lines(workspace):
-    """The brief's points (its `- ` lines), or [] when there is none."""
+# The brief's three parts, in this order: the points you add (/cli brief-add); the host's notes, one dated entry
+# per agent started, never replaced; and the agents running now, rewritten by CLI-MODE before every task.
+POINTS, HOST, TEAM = ('## Points (added with /cli brief-add)', '## From the host',
+                      '## Agents running now (kept current by CLI-MODE)')
+BRIEF_HEAD = '# Project brief\n\nEvery agent working in this project reads this first.\n'
+
+
+def read_brief(workspace):
+    """(points, host notes as lines, agent lines) from the brief; empty when there is none.
+
+    A brief written before its sections existed is only points: its `- ` lines.
+    """
     try:
         text = brief_path(workspace).read_text(encoding='utf-8')
     except OSError:
-        return []
-    return [line[2:] for line in text.splitlines() if line.startswith('- ')]
+        return [], [], []
+    parts, current = {POINTS: [], HOST: [], TEAM: []}, POINTS
+    for line in text.splitlines():
+        if line.startswith('## '):
+            current = line if line in parts else None  # A heading of CLI-MODE's own, or text to leave out.
+        elif current is not None and not line.startswith('# ') and line != BRIEF_HEAD.splitlines()[-1]:
+            parts[current].append(line)
+    points = [line[2:] for line in parts[POINTS] if line.startswith('- ')]
+    host = parts[HOST]
+    while host and not host[0].strip():
+        host = host[1:]
+    while host and not host[-1].strip():
+        host = host[:-1]
+    return points, host, [line for line in parts[TEAM] if line.startswith('- ')]
+
+
+def write_brief(workspace, points, host, team):
+    """Write the brief's three parts (only those with anything in them); no parts at all remove the file."""
+    path = brief_path(workspace)
+    if not points and not host and not team:
+        path.unlink(missing_ok=True)
+        return
+    ensure_root(workspace)
+    text = BRIEF_HEAD
+    if points:
+        text += '\n' + POINTS + '\n\n' + ''.join('- ' + line + '\n' for line in points)
+    if host:
+        text += '\n' + HOST + '\n\n' + '\n'.join(host) + '\n'
+    if team:
+        text += '\n' + TEAM + '\n\n' + '\n'.join(team) + '\n'
+    path.write_text(text, encoding='utf-8')
+
+
+def brief_lines(workspace):
+    """The brief's points (added with /cli brief-add), or [] when there are none."""
+    return read_brief(workspace)[0]
 
 
 def add_brief(workspace, text):
     """Add one point to the brief, creating it (and the git-ignored folder) if needed; the points after it."""
-    path = brief_path(workspace)
-    ensure_root(workspace)
-    lines = brief_lines(workspace) + [' '.join(text.split())]
-    path.write_text('# Project brief\n\nEvery agent working in this project reads this first.\n\n' +
-                    ''.join('- ' + line + '\n' for line in lines), encoding='utf-8')
-    return lines
+    points, host, team = read_brief(workspace)
+    points = points + [' '.join(text.split())]
+    write_brief(workspace, points, host, team)
+    return points
 
 
 def clear_brief(workspace):
-    """Remove the brief; True if there was one."""
+    """Remove your points and the host's notes; True if there were any. The running agents stay listed."""
+    points, host, team = read_brief(workspace)
+    write_brief(workspace, [], [], team)
+    return bool(points or host)
+
+
+HOST_NOTE_WAITING = '(The host has not written this note yet.)'
+
+
+def add_host_note(workspace, stamp, label):
+    """Add a dated entry to the host's notes as `label` starts, for the host to fill in; how the host finds it.
+
+    The host (Claude Code or Codex) writes it, since only the host knows what its conversation has been working on:
+    it replaces the entry's waiting line with its note. Entries are kept, so the notes read as a history. The
+    waiting line names the agent, so each is unique even while an earlier one is still unwritten (names are never
+    given out twice in a conversation). None when the brief can't be written.
+    """
+    points, host, team = read_brief(workspace)
+    heading = stamp + ', when ' + label + ' started'
+    waiting = HOST_NOTE_WAITING[:-2] + ' for ' + label + '.)'
     try:
-        brief_path(workspace).unlink()
-        return True
-    except FileNotFoundError:
-        return False
+        write_brief(workspace, points, host + ([''] if host else []) + ['### ' + heading, waiting], team)
+    except OSError:
+        return None
+    return dict(file=ROOT + '/' + BRIEF, heading='### ' + heading, placeholder=waiting)
+
+
+def write_team(workspace, team):
+    """Rewrite the list of agents running now (lines from state.team_lines), keeping the rest of the brief."""
+    points, host, old = read_brief(workspace)
+    if team != old:
+        try:
+            write_brief(workspace, points, host, team)
+        except OSError:
+            pass  # The task still goes; its brief is only out of date.
 
 
 def ensure_root(workspace):
@@ -113,11 +184,14 @@ def ensure_root(workspace):
     return root
 
 
-def instruction(name, brief=False):
+def instruction(name, brief=False, label=None):
     """The line added to a task when it is sent. The sender skips it for an agent's own slash command, which must
-    go exactly as typed (dispatch's `provider_command`). With a project brief, it asks the agent to read it."""
-    return ('\n\n---\nCLI-MODE: ' + ('first read `' + ROOT + '/' + BRIEF + '`, the brief every agent on this '
-            'project follows. Y' if brief else 'y') + 'our working folder is `' + relative(name) + '/` in this project. If this task is '
+    go exactly as typed (dispatch's `provider_command`). With a project brief, it asks the agent to read it; the
+    agent's own label tells it which of the agents the brief lists it is."""
+    return ('\n\n---\nCLI-MODE: ' + ('you are ' + label + '. ' if label else '') +
+            (('F' if label else 'f') + 'irst read `' + ROOT + '/' + BRIEF + '`, the brief every agent on this '
+             'project follows: your team and the host\'s notes are in it. Y' if brief else ('Y' if label else 'y')) +
+            'our working folder is `' + relative(name) + '/` in this project. If this task is '
             'coding, change the project\'s files as asked. Save any other file you create (notes, reports, assets, '
             'drafts, downloads) in your working folder, not elsewhere in the project, and name the files you saved '
             'in your answer.')
