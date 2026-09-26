@@ -169,7 +169,7 @@ class Menus(unittest.TestCase):
     def test_access_phase_offers_the_two_advertised_choices(self):
         built = frontends.phase_menu(self.root, 'copilot', 'access', None, 1)
         self.assertIn('Allow (Allow all)', built['text'])
-        self.assertIn('Prompt \u2014 approval requests stop the turn', built['text'])
+        self.assertIn('Prompt \u2014 you approve in chat', built['text'])
         self.assertNotIn('auto-edit', built['text'])
 
     def test_activation_menu_shows_verified_defaults(self):

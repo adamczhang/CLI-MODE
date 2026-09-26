@@ -22,6 +22,7 @@ SECTIONS = (
         ('/d <task>', 'to current agent'),
         ('/d <name> <task>', 'to one agent'),
         ('/d <a>,<b> <task>', 'to several'),
+        ('/cli approve|deny', 'answer its ask'),
     )),
     ('RESULTS', (
         ('/cli diff [name]', 'last turn\'s diff'),
@@ -68,8 +69,8 @@ def text():
                                                        for command, description in rows]
         if heading == 'SEND WORK':
             lines.append('Only /d reaches an agent.')
-    lines += ['', 'More: /cli attach, /cli resume,',
-              *(['/cli shortcuts, /cli reset,', '/cli help (this page)'] if host.claude() else ['/help (this page)']),
+    lines += ['', *(['More: /cli attach|resume|shortcuts,', '/cli reset, /cli help (this page)'] if host.claude()
+                    else ['More: /cli attach, /cli resume,', '/help (this page)']),
               '<agent>: a tag or full name:', *AGENTS, '<name>: a name, tag (gro) or -7K',
               '$ works in place of / everywhere.']
     if host.claude():

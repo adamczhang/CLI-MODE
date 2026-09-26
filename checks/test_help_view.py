@@ -47,10 +47,15 @@ class CardHelp(unittest.TestCase):
     def test_claude_code_adds_its_own_settings(self):
         with patch.object(host, 'current', return_value=host.CLAUDE):
             text = help_view.text()
-        for row in ('/cli display ...', '/cli color on|off', '/cli shortcuts, /cli reset',
-                    '/cli help (this page)', '/cli-mode:cli if /cli clashes.'):
+        for row in ('/cli display ...', '/cli color on|off', 'More: /cli attach|resume|shortcuts,',
+                    '/cli reset, /cli help (this page)', '/cli-mode:cli if /cli clashes.'):
             self.assertIn(row, text)
         self.assertNotIn('/cli display', help_view.text())  # Not on Codex.
+
+    def test_approvals_are_on_both_cards(self):
+        for which in (host.CODEX, host.CLAUDE):
+            with patch.object(host, 'current', return_value=which):
+                self.assertIn('/cli approve|deny   answer its ask', help_view.text())
 
 
 if __name__ == '__main__':

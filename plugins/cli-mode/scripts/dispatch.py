@@ -28,7 +28,33 @@ def without_name(payload, words=1):
     return rest[1:] if rest and rest[0].isspace() else rest
 
 
+READS = ['read', 'search']  # The kinds ACPX approves at approve-reads, so an approved turn allows them too.
+
+
+def approval_policy(record, target):
+    """ACPX's permissionPolicy for one turn: the kinds of request `/cli approve` allowed, or None.
+
+    An approval is a rule, not an answer to a waiting question: ACPX's shared sessions can't hold a request open
+    for the user, so the stopped turn's continuation carries it (`approve` on its request) and ACPX applies it to
+    that prompt only. `/cli approve always` keeps a kind on the agent (`approveAlways`) for every later turn.
+    Reads pass as they always do and anything else escalates: the bridge then stops the turn and asks again
+    (acpx-runtime.mjs runs such a turn at approve-all, which ACPX's own write and terminal checks need).
+    At Allow access everything is approved already.
+    """
+    if (target.get('settings') or {}).get('access') == 'allow':
+        return None
+    kinds = list(dict.fromkeys(list((record or {}).get('approve') or []) + list(target.get('approveAlways') or [])))
+    return {'autoApprove': kinds + READS, 'defaultAction': 'escalate'} if kinds else None
+
+
 class DispatchMixin:
+    def remember_approval(self, session, asked, request_id):
+        """Keep the permission a stopped turn asked for on its agent, for `/cli approve` or `/cli deny`."""
+        with self.store.edit() as state:
+            for item in state['owned']:
+                if item['name'] == session:
+                    item['approval'] = dict(asked, requestId=request_id, at=time.time())
+
     def prompt(self, owned, text, generation, pending=None, timeout=86400, output=emit, routing_policy=None, request_id=None):
         folder = self.store.root / 'requests' / self.store.key / 'operations'
         folder.mkdir(parents=True, exist_ok=True)
@@ -73,9 +99,10 @@ class DispatchMixin:
                             or state['requests'][request_id]['settings'] != target.get('settings')
                             or state['requests'][request_id]['session'] != owned['name'] or not target.get('ready')))):
                     raise RuntimeError('Operation canceled before dispatch; nothing was sent.')
+                policy = approval_policy(state['requests'].get(request_id) if request_id else None, target)
                 owned = dict(owned, requestId=request_id or op, cancelFile=str(self.store.cancel_path(op)),
                              configCache=self.config_cache(),
-                             progressMode=progress_mode(state))
+                             progressMode=progress_mode(state), **({'permissionPolicy': policy} if policy else {}))
                 spawn_attempted = True
                 process = self.backend.start(owned, ['-s', owned['name'], '--file', str(prompt_path)], timeout)
                 state['inflight'][op].update(pid=process.pid, uncertain=True, running=True)
@@ -101,6 +128,7 @@ class DispatchMixin:
             runtime_result = None
             runtime_transport = owned.get('transport') != 'native' and not owned.get('bootstrapPrompt')
             observed = {}
+            asked = None  # The permission the agent asked for last; a turn stopped by it asks the user.
             until = time.monotonic() + timeout + 15
             with events_path.open('w', encoding='utf-8') as log:
                 relay = self.adapter.PublicRelay(owned['progressMode'])
@@ -181,6 +209,10 @@ class DispatchMixin:
                             if kind == 'runtime_session':
                                 observed['acpxRecordId'] = raw['recordId']
                                 event = None
+                            elif kind == 'permission':
+                                asked = {key: raw[key] for key in ('kind', 'title', 'detail')
+                                         if isinstance(raw.get(key), str)}
+                                event = None
                             elif kind == 'prompt_started':
                                 with self.store.edit() as latest:
                                     if op in latest['inflight']:
@@ -200,8 +232,10 @@ class DispatchMixin:
                                 error = outcome.get('error') or {}
                                 if outcome['status'] == 'failed' and error.get('code') in PERMISSION_CODES:
                                     access = owned['settings'].get('accessName') or owned['settings']['access']
+                                    if asked:
+                                        self.remember_approval(owned['name'], asked, request_id)
                                     publish([{'type': 'error', 'code': error['code'],
-                                              'message': permission_stop(label, access)}])
+                                              'message': permission_stop(label, access, asked)}])
                                 elif outcome['status'] != 'completed':
                                     publish([{'type': 'error', 'message': error.get('message', 'Agent turn canceled.')}])
                                 elif not raw.get('outputComplete'):
@@ -308,6 +342,7 @@ class DispatchMixin:
         workspace = owned.get('workspace') or self.store.workspace
         if working_folder and not provider_command and agent_folder.ensure(workspace, owned.get('alias')) is not None:
             text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file())
+            text += agent_folder.attachments_note(record.get('attachments'))
         if hasattr(self.backend, 'validate_prompt'):
             self.backend.validate_prompt(owned)
         if hasattr(self.backend, 'prepare'):

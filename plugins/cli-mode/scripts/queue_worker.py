@@ -669,8 +669,11 @@ class QueueMixin:
         listing = agent_folder.listing(folder)
         everything = (listing or {}).get('files', {})
         answers = sum(path.startswith(agent_folder.ANSWERS + '/') for path in everything)
+        attached = sorted(path.split('/', 1)[1] for path in everything
+                          if path.startswith(agent_folder.ATTACHMENTS + '/'))
+        own = (agent_folder.ANSWERS + '/', agent_folder.ATTACHMENTS + '/')
         files = sorted(((path, value) for path, value in everything.items()
-                        if not path.startswith(agent_folder.ANSWERS + '/')), key=lambda item: item[1][1], reverse=True)
+                        if not path.startswith(own)), key=lambda item: item[1][1], reverse=True)
         if not files:
             lines.append('Nothing saved yet.' if folder.is_dir() else
                          'Nothing saved yet; the folder is made with its next task.')
@@ -682,6 +685,10 @@ class QueueMixin:
         if answers:
             lines.append(str(answers) + (' answer' if answers == 1 else ' answers') + ' saved in ' +
                          agent_folder.ANSWERS + '/.')
+        if attached:
+            lines.append(str(len(attached)) + (' attached file' if len(attached) == 1 else ' attached files') + ' in ' +
+                         agent_folder.ATTACHMENTS + '/ (removed when the agent closes): ' +
+                         ', '.join(attached[:5]) + (', ...' if len(attached) > 5 else ''))
         text = '\n'.join(lines)
         return dict(message=text, text=text, path=str(folder), relative=agent_folder.relative(entry['alias']))
 

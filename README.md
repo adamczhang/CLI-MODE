@@ -19,6 +19,8 @@ Copilot or Codex CLI, and relays their answers back into the chat you were alrea
 |---|:---:|:---:|
 | Six agents, each on its own subscription, with guided setup and sign-in checks | ✓ | ✓ |
 | Model, effort and access chosen per agent | ✓ | ✓ |
+| Approve or refuse an agent's requests from the chat | ✓ | ✓ |
+| Files and pasted images attached to a `/d` reach the agent | ✓ | ✓ |
 | Several named agents working side by side; one prompt to many at once | ✓ | ✓ |
 | Conversations that persist, and carry over to a new session | ✓ | ✓ |
 | Change receipt, full diff and undo for every turn | ✓ | ✓ |
@@ -77,8 +79,8 @@ working folder, using its own account and model access. Up to four run at once, 
 
 Pick your host and run its block in PowerShell.
 
-**Claude Code:** download `cli-mode-claude-0.3.5.zip` from the
-[v0.3.5 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.5), extract it, and run:
+**Claude Code:** download `cli-mode-claude-0.3.6.zip` from the
+[v0.3.6 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.6), extract it, and run:
 
 ```powershell
 .\install-claude.ps1
@@ -87,7 +89,7 @@ Pick your host and run its block in PowerShell.
 Or install it straight from GitHub:
 
 ```powershell
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.5 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.6 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
@@ -97,7 +99,7 @@ autocomplete; see [Claude Code](#claude-code).
 **Codex:**
 
 ```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.5
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.6
 codex plugin add cli-mode@cli-mode
 ```
 
@@ -105,9 +107,9 @@ codex plugin add cli-mode@cli-mode
 for one host is ready in the other. Conversations and settings stay separate per host.
 
 **Upgrading?** A GitHub install stays on its tag; the [release notes](RELEASE_NOTES.md#upgrading-from-an-earlier-03-release)
-show how to move it to 0.3.5 and keep your settings.
+show how to move it to 0.3.6 and keep your settings.
 
-Release **0.3.5** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
+Release **0.3.6** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
 
 ## Get started
 
@@ -219,6 +221,8 @@ continues where it left off, and the earlier session no longer has it.
 - **`/cli queue`** — see queued, running and completed requests; **`/cli resume`** picks up monitoring of
   existing turns without resending anything.
 - **`/cli cancel [name]`** — cancel an agent's running turn, keeping queued follow-ups.
+- **`/cli approve [name] [always]`**, **`/cli deny [name]`** — answer an agent that stopped to ask for a
+  permission (see Access levels below).
 - **`/cli close [name|all]`** (or **`/cli stop`**, **`/cli off`**) — close one agent, or all of them. With
   several running and no name, it asks which. Closing the last agent returns you to your host.
 - **`/cli help`** (or **`/cli commands`**; on Codex also **`/help`**) — show the command card. Reply X to
@@ -228,11 +232,21 @@ continues where it left off, and the earlier session no longer has it.
 Closing help or settings keeps the agent running.
 
 **Access levels.** Claude supports Allow, Auto-edit and Prompt; Antigravity, Grok and Copilot support Allow
-and Prompt; Cursor and Codex support Allow only. CLI-MODE cannot show you an agent's approval prompt, so
-every level except Allow is labeled "approval requests stop the turn": when the agent asks for a permission
-its level does not grant, that turn ends with a message saying so, and queued follow-ups continue. Choose
-Allow (`/cli access allow`) for work that edits files or runs commands. Access is shown as the shared level
-followed by the agent's own name for it, for example `Allow (Bypass permissions)` or `Allow (YOLO)`.
+and Prompt; Cursor and Codex support Allow only. Every agent starts at Allow, where it edits files and runs
+commands without asking. At the other levels you approve in the chat: when the agent asks for something its
+level does not grant, its turn stops and the answer asks you:
+
+```text
+Grok GRO-4K asks to run commands: npm install
+Its turn stopped for your answer (Prompt access). /cli approve lets it run commands and carry on,
+/cli approve always lets it run commands from now on, /cli deny tells it no.
+```
+
+`/cli approve` sends the agent on with that kind of request allowed (editing files, running commands,
+deleting, moving, fetching) for that turn; `/cli approve always` keeps it allowed while the agent runs;
+`/cli deny` tells it no and lets it carry on without it. Add a name when several agents are waiting
+(`/cli approve gro-4k`). A new `/d` to the agent also settles the question. Access is shown as the shared
+level followed by the agent's own name for it, for example `Allow (Bypass permissions)` or `Allow (YOLO)`.
 
 ## What to expect
 
@@ -256,7 +270,9 @@ followed by the agent's own name for it, for example `Allow (Bypass permissions)
   CLI-MODE says so.
 - **Usage when available:** Antigravity and Claude can report subscription use; other agents show "Usage not
   available through CLI".
-- **Text only:** include local file paths in your prompt. Chat attachments are not forwarded.
+- **Attachments:** files and pasted images attached to a `/d` in the Claude Code or Codex desktop app are
+  copied into each named agent's folder (`Agent_Working_Folder/<NAME>/attachments/`) and named in its task.
+  They are removed when the agent closes; `/cli dir` lists them. Local file paths in your prompt work too.
 - **MCP tools** are configured in each agent's own CLI, not through CLI-MODE.
 
 ## Claude Code
@@ -312,7 +328,7 @@ adapters from npm the first time they run.
 
 **What can it do on my machine?** It installs prompt hooks in your host and runs the agent CLIs you set up.
 At **Allow** access an agent can edit files and run commands without asking, the same as that CLI's own
-"YOLO" or bypass mode. Choose Prompt access if you want approval requests to stop the turn instead.
+"YOLO" or bypass mode. Choose Prompt access to approve its requests in the chat instead.
 
 ## Troubleshooting
 

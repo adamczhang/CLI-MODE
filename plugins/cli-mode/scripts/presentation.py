@@ -11,12 +11,17 @@ MENU_WIDTH = 40
 MENU_MAX_OPTIONS = 10
 
 # ACPX shared sessions have no channel for live approvals. Every access level
-# except allow ends the turn at the first request the agent would ask about.
+# except allow ends the turn at the first request the agent would ask about;
+# the answer asks the user, and /cli approve sends the turn on with that kind
+# of request allowed (dispatch.approval_policy).
 PERMISSION_CODES = ('PERMISSION_PROMPT_UNAVAILABLE', 'PERMISSION_DENIED')
+# What each kind of ACP tool request lets an agent do, in the approval question.
+KIND_WORDS = {'edit': 'edit files', 'delete': 'delete files', 'move': 'move files', 'execute': 'run commands',
+              'fetch': 'fetch from the web'}
 
 
 def access_note(access):
-    return '' if access == 'allow' else ' \u2014 approval requests stop the turn'
+    return '' if access == 'allow' else ' \u2014 you approve in chat'
 
 
 # One vocabulary for every agent. The shared alias leads; the provider's own
@@ -56,10 +61,28 @@ def effort_rank(name, value=None):
     return EFFORT_ORDER.index(key) if key else len(EFFORT_ORDER)
 
 
-def permission_stop(label, access_name):
-    return (label + ' asked for a permission that CLI-MODE cannot show you, so the turn stopped there under ' +
-            access_name + ' access. Use /cli access and choose allow to let it continue, or ask for work that '
-            'needs no approval.')
+def approval_rule(asked):
+    """The ACPX rule `/cli approve` adds for a request: its kind (edit, execute...), else its exact title.
+
+    A kind, because an agent retrying a refused step often words it differently (in a live probe, a write titled
+    with a full path came back titled with a relative one), so an exact title would stop it again.
+    """
+    return asked.get('kind') if asked.get('kind') in KIND_WORDS else asked.get('title')
+
+
+def approval_words(asked):
+    return KIND_WORDS.get(asked.get('kind'), 'use this tool')
+
+
+def permission_stop(label, access_name, asked=None):
+    if not asked or not approval_rule(asked):
+        return (label + ' asked for a permission that CLI-MODE could not read, so the turn stopped there under ' +
+                access_name + ' access. Use /cli access and choose allow to let it continue, or ask for work that '
+                'needs no approval.')
+    words = approval_words(asked)
+    return (label + ' asks to ' + words + ': ' + ' '.join((asked.get('detail') or asked.get('title')).split()) +
+            '\nIts turn stopped for your answer (' + access_name + ' access). /cli approve lets it ' + words +
+            ' and carry on, /cli approve always lets it ' + words + ' from now on, /cli deny tells it no.')
 
 
 def paginate(items, reserved=0, page=1, limit=MENU_MAX_OPTIONS):

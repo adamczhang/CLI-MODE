@@ -41,7 +41,50 @@ def activation_reply(state, prompt):
     return None
 
 
+def attached(event):
+    """The prompt event with a /d's attached files taken off its text into `attachments` (host.split_attachments).
+
+    Only a /d changes: any other prompt with files attached is the host's, exactly as it arrived.
+    """
+    import host
+    from state import direct_payload
+    typed, files = host.split_attachments(event.get('prompt') or '')
+    if not files or direct_payload(typed) is None:
+        return event
+    return dict(event, prompt=typed, attachments=files)
+
+
+def attach_files(store, state, request_ids, files):
+    """Copy a /d's attached files into the working folder of each agent it went to, and name them on its request.
+
+    A file that is gone or too large is left out; the task names only the copies the agent can open.
+    """
+    import agent_folder
+    from state import agent_entry
+    for request_id in request_ids:
+        record = state['requests'][request_id]
+        entry = agent_entry(state, record['session']) or {}
+        copied, _ = agent_folder.attach(entry.get('workspace') or store.workspace, entry.get('alias'), files)
+        if copied:
+            record['attachments'] = copied
+
+
+def answered(state, request_ids, approval):
+    """A new /d to an agent settles the permission question its stopped turn asked; `approval` is the answer
+    (`/cli approve` allows that kind of request on this turn, `always` on every turn from now on)."""
+    from state import agent_entry
+    for request_id in request_ids:
+        record = state['requests'][request_id]
+        entry = agent_entry(state, record['session']) or {}
+        entry.pop('approval', None)
+        if approval and approval['answer'] == 'approve' and approval.get('rule'):
+            record['approve'] = [approval['rule']]
+            if approval.get('always') and approval['rule'] not in entry.setdefault('approveAlways', []):
+                entry['approveAlways'].append(approval['rule'])
+
+
 def handle(event, root=None):
+    event = attached(event) if event['hook_event_name'] == 'UserPromptSubmit' else event
     name = event['hook_event_name']
     if name == 'PreToolUse':
         state = Store(event['session_id'], event['cwd'], root).read()
@@ -95,6 +138,9 @@ def decide(event, root=None, workspace=None, capture=None):
                 targets = decision.get('targets') or [dict(session=decision.get('session'))]
                 request_ids = [request_id] + [uuid.uuid4().hex for _ in targets[1:]]
                 text = event.get('prompt', '') if capture is None else capture
+                approval = decision.get('approval')
+                if approval:
+                    text = approval['text']  # /cli approve or deny: the agent's next /d says so and goes on.
                 try:
                     from state import MAX_QUEUED_REQUESTS
                     queued = sum(record['status'] == 'captured' for record in (state.get('requests') or {}).values())
@@ -111,6 +157,9 @@ def decide(event, root=None, workspace=None, capture=None):
                     decision['requestId'] = request_id
                     if len(request_ids) > 1:
                         state['turnRoute']['requestIds'] = decision['requestIds'] = request_ids
+                    if event.get('attachments'):
+                        attach_files(store, state, request_ids, event['attachments'])
+                    answered(state, request_ids, approval)
             if decision['route'] == 'hint':
                 state['turnRoute']['text'] = decision['text']
             if decision.get('session'):

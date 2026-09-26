@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.6 — Approvals in the chat, attachments on /d — 2026-09-26
+
+### Approvals in the chat (both hosts)
+- **An agent that needs a permission asks you.** At Prompt or Auto-edit access, the turn still stops at the first request its level does not grant, but the answer now says what the agent asked for, from its own request (`Grok GRO-4K asks to run commands: npm install`), and how to answer. The access label reads "you approve in chat" instead of "approval requests stop the turn".
+- **`/cli approve [name]`** sends the agent on (as its next `/d`) with that kind of request allowed for that turn: editing, deleting or moving files, running commands, fetching; an odd tool is approved by its exact title. Anything else it asks for on that turn stops it and asks again. **`/cli approve [name] always`** keeps the kind allowed while the agent runs. **`/cli deny [name]`** tells it no and lets it carry on. Without a name they answer the only agent waiting; a new `/d` to the agent also settles the question.
+- Under the hood an approved turn sends ACPX a per-prompt permission rule (the approved kinds and reads pass, anything else escalates) at approve-all mode, because ACPX's own file-write and terminal checks read only the mode. An escalated request makes the bridge cancel the turn and report it as a permission stop.
+
+### Attachments on /d (both hosts)
+- **Files and pasted images attached to a `/d` reach the agent.** Claude Code's desktop app sends each attached file as an `@"path"` mention before the text and keeps pasted images only in its uploads folder; Codex's desktop app lists attached files, pasted images too, above the text. CLI-MODE takes them off the prompt, copies them into each named agent's `Agent_Working_Folder/<NAME>/attachments/` (a clashing name gets `-2`; files over 250 MB are left out) and names the copies in the task. A prompt that is not a `/d` is untouched.
+- **A `/d` with a file attached is a `/d`.** The mention in front of it used to hide the `/d`, so the prompt went to the host instead.
+- Attachments are not reported as files the agent saved. `/cli dir` lists them, and closing the agent removes them; its own files and saved answers stay.
+
+### Help and docs
+- The help card has `/cli approve|deny`; on Claude Code its "More:" line is one line shorter to stay under 50 lines.
+- The README's host table lists features by what they do, and the README, release notes and `docs/ARCHITECTURE.md` explain approvals and attachments.
+
 ## 0.3.5 — Passing work between agents — 2026-09-26
 
 ### Agent to agent (both hosts)

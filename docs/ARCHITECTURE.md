@@ -40,9 +40,23 @@ global npm upgrades: new bindings pick it up.
 
 ACPX 0.18.0's shared runtime does not support injecting `mcpServers` or interactive
 permission callbacks. Configure MCP tools in the provider CLI itself; a nonempty
-ACPX `mcpServers` configuration is rejected before submitting a prompt. This
-integration uses the selected static access policy and fails requests needing
-unavailable interactive approval.
+ACPX `mcpServers` configuration is rejected before submitting a prompt.
+
+Approvals therefore work as stop, ask, continue. Below Allow access, ACPX ends a
+turn at the first request it cannot approve; the bridge (`acpx-runtime.mjs`)
+reports the agent's own `session/request_permission` (kind, title, command or
+file), and dispatch keeps it on the agent as the question the answer shows.
+`/cli approve` or `/cli deny` becomes the agent's next `/d`. An approved turn
+carries a per-prompt ACPX `permissionPolicy` that approves the approved kinds
+(and reads) and escalates everything else, at `approve-all` mode because ACPX's
+own file-write and terminal checks read only the mode; an escalated request makes
+the bridge cancel the turn and report it as a permission stop, which asks again.
+`/cli approve always` keeps the kind on the agent for every later turn.
+
+A `/d` with files attached (Claude Code's `@"path"` mentions and uploads folder,
+Codex's "Files mentioned by the user" list) copies them into
+`Agent_Working_Folder/<NAME>/attachments/` for each named agent and names the
+copies in the task; closing the agent removes them.
 
 ## Requests, the queue and relaying
 

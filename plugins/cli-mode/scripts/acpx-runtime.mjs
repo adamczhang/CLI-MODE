@@ -74,7 +74,28 @@ async function acpxConfig(input) {
   return config;
 }
 
+/** What the agent asked permission for: kind, title and the command or file, for CLI-MODE's approval question. */
+function permissionRequest(message) {
+  const call = message.params?.toolCall;
+  if (message.method !== 'session/request_permission' || !call) return;
+  const input = call.rawInput && typeof call.rawInput === 'object' ? call.rawInput : {};
+  const detail = [input.command, input.cmd, input.file_path, input.path, input.url]
+    .find(value => typeof value === 'string' && value.trim());
+  return {type: 'permission', ...(typeof call.kind === 'string' ? {kind: call.kind} : {}),
+    ...(typeof call.title === 'string' ? {title: call.title.slice(0, 300)} : {}),
+    ...(detail ? {detail: detail.slice(0, 300)} : {})};
+}
+
+/** A request the turn's rule escalated (refused, not approved): the same question, from ACPX's reply. */
+function escalation(message) {
+  const found = message.result?._meta?.acpx?.permissionEscalation;
+  if (!found || typeof found !== 'object') return;
+  return permissionRequest({method: 'session/request_permission', params: {toolCall: {
+    kind: found.toolKind, title: found.toolTitle, rawInput: found.toolInput}}});
+}
+
 function publicUpdate(message) {
+  if (message.method === 'session/request_permission') return permissionRequest(message);
   if (message.method !== 'session/update') return;
   const update = message.params?.update;
   if (update?.sessionUpdate === 'agent_message_chunk') {
@@ -98,9 +119,14 @@ async function sharedRuntime(input) {
   const [{createSharedAcpRuntime, createAgentRegistry}, config] =
     await Promise.all([runtimeModule(input.install), acpxConfig(input)]);
   const {authCredentials} = await sharedConfig(config);
+  // A turn `/cli approve` sent on carries a rule (dispatch.approval_policy): the approved kinds and reads pass,
+  // everything else escalates. ACPX sends mode and rule with each prompt, so they hold for this turn only. The
+  // mode is approve-all because ACPX's own file-write and terminal checks read only the mode, never the rule:
+  // under approve-reads an approved write would still fail there. The rule keeps everything else refused.
   const options = {cwd: input.workspace,
-    permissionMode: input.access === 'allow' ? 'approve-all' : 'approve-reads',
+    permissionMode: input.access === 'allow' || input.permissionPolicy ? 'approve-all' : 'approve-reads',
     nonInteractivePermissions: 'fail', authPolicy: 'skip', authCredentials,
+    ...(input.permissionPolicy ? {permissionPolicy: input.permissionPolicy} : {}),
     timeoutMs: input.timeout * 1000, ttlMs: (input.ttl ?? 1800) * 1000};
   const key = JSON.stringify([input.install.package, config.agents, options]);
   if (!runtimes.has(key)) {
@@ -116,7 +142,7 @@ async function main(input, cancellation, checkCancellation, progress) {
   const runtime = await sharedRuntime(input);
   const observer = new AbortController();
   let turn, watchTask, lastCursor, observedResult = false, watchError;
-  let sawStart = false, observationGap = false, repairedCursor = false;
+  let sawStart = false, observationGap = false, repairedCursor = false, escalated = false;
   try {
     const locate = () => runtime.findSession({sessionKey: input.session, agent: input.profile, cwd: input.workspace});
     const handle = await locate();
@@ -176,6 +202,13 @@ async function main(input, cancellation, checkCancellation, progress) {
             if (event.type === 'turn_started') sawStart = true;
             if (event.type === 'message') {
               if (!sawStart) { observationGap = true; continue; }
+              const refused = input.permissionPolicy && !escalated ? escalation(event.message) : undefined;
+              if (refused) {
+                // A request the approval didn't cover: stop here and ask, as an unapproved turn would.
+                escalated = true;
+                write(refused);
+                runtime.cancel({handle, reason: 'CLI-MODE: approval needed'}).catch(() => {});
+              }
               const update = publicUpdate(event.message) ??
                 (event.message.method === 'session/update' ? publicProgress(event.message.params?.update) : undefined);
               if (update) write(update);
@@ -220,7 +253,12 @@ async function main(input, cancellation, checkCancellation, progress) {
     const after = await runtime.findSession({sessionKey: input.session, agent: input.profile, cwd: input.workspace})
       .catch(() => undefined);
     const providerSession = after && (after.agentSessionId || after.backendSessionId);
-    write({type: 'runtime_result', result, outputComplete,
+    // Stopped for an approval: reported as ACPX reports a turn stopped by a permission request, also when the
+    // agent ended its turn itself before the cancel arrived (it was still refused, and the user decides).
+    const reported = escalated && result.status !== 'failed' ? {...result, status: 'failed', error: {
+      code: 'PERMISSION_PROMPT_UNAVAILABLE', message: 'The agent asked for a permission this turn does not allow.'}}
+      : result;
+    write({type: 'runtime_result', result: reported, outputComplete,
       ...(providerSession ? {providerSession} : {}),
       settled: observedResult || result.status === 'completed' || result.status === 'cancelled',
       ...(watchError ? {observationError: {code: watchError.code, message: watchError.message}} : {}),

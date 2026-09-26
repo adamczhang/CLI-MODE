@@ -1,6 +1,6 @@
 # CLI-MODE — agent guide (read this first)
 
-> **Written for CLI-MODE 0.3.5** (tag `v0.3.5`, 2026-09-26).
+> **Written for CLI-MODE 0.3.6** (tag `v0.3.6`, 2026-09-26).
 > If `plugins/cli-mode/.codex-plugin/plugin.json` shows a different version, parts of this file may be
 > out of date. Verify any file, function or rule named here against the code before relying on it; when
 > they disagree, the code wins. Fix this file in the same change. `checks/test_agent_docs.py` fails
@@ -47,6 +47,11 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   snapshots behind each turn's change receipt and `/cli diff`; `scripts/agent_folder.py` keeps each agent's
   git-ignored `Agent_Working_Folder/<NAME>/`, names it in each task and reports what a turn saved there;
   `scripts/test_gate.py` runs the project's `/cli test` command after turns that change files.
+- **Approvals and attachments** (shared): below Allow a turn stops at the first permission request; the bridge
+  reports the agent's request, `dispatch.remember_approval` keeps it as the agent's `approval`, and
+  `/cli approve|deny` (`state.approval_route`) becomes its next /d, carrying a per-prompt ACPX
+  `permissionPolicy` (`dispatch.approval_policy`). Files attached to a /d (`host.split_attachments`, plus
+  Claude's uploads folder in `hooks/claude.py`) are copied into `Agent_Working_Folder/<NAME>/attachments/`.
 - **Routing** (shared): `state.route()` turns a prompt into a route: `/cli …` controls, `/d` (Direct),
   help, setup replies; any other text is the host's (Passthrough mode was removed). `route.decide()` records
   it in the conversation state and, for `direct`, captures the exact text as a request and ensures the worker

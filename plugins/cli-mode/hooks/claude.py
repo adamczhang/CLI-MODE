@@ -43,8 +43,8 @@ def nothing_to_do(raw):
             return False
         if name == 'PreToolUse' and event.get('tool_name') not in AGENT_TURN_TOOLS:
             return False  # Possibly CLI-MODE's controller: always checked for approval, active or not.
-        if name == 'UserPromptSubmit' and event.get('prompt', '').lstrip()[:1] in ('/', '$'):
-            return False  # A command, possibly CLI-MODE's.
+        if name == 'UserPromptSubmit' and event.get('prompt', '').lstrip()[:1] in ('/', '$', '@'):
+            return False  # A command, possibly CLI-MODE's (after the files the desktop app attached, as @"path").
         try:
             from _sha2 import sha256  # Python's own SHA-256: hashlib first loads OpenSSL (about 6 ms).
         except ImportError:
@@ -249,6 +249,8 @@ def handle(event, root=None):
     if name == 'UserPromptSubmit' and event.get('prompt', '').strip().casefold() in RESET:
         return reset(event, root)
     import route
+    if name == 'UserPromptSubmit':
+        event = with_images(route.attached(event), event.get('prompt') or '')
     prompt = event.get('prompt', '')
     capture = host.unwrap_prompt(prompt, host.CLAUDE)
     store, state, decision, worker, cancellation = route.decide(event, root, workspace=workspace(event), capture=capture)
@@ -269,6 +271,59 @@ def handle(event, root=None):
     if name == 'SessionStart':
         return session_start(event, root, state, decision)
     return prompt_reply(event, root, state, decision, worker, cancellation)
+
+
+def with_images(event, typed):
+    """A /d event with the images pasted into it added to its `attachments`; `typed` is the prompt as sent.
+
+    The desktop app saves every attached file in `uploads/<session>/` just before the prompt is sent. A file
+    reaches the prompt text as an @"path" mention (route.attached), but an image does not appear in it at all.
+    So an image of this prompt is a file in that folder that no earlier message of the conversation named: the
+    transcript names each earlier message's files. The transcript may already end with this very prompt, so
+    that last user message is not counted as earlier.
+    """
+    from state import direct_payload
+    if direct_payload(event.get('prompt') or '') is None:
+        return event
+    folder = host.home(host.CLAUDE) / 'uploads' / str(event.get('session_id') or '')
+    try:
+        uploads = sorted((path for path in folder.iterdir() if path.is_file()), key=lambda path: path.stat().st_mtime)
+    except OSError:
+        return event
+    known = {os.path.normcase(os.path.abspath(path)) for path in event.get('attachments') or []}
+    uploads = [path for path in uploads if os.path.normcase(str(path)) not in known]
+    if not uploads:
+        return event
+    try:
+        lines = Path(event['transcript_path']).read_text(encoding='utf-8', errors='replace').splitlines()
+    except (OSError, KeyError, TypeError):
+        return event  # Without the transcript, which uploads are new can't be told: none are added.
+    def text_of(content):
+        return content if isinstance(content, str) else ''.join(
+            part.get('text', '') for part in content or [] if isinstance(part, dict) and part.get('type') == 'text')
+
+    def record_of(line):
+        try:
+            return json.loads(line)
+        except ValueError:
+            return {}
+    # A prompt sent while Claude was busy is first logged as a queued command, with its files: not an earlier one.
+    lines = [line for line in lines if '"queued_command"' not in line or
+             text_of((record_of(line).get('attachment') or {}).get('prompt')).strip() != typed.strip()]
+    for index in range(len(lines) - 1, -1, -1):
+        if '"user"' not in lines[index] or '"tool_result"' in lines[index]:
+            continue
+        record = record_of(lines[index])
+        if record.get('type') != 'user' or not isinstance(record.get('message'), dict):
+            continue
+        if text_of(record['message'].get('content')).strip() == typed.strip():
+            lines = lines[:index]  # This prompt's own message (and the files listed after it) is not an earlier one.
+        break  # Only the latest person's message can be this prompt.
+    earlier = '\n'.join(lines)
+    images = [str(path) for path in uploads if path.name not in earlier]
+    if not images:
+        return event
+    return dict(event, attachments=(event.get('attachments') or []) + images)
 
 
 def pre_tool_use(event, root):

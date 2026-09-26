@@ -15,6 +15,7 @@ from unittest.mock import patch
 from test_controller import PLUGIN, Controller, Store, hook
 import acpx
 import agy
+from state import agent_label
 
 
 def remove_temp(temp, seconds=10):
@@ -317,14 +318,50 @@ class SharedRuntime(unittest.TestCase):
                 control.send('/d request-permission', output=events.append)
             errors = [event for event in events if event['type'] == 'error']
             self.assertEqual([event.get('code') for event in errors], ['PERMISSION_PROMPT_UNAVAILABLE'])
-            self.assertIn('/cli access', errors[0]['message'])
-            self.assertIn(self.backend_label(control), errors[0]['message'])
+            # The agent's own request is the question: its kind and title, and how to answer.
+            self.assertIn(agent_label(control.store.read()) + ' asks to edit files: Edit fixture',
+                          errors[0]['message'])
+            self.assertIn('/cli approve', errors[0]['message'])
             state = control.store.read()
             self.assertEqual([record['status'] for record in state['requests'].values()], ['failed'])
+            self.assertEqual({key: state['owned'][0]['approval'][key] for key in ('kind', 'title')},
+                             {'kind': 'edit', 'title': 'Edit fixture'})
             self.assertFalse(state['inflight'])
             after = []
             control.send('/d after denial', output=after.append)
             self.assertEqual([e['text'] for e in after if e['type'] == 'message'], ['after denial'])
+        finally:
+            self.assertTrue(control.off()['shutdownComplete'])
+
+    def test_an_approved_kind_is_allowed_by_acpx_on_the_next_prompt(self):
+        control = Controller(Store('runtime-approve', self.workspace, self.root / 'approve'), self.backend)
+        try:
+            control.frontend()
+            control.activate('gemini-3.8-flash-high', 'prompt')
+            with control.store.edit() as state:
+                state['owned'][0]['approveAlways'] = ['edit']  # What /cli approve always keeps.
+            events = []
+            control.send('/d request-permission', output=events.append)
+            answer = ''.join(event['text'] for event in events if event['type'] == 'message')
+            self.assertEqual(json.loads(answer), {'outcome': {'outcome': 'selected', 'optionId': 'allow'}})
+            self.assertFalse([event for event in events if event['type'] == 'error'])
+        finally:
+            self.assertTrue(control.off()['shutdownComplete'])
+
+    def test_a_kind_the_approval_does_not_cover_stops_and_asks_again(self):
+        control = Controller(Store('runtime-escalate', self.workspace, self.root / 'escalate'), self.backend)
+        try:
+            control.frontend()
+            control.activate('gemini-3.8-flash-high', 'prompt')
+            with control.store.edit() as state:
+                state['owned'][0]['approveAlways'] = ['execute']  # Commands approved; the fixture asks to edit.
+            events = []
+            with self.assertRaises(RuntimeError):
+                control.send('/d request-permission', output=events.append)
+            errors = [event for event in events if event['type'] == 'error']
+            self.assertEqual([event.get('code') for event in errors], ['PERMISSION_PROMPT_UNAVAILABLE'])
+            self.assertIn(' asks to edit files: Edit fixture', errors[0]['message'])
+            self.assertEqual(control.store.read()['owned'][0]['approval']['kind'], 'edit')
         finally:
             self.assertTrue(control.off()['shutdownComplete'])
 
