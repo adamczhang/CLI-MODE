@@ -586,17 +586,27 @@ class QueueMixin:
             text = label + ' is still working; /cli cancel ' + alias.lower() + ' first, then undo.'
             return dict(message=text, text=text)
         workspace = record.get('workspace') or self.store.workspace
-        restored, removed, conflicts = changes.undo(workspace, record['changes'])
+        # Only what the agent's own tools edited: the receipt covers the whole folder, so another agent's
+        # edits made meanwhile are in it too. A turn saved before tool edits were recorded undoes its receipt.
+        own = record.get('touched')
+        restored, removed, conflicts, left = changes.undo(workspace, record['changes'],
+                                                          only=None if own is None else set(own))
+        note = ('' if not left else ' Left as they are, not edited by ' + label + '\'s own tools: ' +
+                ', '.join(left[:6]) + (' and more' if len(left) > 6 else '') + '.')
         if conflicts:
             text = ('Nothing was undone: ' + ', '.join(conflicts[:6]) + (' and more' if len(conflicts) > 6 else '') +
                     (' has' if len(conflicts) == 1 else ' have') + ' changed since ' + label + '\'s turn.')
             return dict(message=text, text=text, conflicts=conflicts)
+        if not restored and not removed:
+            text = ('Nothing was undone: ' + label + '\'s own tools edited none of the files its last turn changed.'
+                    + note)
+            return dict(message=text, text=text, left=left)
         with self.store.edit() as latest:
             latest['requests'][request_id]['undone'] = True
         parts = (['restored ' + ', '.join(restored)] if restored else []) + (['removed ' + ', '.join(removed)]
                                                                              if removed else [])
-        text = 'Undid ' + label + '\'s last turn: ' + '; '.join(parts) + '.'
-        return dict(message=text, text=text, restored=restored, removed=removed)
+        text = 'Undid ' + label + '\'s last turn: ' + '; '.join(parts) + '.' + note
+        return dict(message=text, text=text, restored=restored, removed=removed, left=left)
 
     def tests(self, text=None):
         """`/cli test [command|off]`: the command CLI-MODE runs after each agent turn that changes files."""
@@ -822,6 +832,9 @@ class QueueMixin:
             op = uuid.uuid4().hex
             record.update(status='submitting', submittedAt=time.time(), submitterPid=os.getpid(), operation=op,
                           settings=deepcopy(target['settings']))
+            # A permission question belongs to the turn that stopped; the agent's next turn moves past it
+            # (a queued follow-up, not only an answer), so /cli approve can't later answer a stale one.
+            target.pop('approval', None)
             state['inflight'][op] = dict(session=record['session'], kind='prompt', phase='admitted',
                                          requestId=request_id, submitterPid=os.getpid(), running=True)
             workspace = target.get('workspace') or self.store.workspace

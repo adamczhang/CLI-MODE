@@ -186,6 +186,15 @@ class Flow(unittest.TestCase):
         self.prompt('/d do something else')
         self.assertNotIn('approval', self.store.read()['owned'][0])
 
+    def test_a_queued_turn_that_runs_after_the_stop_settles_it_too(self):
+        self.prompt('/d queued before the stop')
+        request = self.store.read()['turnRoute']['requestId']
+        self.ask()  # The earlier turn stopped to ask; this queued one still runs, and moves past it.
+        self.control.send_request(request, output=lambda event: None)
+        self.assertNotIn('approval', self.store.read()['owned'][0])
+        self.prompt('/cli approve')
+        self.assertEqual(self.store.read()['turnRoute']['text'], 'No agent is waiting for an approval.')
+
 
 @unittest.skipUnless(HOOK.is_file(), 'The Claude Code hook is not in the Codex package')
 class ClaudeImages(unittest.TestCase):
@@ -260,6 +269,20 @@ class ClaudeAttach(unittest.TestCase):
         self.assertEqual(state['turnRoute']['route'], 'direct')
         self.assertEqual(record['attachments'], ['Agent_Working_Folder/' + alias + '/attachments/' + name
                                                  for name in ('README.md', 'image.jpg')])
+        # The next /d has no new upload: nothing is attached again, and the transcript is not needed for it.
+        self.assertEqual(sorted(state['seenUploads']), ['878dde39-image.jpg', 'bc752f63-README.md'])
+        transcript.unlink()
+        with patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': str(config)}):
+            self.event('UserPromptSubmit', prompt='/d and now?', transcript_path=str(transcript))
+            state = self.store().read()
+            self.assertNotIn('attachments', state['requests'][state['turnRoute']['requestId']])
+            # A new image, with the transcript back, still arrives.
+            (uploads / '9abcdef0-image.png').write_bytes(b'png')
+            transcript.write_text('', encoding='utf-8')
+            self.event('UserPromptSubmit', prompt='/d one more', transcript_path=str(transcript))
+        state = self.store().read()
+        self.assertEqual(state['requests'][state['turnRoute']['requestId']]['attachments'],
+                         ['Agent_Working_Folder/' + alias + '/attachments/image.png'])
 
 
 if __name__ == '__main__':

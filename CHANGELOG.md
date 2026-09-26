@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixes (both hosts)
+- **The test gate's time limit ends the whole test run.** On Windows, a run past its 10 minutes ended only the shell, and waiting for the output then blocked on the test runner still holding it, so the agent's queue stalled and the project's test lock stayed taken. The run and everything it started are now ended together.
+- **`/cli undo` gives a file back its own line endings.** It wrote files back as git stores them, so with Git for Windows' default `core.autocrlf` (or an `eol` rule in `.gitattributes`) a restored CRLF file came back with LF endings. Files are now written as a checkout writes them.
+- **A permission question goes stale when the agent moves on.** A queued `/d` that ran after the stop left the question open, so a later `/cli approve` sent an out-of-date approval. The agent's next turn now settles it.
+- **`/cli undo` no longer undoes another agent's work.** It restored every file in the turn's change receipt, which covers the whole folder, so a file another agent edited while the turn ran was put back too. It now restores only the files the agent's own tools edited (as its edit steps report them), and names the receipt's other files, left as they are. A file an agent changed only through a shell command is not undone.
+- A turn with an approval uses a one-off ACPX client that is closed after the turn, instead of adding one to the warm bridge per approval.
+
+### Faster /d on Claude Code
+- **Pasted images no longer cost every later `/d` a full transcript read.** Finding a `/d`'s images read the whole conversation transcript (which holds every pasted image) on each `/d` once the session had any upload. Uploads already sorted are now remembered, and the transcript is read only when a new one appears.
+
+### Cleanup
+- Removed two unused adapter functions and 41 superseded validation reports, evidence files and one-off live scripts from before 0.3.
+
 ## 0.3.6 — Approvals in the chat, attachments on /d — 2026-09-26
 
 ### Approvals in the chat (both hosts)

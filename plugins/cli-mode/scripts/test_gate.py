@@ -103,6 +103,21 @@ def summary(output):
     return lines[-1][:200] if lines else ''
 
 
+def stop_tree(process):
+    """End a test run and everything it started (the shell, npm, node, pytest...)."""
+    if os.name == 'nt':
+        try:
+            subprocess.run(['taskkill', '/T', '/F', '/PID', str(process.pid)], capture_output=True, timeout=30,
+                           stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW)
+            return
+        except (OSError, subprocess.SubprocessError):
+            pass  # At least the shell itself goes.
+    try:
+        process.kill()
+    except OSError:
+        pass
+
+
 def run(root, workspace, text, log, timeout=TIMEOUT):
     """Run the command in the project, one run per project at a time; the result for the receipt."""
     lock = Path(root) / ('tests-' + hashlib.sha1(key(workspace).encode()).hexdigest()[:12] + '.lock')
@@ -125,13 +140,21 @@ def run(root, workspace, text, log, timeout=TIMEOUT):
     try:
         began = time.monotonic()
         try:
-            done = subprocess.run(text, shell=True, cwd=str(workspace), capture_output=True, timeout=timeout,
-                                  stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW)
-            output = (done.stdout + b'\n' + done.stderr).decode('utf-8', errors='replace')
-            passed, line = done.returncode == 0, None
-        except subprocess.TimeoutExpired as exc:
-            output = ((exc.stdout or b'') + b'\n' + (exc.stderr or b'')).decode('utf-8', errors='replace')
-            passed, line = False, 'stopped after ' + str(timeout // 60) + ' minutes'
+            process = subprocess.Popen(text, shell=True, cwd=str(workspace), stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW)
+            try:
+                out, err = process.communicate(timeout=timeout)
+                passed, line = process.returncode == 0, None
+            except subprocess.TimeoutExpired:
+                # The shell is only the runner's parent: ending it alone leaves the runner holding the output
+                # pipes, and reading them would then wait forever. End the whole tree, then read what is left.
+                stop_tree(process)
+                try:
+                    out, err = process.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    out, err = b'', b''
+                passed, line = False, 'stopped after ' + str(timeout // 60) + ' minutes'
+            output = ((out or b'') + b'\n' + (err or b'')).decode('utf-8', errors='replace')
         except OSError as exc:
             output, passed, line = str(exc), False, 'could not run: ' + str(exc)
         seconds = round(time.monotonic() - began)
