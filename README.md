@@ -17,14 +17,19 @@ Copilot or Codex CLI, and relays their answers back into the chat you were alrea
 
 | Feature | Claude Code | Codex |
 |---|:---:|:---:|
-| Six agents, setup, `/d` prompts, Agent Settings | ✓ | ✓ |
-| Several named agents at once (`/cli spawn`, `/cli list`) | ✓ | ✓ |
-| Queue, cancel, resume, provider slash commands | ✓ | ✓ |
-| Live viewer window (`/cli view`) | ✓ | ✓ |
-| Agents listed on the background tasks panel | ✓ | — |
-| Agent streaming updates | Panel viewer | In chat |
-| Help | `/cli help` | `/help` or `/cli help` |
-| Needs | workspace trust | a Full Access task |
+| Six agents, each on its own subscription, with guided setup and sign-in checks | ✓ | ✓ |
+| Model, effort and access chosen per agent | ✓ | ✓ |
+| Several named agents working side by side; one prompt to many at once | ✓ | ✓ |
+| Conversations that persist, and carry over to a new session | ✓ | ✓ |
+| Change receipt, full diff and undo for every turn | ✓ | ✓ |
+| Your tests run after every turn that changes files | ✓ | ✓ |
+| Warning when two agents edit the same file | ✓ | ✓ |
+| Hand-offs between agents: saved answers, a copy box, a shared brief | ✓ | ✓ |
+| A working folder per agent for notes and drafts, kept out of git | ✓ | ✓ |
+| Agents run as background tasks, like Claude's own subagents | ✓ | — |
+| Live progress | Task row, viewer window | In chat, viewer window |
+
+Claude Code needs the folder's workspace trust; Codex needs a Full Access task.
 
 On Claude Code the whole answer arrives when the agent finishes, with a one-line work summary; see
 [Claude Code](#claude-code) for details.
