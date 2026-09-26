@@ -61,20 +61,63 @@ def ensure(workspace, name):
     if folder is None:
         return None
     try:
-        folder.parent.mkdir(exist_ok=True)
-        ignore = folder.parent / '.gitignore'
-        if not ignore.exists():
-            ignore.write_text(IGNORE, encoding='utf-8')
+        ensure_root(workspace)
         folder.mkdir(exist_ok=True)
         return folder
     except OSError:
         return None
 
 
-def instruction(name):
+BRIEF = 'BRIEF.md'
+
+
+def brief_path(workspace):
+    """The project brief every agent reads: `Agent_Working_Folder/BRIEF.md`, shared by all agents and hosts."""
+    return Path(workspace) / ROOT / BRIEF
+
+
+def brief_lines(workspace):
+    """The brief's points (its `- ` lines), or [] when there is none."""
+    try:
+        text = brief_path(workspace).read_text(encoding='utf-8')
+    except OSError:
+        return []
+    return [line[2:] for line in text.splitlines() if line.startswith('- ')]
+
+
+def add_brief(workspace, text):
+    """Add one point to the brief, creating it (and the git-ignored folder) if needed; the points after it."""
+    path = brief_path(workspace)
+    ensure_root(workspace)
+    lines = brief_lines(workspace) + [' '.join(text.split())]
+    path.write_text('# Project brief\n\nEvery agent working in this project reads this first.\n\n' +
+                    ''.join('- ' + line + '\n' for line in lines), encoding='utf-8')
+    return lines
+
+
+def clear_brief(workspace):
+    """Remove the brief; True if there was one."""
+    try:
+        brief_path(workspace).unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def ensure_root(workspace):
+    """`Agent_Working_Folder/` with its ignore file."""
+    root = Path(workspace) / ROOT
+    root.mkdir(exist_ok=True)
+    if not (root / '.gitignore').exists():
+        (root / '.gitignore').write_text(IGNORE, encoding='utf-8')
+    return root
+
+
+def instruction(name, brief=False):
     """The line added to a task when it is sent. The sender skips it for an agent's own slash command, which must
-    go exactly as typed (dispatch's `provider_command`)."""
-    return ('\n\n---\nCLI-MODE: your working folder is `' + relative(name) + '/` in this project. If this task is '
+    go exactly as typed (dispatch's `provider_command`). With a project brief, it asks the agent to read it."""
+    return ('\n\n---\nCLI-MODE: ' + ('first read `' + ROOT + '/' + BRIEF + '`, the brief every agent on this '
+            'project follows. Y' if brief else 'y') + 'our working folder is `' + relative(name) + '/` in this project. If this task is '
             'coding, change the project\'s files as asked. Save any other file you create (notes, reports, assets, '
             'drafts, downloads) in your working folder, not elsewhere in the project, and name the files you saved '
             'in your answer.')

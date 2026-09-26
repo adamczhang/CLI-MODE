@@ -85,5 +85,6 @@ scripts/relay_view.py
 scripts/setup.ps1
 scripts/setup_auth.py
 scripts/state.py
+scripts/test_gate.py
 scripts/viewer.ps1
 scripts/viewer.py

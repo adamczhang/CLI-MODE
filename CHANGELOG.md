@@ -6,6 +6,12 @@
 - **A copy box under every answer.** Each agent's full answer is also saved as `Agent_Working_Folder/<NAME>/answers/NNN-<task>.md`, and the relayed answer ends with a small box listing that file and the files the turn created, changed or mentioned (existing ones only). On Claude Code the box has a copy button: paste it into another agent's `/d` and that agent reads the exact answer and files from the project. The answer above the box is shown as before.
 - `/cli dir` counts an agent's saved answers apart from its own files.
 
+### Safety nets for several agents (both hosts)
+- **`/cli undo [name]`** puts back the files an agent's last turn changed, from the snapshots taken for its receipt: all or nothing, and only if none of those files changed since (by you or another agent). A file the turn created is removed.
+- **Same-file warning.** When two agents' turns overlap and both edited the same file, the later answer says so (`⚠ Also edited by Codex COD-7K while this turn ran: app.py`). It comes from each agent's own edit steps, not the folder-wide receipt.
+- **Test gate.** `/cli test <command>` sets a project's test command (for example `/cli test npm test`); after each agent turn that changes project files, CLI-MODE runs it and the answer says `✓ Tests passed` or `✗ Tests failed` with the runner's summary. The full output is kept in the agent's folder, and a failure's log comes first in the copy box. Runs are one at a time per project, with a 10-minute limit. `/cli test` shows the command, `/cli test off` removes it.
+- **Shared brief.** `/cli brief-add <text>` adds a point to `Agent_Working_Folder/BRIEF.md`, which every task asks the agent to read first; `/cli brief` shows it and `/cli brief clear` removes it. Your text is applied in the hook, never passed through a command line.
+
 ## 0.3.4 — Agent working folders — 2026-09-25
 
 ### Agent working folders (both hosts)

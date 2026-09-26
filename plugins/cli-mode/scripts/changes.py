@@ -66,6 +66,46 @@ def compare(workspace, before, after):
                 added=sum(item['added'] or 0 for item in files), removed=sum(item['removed'] or 0 for item in files))
 
 
+def undo(workspace, receipt):
+    """Put back every file a turn changed, as it was before the turn: (restored, removed, conflicts).
+
+    All or nothing: if any of those files changed again since the turn (by you or another agent), nothing is
+    touched and those files come back as conflicts. A file the turn created is removed; one it removed or
+    changed is written back from the before snapshot, as bytes.
+    """
+    before, after = receipt.get('before'), receipt.get('after')
+    if not before or not after:
+        raise RuntimeError('This turn has no snapshots to undo from (they are taken in a git repository).')
+    out = _git(workspace, 'diff-tree', '-r', '--name-only', '-z', '--no-renames', before, after)
+    paths = [path for path in out.split('\0') if path]
+    root = Path(workspace)
+
+    def blob(tree, path):
+        try:
+            return _git(workspace, 'rev-parse', '--verify', '-q', tree + ':' + path).strip() or None
+        except RuntimeError:
+            return None
+    conflicts, plan = [], []
+    for path in paths:
+        now = _git(workspace, 'hash-object', '--', path).strip() if (root / path).is_file() else None
+        if now != blob(after, path):
+            conflicts.append(path)
+        plan.append((path, blob(before, path)))
+    if conflicts:
+        return [], [], conflicts
+    restored, removed = [], []
+    for path, old in plan:
+        target = root / path
+        if old is None:
+            target.unlink(missing_ok=True)
+            removed.append(path)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(_git(workspace, 'cat-file', 'blob', old, text=False))
+            restored.append(path)
+    return restored, removed, []
+
+
 def diff_text(workspace, receipt):
     """The turn's full diff as unified text, cut at DIFF_MAX with a note; None if it can't be read."""
     if not receipt or not receipt.get('before') or not receipt.get('after'):

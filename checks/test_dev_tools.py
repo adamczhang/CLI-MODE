@@ -1,0 +1,183 @@
+"""Undo, the same-file warning, the test gate and the shared brief, on both hosts."""
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+from test_agent_folder import Saving, git
+from test_controller import hook
+import agent_folder
+import changes
+from controller import Controller
+import host
+import relay_view
+from state import Store, agent_label
+import test_gate
+
+
+def passing():
+    return '"' + sys.executable + '" -c "print(\'====== 3 passed in 0.1s ======\')"'
+
+
+def failing():
+    return '"' + sys.executable + '" -c "import sys; print(\'1 failed, 2 passed\'); sys.exit(1)"'
+
+
+class Project(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.project = self.root / 'game'
+        self.project.mkdir()
+        git(self.project, 'init', '-q')
+        (self.project / 'app.py').write_text('one\n', encoding='utf-8')
+        (self.project / 'old.py').write_text('old\n', encoding='utf-8')
+        git(self.project, 'add', '.')
+        git(self.project, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'start')
+        self.backend = Saving(self.project)
+        self.store = Store('tools', self.project, self.root / 'state')
+        self.control = Controller(self.store, self.backend)
+        self.control.frontend()
+        self.control.activate('gemini-3.8-flash-high', 'allow')
+        self.label = agent_label(self.store.read())
+
+    def turn(self, text='/d change the app'):
+        hook.handle(dict(session_id='tools', cwd=str(self.project), hook_event_name='UserPromptSubmit',
+                         prompt=text), self.store.root)
+        request = self.store.read()['turnRoute']['requestId']
+        self.control.send_request(request, output=lambda event: None)
+        return request
+
+    @staticmethod
+    def edit(project, name):
+        (project / 'app.py').write_text('one\ntwo\n', encoding='utf-8')
+        (project / 'new.py').write_text('new\n', encoding='utf-8')
+        (project / 'old.py').unlink()
+
+
+class Undo(Project):
+    def test_undo_puts_back_the_turn_and_only_once(self):
+        self.backend.work = self.edit
+        self.turn()
+        text = self.control.undo()['text']
+        self.assertTrue(text.startswith('Undid ' + self.label + '\'s last turn: restored '))
+        self.assertEqual((self.project / 'app.py').read_text(encoding='utf-8'), 'one\n')
+        self.assertTrue((self.project / 'old.py').is_file())
+        self.assertFalse((self.project / 'new.py').exists())
+        self.assertEqual(git(self.project, 'status', '--porcelain'), '')
+        self.assertIn('already undone', self.control.undo()['text'])
+
+    def test_nothing_changes_if_a_file_changed_since(self):
+        self.backend.work = self.edit
+        self.turn()
+        (self.project / 'app.py').write_text('yours\n', encoding='utf-8')
+        result = self.control.undo()
+        self.assertEqual(result['conflicts'], ['app.py'])
+        self.assertTrue(result['text'].startswith('Nothing was undone: app.py has changed since'))
+        self.assertTrue((self.project / 'new.py').is_file())  # All or nothing.
+
+    def test_nothing_to_undo_says_so(self):
+        self.assertIn('has no turn to undo', self.control.undo()['text'])
+
+
+class TestGate(Project):
+    def test_off_until_set_and_shown(self):
+        self.assertIn('No tests set for this project', self.control.tests()['text'])
+        self.control.tests('npm test')
+        self.assertIn('Tests for this project: npm test', self.control.tests()['text'])
+        self.assertEqual(self.control.tests('off')['text'], 'Tests are off for this project.')
+        self.assertIsNone(test_gate.command(self.store.root, self.project))
+
+    def test_a_turn_that_changes_files_is_tested_and_the_answer_says_so(self):
+        self.control.tests(passing())
+        self.backend.work = self.edit
+        request = self.turn()
+        tests = self.store.read()['requests'][request]['tests']
+        self.assertEqual((tests['passed'], tests['summary']), (True, '3 passed in 0.1s'))
+        host.select(host.CLAUDE)
+        self.addCleanup(host.select, host.CODEX)
+        self.assertIn('_✓ Tests passed (' + passing() + ') · 3 passed in 0.1s',
+                      self.control.relay_text(request, wait=0)['text'])
+
+    def test_a_failure_puts_its_log_first_in_the_copy_box(self):
+        self.control.tests(failing())
+        self.backend.work = self.edit
+        request = self.turn()
+        record = self.store.read()['requests'][request]
+        self.assertFalse(record['tests']['passed'])
+        self.assertEqual(record['refs']['files'][0], record['tests']['log'])
+        self.assertIn('1 failed, 2 passed', (self.project / record['tests']['log']).read_text(encoding='utf-8'))
+        lines = []
+        self.control.follow(request, lines.append, poll=0)
+        self.assertIn('Tests FAILED.', lines[-1])
+
+    def test_a_turn_without_project_edits_is_not_tested(self):
+        self.control.tests(failing())
+        request = self.turn()
+        self.assertNotIn('tests', self.store.read()['requests'][request])
+
+    def test_runner_summaries(self):
+        self.assertEqual(test_gate.summary('x\n===== 1 failed, 41 passed in 3.2s =====\n'), '1 failed, 41 passed in 3.2s')
+        self.assertEqual(test_gate.summary('Tests:       1 failed, 9 passed, 10 total\n'), '1 failed, 9 passed, 10 total')
+        self.assertEqual(test_gate.summary('test result: ok. 4 passed; 0 failed\n'), 'test result: ok. 4 passed; 0 failed')
+        self.assertEqual(test_gate.summary('all good\n\n'), 'all good')
+
+
+class SameFile(Project):
+    def record(self, state, request_id, session, start, end, paths):
+        events = self.root / (request_id + '.jsonl')
+        events.write_text('\n'.join(json.dumps(dict(type='activity', toolCallId='t' + str(index), kind='edit',
+                                                     status='completed', locations=[dict(path=path)]))
+                                    for index, path in enumerate(paths)), encoding='utf-8')
+        state.setdefault('requests', {})[request_id] = dict(session=session, submittedAt=start, events=str(events),
+                                             generation=state['generation'], status='completed')
+        return request_id
+
+    def test_a_file_both_agents_edited_is_flagged_on_the_later_answer(self):
+        with self.store.edit() as state:
+            mine = state['owned'][0]['name']
+            self.record(state, 'other', 'someone-else', 100, None, ['app.py', 'api.py'])
+            self.control._note_touched(state, 'other', self.project)
+            state['requests']['other']['endedAt'] = 150
+            self.record(state, 'late', mine, 120, None, [str(self.project / 'app.py'), 'readme.md'])
+            self.control._note_touched(state, 'late', self.project)
+            self.record(state, 'apart', mine, 200, None, ['app.py'])
+            self.control._note_touched(state, 'apart', self.project)
+            records = state['requests']
+        self.assertEqual([item['path'] for item in records['late']['overlaps']], ['app.py'])
+        self.assertNotIn('overlaps', records['apart'])  # Not at the same time.
+        text = relay_view.final_markdown('Grok ART', [], [], overlaps=records['late']['overlaps'])
+        self.assertIn('⚠ Also edited by ', text)
+        self.assertIn('while this turn ran: app.py', text)
+
+
+class Brief(Project):
+    def test_add_show_clear(self):
+        self.assertIn('No project brief yet', self.control.brief()['text'])
+        self.control.brief('add', 'Use TypeScript strict mode.')
+        self.assertIn('(2 points', self.control.brief('add', 'Tests live in tests/.')['text'])
+        self.assertEqual(self.control.brief()['text'].splitlines()[1:],
+                         ['1. Use TypeScript strict mode.', '2. Tests live in tests/.'])
+        self.assertEqual(self.control.brief('clear')['text'], 'The project brief is cleared.')
+        self.assertIn('no project brief to clear', self.control.brief('clear')['text'])
+
+    def test_every_task_asks_the_agent_to_read_it(self):
+        self.turn()
+        self.assertNotIn('BRIEF.md', self.backend.sent[-1])
+        self.control.brief('add', 'Use tabs.')
+        self.turn('/d next')
+        self.assertIn('first read `Agent_Working_Folder/BRIEF.md`', self.backend.sent[-1])
+        self.assertNotIn('Agent_Working_Folder', git(self.project, 'status', '--porcelain'))
+
+    def test_codex_applies_your_text_in_the_hook(self):
+        reply = hook.handle(dict(session_id='tools', cwd=str(self.project), hook_event_name='UserPromptSubmit',
+                                 prompt='/cli brief-add Keep "quotes" & ampersands'), self.store.root)
+        self.assertIn('Added to the project brief', json.dumps(reply))
+        self.assertEqual(agent_folder.brief_lines(self.project), ['Keep "quotes" & ampersands'])
+
+
+if __name__ == '__main__':
+    unittest.main()

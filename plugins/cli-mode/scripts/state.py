@@ -564,7 +564,16 @@ def cli_route(verb, choice, state):
         if len(choice.split()) > 1:
             return {'route': 'hint', 'text': 'Use /cli attach, or /cli attach <name or number>.'}
         return dict({'route': 'attach'}, **({'target': choice} if choice else {}))
-    if verb in ('diff', 'dir'):
+    if verb == 'test':
+        return {'route': 'test', 'command': choice} if choice else {'route': 'test'}
+    if verb == 'brief':
+        if choice.casefold() not in ('', 'clear'):
+            return {'route': 'hint', 'text': 'Use /cli brief, /cli brief clear, or /cli brief-add <text>.'}
+        return {'route': 'brief', 'action': 'clear' if choice else 'show'}
+    if verb == 'brief-add':
+        return ({'route': 'brief', 'action': 'add', 'text': choice} if choice else
+                {'route': 'hint', 'text': 'Use /cli brief-add <text>: one point every agent reads before its task.'})
+    if verb in ('diff', 'dir', 'undo'):
         if not choice:
             return {'route': verb}
         session, name = target_of(choice, state, every=True) if len(choice.split()) == 1 else (None, None)

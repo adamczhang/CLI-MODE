@@ -2,6 +2,7 @@
 from copy import deepcopy
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -335,7 +336,8 @@ class QueueMixin:
                 label, [event for event in history if event.get('type') != 'context_warning'],
                 folder / (request_id + '-final-' + uuid.uuid4().hex[:6] + '.html'),
                 footer=footer, show_work=show_work, workspace=self.store.workspace, receipt=receipt.get('changes'),
-                saved=receipt.get('saved'), refs=receipt.get('refs'))
+                saved=receipt.get('saved'), refs=receipt.get('refs'),
+                tests=receipt.get('tests'), overlaps=receipt.get('overlaps'))
             self._prune_views(folder)
             result.update(text=text, reference=menu_view.reference(path), messageView=dict(
                 path=path, format='inline-html', label=label, kind='relay'))
@@ -403,7 +405,8 @@ class QueueMixin:
         return dict(result, cursor=position, done=True, artifacts=artifacts, text=relay_view.final_markdown(
             label, public, history, footer=footer, show_work=show_work, color=color,
             receipt=view['receipt'].get('changes'), saved=view['receipt'].get('saved'),
-            refs=view['receipt'].get('refs')))
+            refs=view['receipt'].get('refs'), tests=view['receipt'].get('tests'),
+            overlaps=view['receipt'].get('overlaps')))
 
     def relay_chain(self, request_ids, cursor=0, wait=25.0, poll=.25):
         """Relay a turn's requests with one command, for a text host (Claude Code).
@@ -557,8 +560,82 @@ class QueueMixin:
                     ' It changed no files.')
         if record.get('saved'):
             end += ' ' + agent_folder.summary('It', record['saved'])
+        if record.get('tests'):
+            end += ' Tests ' + ('passed.' if record['tests']['passed'] else 'FAILED.')
+        if record.get('overlaps'):
+            end += ' ⚠ Another agent edited the same files.'
         say(end)
         return dict(requestId=request_id, status=status, done=True)
+
+    def undo(self, session=None):
+        """`/cli undo [name]`: put back the files an agent's last turn changed, if nothing changed them since."""
+        state = self.store.read()
+        session = session or state.get('main')
+        label = agent_label(state, session) if session else 'The agent'
+        found = [(record.get('capturedAt') or 0, key, record) for key, record in (state.get('requests') or {}).items()
+                 if record.get('session') == session and (record.get('changes') or {}).get('files')]
+        if not found:
+            text = label + ' has no turn to undo: undo works on a turn that changed files in a git repository.'
+            return dict(message=text, text=text)
+        _, request_id, record = max(found, key=lambda item: item[0])
+        if record.get('undone'):
+            text = label + '\'s last turn that changed files is already undone.'
+            return dict(message=text, text=text)
+        if record.get('status') in ('captured', 'submitting'):
+            alias = (agent_entry(state, session) or {}).get('alias') or ''
+            text = label + ' is still working; /cli cancel ' + alias.lower() + ' first, then undo.'
+            return dict(message=text, text=text)
+        workspace = record.get('workspace') or self.store.workspace
+        restored, removed, conflicts = changes.undo(workspace, record['changes'])
+        if conflicts:
+            text = ('Nothing was undone: ' + ', '.join(conflicts[:6]) + (' and more' if len(conflicts) > 6 else '') +
+                    (' has' if len(conflicts) == 1 else ' have') + ' changed since ' + label + '\'s turn.')
+            return dict(message=text, text=text, conflicts=conflicts)
+        with self.store.edit() as latest:
+            latest['requests'][request_id]['undone'] = True
+        parts = (['restored ' + ', '.join(restored)] if restored else []) + (['removed ' + ', '.join(removed)]
+                                                                             if removed else [])
+        text = 'Undid ' + label + '\'s last turn: ' + '; '.join(parts) + '.'
+        return dict(message=text, text=text, restored=restored, removed=removed)
+
+    def tests(self, text=None):
+        """`/cli test [command|off]`: the command CLI-MODE runs after each agent turn that changes files."""
+        import test_gate
+        workspace = self.store.workspace
+        if text and text.strip().casefold() == 'off':
+            test_gate.set_command(self.store.root, workspace, None)
+            reply = 'Tests are off for this project.'
+        elif text and text.strip():
+            test_gate.set_command(self.store.root, workspace, text.strip())
+            reply = ('Tests for this project: ' + text.strip() + '. CLI-MODE runs them after each agent turn that '
+                     'changes files, and the answer says whether they passed.')
+        else:
+            current = test_gate.command(self.store.root, workspace)
+            reply = ('Tests for this project: ' + current + ' (after each agent turn that changes files). '
+                     '/cli test off stops them.' if current else
+                     'No tests set for this project. /cli test <command> sets one, e.g. /cli test npm test.')
+        return dict(message=reply, text=reply)
+
+    def brief(self, action=None, text=None):
+        """`/cli brief`, `/cli brief clear`, `/cli brief-add <text>`: the brief every agent reads first."""
+        workspace = self.store.workspace
+        where = agent_folder.ROOT + '/' + agent_folder.BRIEF
+        if action == 'add':
+            if not text or not text.strip():
+                reply = 'Use /cli brief-add <text>: one point every agent reads before its task.'
+            else:
+                points = agent_folder.add_brief(workspace, text)
+                reply = ('Added to the project brief (' + str(len(points)) + (' point' if len(points) == 1 else
+                         ' points') + ', ' + where + '). Every agent reads it before its next task.')
+        elif action == 'clear':
+            reply = ('The project brief is cleared.' if agent_folder.clear_brief(workspace)
+                     else 'There is no project brief to clear.')
+        else:
+            points = agent_folder.brief_lines(workspace)
+            reply = ('Project brief (' + where + '), read by every agent first:\n' +
+                     '\n'.join(str(index) + '. ' + point for index, point in enumerate(points, 1)) if points else
+                     'No project brief yet. /cli brief-add <text> adds a point every agent reads before its task.')
+        return dict(message=reply, text=reply)
 
     def agent_dir(self, session=None):
         """`/cli dir [name]`: where an agent saves its files, as a full path and as the path in the project."""
@@ -744,12 +821,16 @@ class QueueMixin:
             result = self._send(text, output=output, timeout=timeout, request_id=request_id,
                                 working_folder=folder is not None)
             done, stored = receipt(), saved()
+            tests = self._run_tests(workspace, name, done)  # Before completion, so the relay always has it.
             with self.store.edit() as state:
                 state['requests'][request_id].update(status='completed', result=result)
                 if done:
                     state['requests'][request_id]['changes'] = done
                 if stored:
                     state['requests'][request_id]['saved'] = stored
+                if tests:
+                    state['requests'][request_id]['tests'] = tests
+                self._note_touched(state, request_id, workspace)
                 state['inflight'].pop(op, None)
             self._keep_answer(request_id, workspace, name, text)
             return dict(requestId=request_id, **result)
@@ -771,6 +852,8 @@ class QueueMixin:
                     record['changes'] = done  # A failed or canceled turn may still have edited files.
                 if stored and status != 'rejected':
                     record['saved'] = stored
+                if status != 'rejected':
+                    self._note_touched(state, request_id, workspace)
                 if status == 'rejected' and str(exc):
                     record['rejectedReason'] = str(exc)  # The relay shows it: the agent never saw the request.
                 if status == 'uncertain':
@@ -782,6 +865,62 @@ class QueueMixin:
             raise
         finally:
             path.unlink(missing_ok=True)
+
+    def _run_tests(self, workspace, name, done):
+        """The project's test command, after a turn that changed project files (a git receipt); else None."""
+        import test_gate
+        text = test_gate.command(self.store.root, workspace)
+        if not text or not done or not done.get('files'):
+            return None
+        folder = agent_folder.path(workspace, name)
+        log = None
+        if folder is not None:
+            logs = folder / 'tests'
+            taken = [int(match[1]) for match in (re.match(r'(\d+)\.log$', entry.name)
+                                                 for entry in (logs.glob('*.log') if logs.is_dir() else [])) if match]
+            log = logs / ('%03d.log' % ((max(taken) + 1) if taken else 1))
+            agent_folder.ensure(workspace, name)
+        return test_gate.run(self.store.root, workspace, text, log)
+
+    def _note_touched(self, state, request_id, workspace):
+        """Record the files this turn's own tools edited, deleted or moved, and any another agent edited too.
+
+        The change receipt covers the whole folder, so while agents work at once it includes each other's
+        edits; their tool events say who touched what. A file edited by two agents in overlapping turns is
+        flagged on the one that finished second (the other's answer may already be out).
+        """
+        record = state['requests'][request_id]
+        record['endedAt'] = time.time()
+        path = Path(record['events']) if record.get('events') else None
+        root = Path(workspace).resolve()
+        touched = []
+        try:
+            for line in (path.read_text(encoding='utf-8').splitlines() if path and path.is_file() else []):
+                event = json.loads(line) if line.strip() else {}
+                if event.get('type') != 'activity' or event.get('kind') not in ('edit', 'delete', 'move'):
+                    continue
+                for location in event.get('locations') or []:
+                    raw = Path(location['path'])
+                    try:
+                        shown = (raw.resolve().relative_to(root) if raw.is_absolute() else raw).as_posix()
+                    except ValueError:
+                        shown = raw.as_posix()
+                    if shown not in touched:
+                        touched.append(shown)
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+        record['touched'] = touched
+        start = record.get('submittedAt') or 0
+        overlaps = []
+        for other_id, other in (state.get('requests') or {}).items():
+            if (other_id == request_id or other.get('session') == record.get('session') or not other.get('touched')
+                    or not other.get('endedAt') or other['endedAt'] < start
+                    or (other.get('submittedAt') or 0) > record['endedAt']):
+                continue
+            overlaps += [dict(path=path, agent=request_label(state, other_id))
+                         for path in touched if path in other['touched']]
+        if overlaps:
+            record['overlaps'] = overlaps
 
     def _keep_answer(self, request_id, workspace, name, text):
         """Save the turn's full answer in the agent's folder and record the reference box: that file, then the
@@ -802,6 +941,9 @@ class QueueMixin:
             words = relay_view.messages(events)
             answer = agent_folder.save_answer(workspace, name, request_label(state, request_id), task, words)
             files = agent_folder.references(workspace, words, record.get('changes'), record.get('saved'), answer)
+            tests = record.get('tests') or {}
+            if tests.get('log') and not tests.get('passed'):
+                files = [tests['log']] + [path for path in files if path != tests['log']]  # The failure, first.
             if answer or files:
                 with self.store.edit() as latest:
                     latest['requests'][request_id]['refs'] = dict(answer=answer, files=files)

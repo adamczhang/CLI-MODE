@@ -13,7 +13,7 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
 
 - **Two hosts, one plugin folder.** `plugins/cli-mode` serves Codex and Claude Code. Most code is shared;
   each host has a thin layer of its own.
-- **Codex's behaviour is pinned by a golden record** (`checks/fixtures/codex-golden.json`, 163 steps),
+- **Codex's behaviour is pinned by a golden record** (`checks/fixtures/codex-golden.json`, 170 steps),
   recorded before the port and re-recorded only for intended Codex changes (the Agent Settings "Done" row,
   the skill path, Claude's default model, the final relay HTML and the removal of Passthrough mode).
 - **Shared pieces added by the port:** `scripts/host.py` (the host switch), `route.decide()` (split out of
@@ -45,7 +45,8 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   `timeout` and its own worker in `runners`); `main` is the current one. `/d a,b <prompt>` captures one
   request per named agent. `scripts/names.py` makes and resolves names; `scripts/changes.py` takes the git
   snapshots behind each turn's change receipt and `/cli diff`; `scripts/agent_folder.py` keeps each agent's
-  git-ignored `Agent_Working_Folder/<NAME>/`, names it in each task and reports what a turn saved there.
+  git-ignored `Agent_Working_Folder/<NAME>/`, names it in each task and reports what a turn saved there;
+  `scripts/test_gate.py` runs the project's `/cli test` command after turns that change files.
 - **Routing** (shared): `state.route()` turns a prompt into a route: `/cli …` controls, `/d` (Direct),
   help, setup replies; any other text is the host's (Passthrough mode was removed). `route.decide()` records
   it in the conversation state and, for `direct`, captures the exact text as a request and ensures the worker

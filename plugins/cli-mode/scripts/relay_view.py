@@ -274,7 +274,7 @@ def refs_html(label, refs):
 
 
 def final_markdown(label, batch, history, footer=None, show_work=True, color=False, receipt=None, saved=None,
-                   refs=None):
+                   refs=None, tests=None, overlaps=None):
     """The end of a turn for hosts without inline views (Claude Code), as chat Markdown.
 
     It carries the agent's words, artifacts and errors (all of the turn's, unless
@@ -306,6 +306,8 @@ def final_markdown(label, batch, history, footer=None, show_work=True, color=Fal
     kept = saved_markdown(label, saved)
     if kept:
         parts.append(kept)
+    from test_gate import line, overlap_line
+    parts += ['_' + defuse(text) + '_' for text in [line(tests)] + overlap_line(overlaps) if text]
     if footer:
         parts.append('_' + footer + '_')
     if not parts and not messages(history):
@@ -317,7 +319,7 @@ def final_markdown(label, batch, history, footer=None, show_work=True, color=Fal
 
 
 def render(label, history, destination, footer=None, show_work=True, workspace=None, receipt=None, saved=None,
-           refs=None):
+           refs=None, tests=None, overlaps=None):
     """The turn's one inline view: final words, artifacts, errors and nested work.
 
     Returns (path, plain-text fallback, artifacts).
@@ -381,6 +383,12 @@ def render(label, history, destination, footer=None, show_work=True, workspace=N
     if kept:
         html.append(kept)
         plain.append(kept_text)
+    from test_gate import line, overlap_line
+    for text in [line(tests)] + overlap_line(overlaps):
+        if text:
+            warn = text.startswith('⚠') or text.startswith('✗')
+            html.append('<div class="' + ('error' if warn else 'state') + '">' + escape(text) + '</div>')
+            plain.append(text)
     if footer:
         html.append('<div class="state">' + escape(footer) + '</div>')
         plain.append(footer)

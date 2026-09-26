@@ -331,7 +331,8 @@ def agent_tools(s):
                  '/d agy fix it', '/d hi, can you check', '/d elon,nobody check',
                  '/cli timeout', ('timeout', c.timeout), '/cli timeout 90m', '/cli timeout elon 2h',
                  '/cli timeout 1', '/cli diff', ('diff', c.diff), '/cli diff elon', '/cli dir',
-                 ('dir', c.agent_dir), '/cli dir elon', '/cli attach',
+                 ('dir', c.agent_dir), '/cli dir elon', '/cli undo', '/cli test npm test', '/cli test',
+                 '/cli test off', '/cli brief-add Use tabs.', '/cli brief', '/cli brief clear', '/cli attach',
                  ('attach', c.attach), '/cli attach 3')
 
 

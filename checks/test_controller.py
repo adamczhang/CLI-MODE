@@ -47,7 +47,7 @@ def runtime_result(stop='end_turn', **fields):
                 outputComplete=True, settled=True, **fields)
 
 
-FOLDER_NOTE = '\n\n---\nCLI-MODE: your working folder is '
+FOLDER_NOTE = '\n\n---\nCLI-MODE: '
 
 
 def user_words(sent):

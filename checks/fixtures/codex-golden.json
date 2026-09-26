@@ -1700,6 +1700,76 @@
   {
    "output": {
     "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Run `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" undo` and reply with its `text` exactly as given. It puts back the files the agent's last turn changed, only if none changed since; nothing is sent to any agent. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "undo",
+   "step": "/cli undo"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"Tests for this project: npm test. CLI-MODE runs them after each agent turn that changes files, and the answer says whether they passed.\"; it is already done, no command runs. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "test",
+   "step": "/cli test npm test"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"Tests for this project: npm test (after each agent turn that changes files). /cli test off stops them.\"; it is already done, no command runs. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "test",
+   "step": "/cli test"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"Tests are off for this project.\"; it is already done, no command runs. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "test",
+   "step": "/cli test off"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"Added to the project brief (1 point, Agent_Working_Folder/BRIEF.md). Every agent reads it before its next task.\"; it is already done, no command runs. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "brief",
+   "step": "/cli brief-add Use tabs."
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"Project brief (Agent_Working_Folder/BRIEF.md), read by every agent first:\\n1. Use tabs.\"; it is already done, no command runs. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "brief",
+   "step": "/cli brief"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"The project brief is cleared.\"; it is already done, no command runs. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "hookEventName": "UserPromptSubmit"
+    }
+   },
+   "route": "brief",
+   "step": "/cli brief clear"
+  },
+  {
+   "output": {
+    "hookSpecificOutput": {
      "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Run `python \"<PLUGIN>\\scripts\\controller.py\" --thread \"golden-thread\" --workspace \"<ROOT>\\work space & co\" attach` and reply with its `message` exactly as given. Attaching moves an open agent from an earlier task in this folder into this one; nothing is sent to it now. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
      "hookEventName": "UserPromptSubmit"
     }
@@ -1820,7 +1890,7 @@
     },
     "thread": "golden-thread",
     "turnRoute": {
-     "id": "0000000000000000000000000000001d",
+     "id": "00000000000000000000000000000024",
      "route": "attach"
     },
     "usedNames": [
@@ -1963,6 +2033,7 @@
      "00000000000000000000000000000008": {
       "agent": "agy",
       "capturedAt": "<capturedAt>",
+      "endedAt": "<endedAt>",
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000009.jsonl",
       "generation": 0,
       "name": "AGY-22",
@@ -1992,7 +2063,8 @@
       },
       "status": "completed",
       "submittedAt": "<submittedAt>",
-      "submitterPid": "<submitterPid>"
+      "submitterPid": "<submitterPid>",
+      "touched": []
      }
     },
     "routingMode": "direct",
@@ -2070,6 +2142,7 @@
      "00000000000000000000000000000008": {
       "agent": "agy",
       "capturedAt": "<capturedAt>",
+      "endedAt": "<endedAt>",
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000009.jsonl",
       "generation": 0,
       "name": "AGY-22",
@@ -2099,7 +2172,8 @@
       },
       "status": "completed",
       "submittedAt": "<submittedAt>",
-      "submitterPid": "<submitterPid>"
+      "submitterPid": "<submitterPid>",
+      "touched": []
      }
     },
     "routingMode": "direct",
@@ -2177,6 +2251,7 @@
      "00000000000000000000000000000008": {
       "agent": "agy",
       "capturedAt": "<capturedAt>",
+      "endedAt": "<endedAt>",
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000009.jsonl",
       "generation": 0,
       "name": "AGY-22",
@@ -2206,7 +2281,8 @@
       },
       "status": "completed",
       "submittedAt": "<submittedAt>",
-      "submitterPid": "<submitterPid>"
+      "submitterPid": "<submitterPid>",
+      "touched": []
      }
     },
     "routingMode": "direct",
@@ -2294,6 +2370,7 @@
      "00000000000000000000000000000008": {
       "agent": "agy",
       "capturedAt": "<capturedAt>",
+      "endedAt": "<endedAt>",
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000009.jsonl",
       "generation": 0,
       "name": "AGY-22",
@@ -2323,7 +2400,8 @@
       },
       "status": "completed",
       "submittedAt": "<submittedAt>",
-      "submitterPid": "<submitterPid>"
+      "submitterPid": "<submitterPid>",
+      "touched": []
      }
     },
     "routingMode": "direct",
@@ -2386,16 +2464,16 @@
   {
    "output": {
     "result": {
-     "activationMenu": "```text\n+--------------------------------------+\n| CLI-MODE                             |\n| Help                                 |\n+--------------------------------------+\n| AGENTS                               |\n| /cli                choose an agent  |\n| /cli <agent>        its setup page   |\n| /cli spawn <agent>  start another    |\n| /cli list           running agents   |\n| /cli use <name>     make it current  |\n| /cli close [name]   close (or all)   |\n|                                      |\n| SEND WORK                            |\n| /d <task>           to current agent |\n| /d <name> <task>    to one agent     |\n| /d <a>,<b> <task>   to several       |\n| Only /d reaches an agent.            |\n|                                      |\n| RESULTS                              |\n| /cli diff [name]    last turn's diff |\n| /cli dir [name]     where files go   |\n| /cli queue          queued requests  |\n| /cli cancel [name]  stop its turn    |\n|                                      |\n| SETTINGS                             |\n| /cli menu [name]    model, effort... |\n| /cli timeout ...    idle time (1 h)  |\n| /cli view on|off    live window      |\n| /cli progress ...   activity/quiet   |\n|                                      |\n| More: /cli attach, /cli resume,      |\n| /help (this page)                    |\n| <agent>: a tag or full name:         |\n| agy (Antigravity)  cla (Claude Code) |\n| cod (Codex CLI)    gro (Grok Build)  |\n| cop (GitHub Copilot) cur (Cursor)    |\n| <name>: a name, tag (gro) or -7K     |\n| $ works in place of / everywhere.    |\n| X. Close help                        |\n+--------------------------------------+\n```",
+     "activationMenu": "```text\n+--------------------------------------+\n| CLI-MODE                             |\n| Help                                 |\n+--------------------------------------+\n| AGENTS                               |\n| /cli                choose an agent  |\n| /cli <agent>        its setup page   |\n| /cli spawn <agent>  start another    |\n| /cli list           running agents   |\n| /cli use <name>     make it current  |\n| /cli close [name]   close (or all)   |\n|                                      |\n| SEND WORK                            |\n| /d <task>           to current agent |\n| /d <name> <task>    to one agent     |\n| /d <a>,<b> <task>   to several       |\n| Only /d reaches an agent.            |\n|                                      |\n| RESULTS                              |\n| /cli diff [name]    last turn's diff |\n| /cli dir [name]     where files go   |\n| /cli queue          queued requests  |\n| /cli cancel [name]  stop its turn    |\n| /cli undo [name]    undo last turn   |\n|                                      |\n| SETTINGS                             |\n| /cli menu [name]    model, effort... |\n| /cli timeout ...    idle time (1 h)  |\n| /cli view on|off    live window      |\n| /cli progress ...   activity/quiet   |\n| /cli test <cmd>     auto-run tests   |\n| /cli brief ...      shared brief     |\n|                                      |\n| More: /cli attach, /cli resume,      |\n| /help (this page)                    |\n| <agent>: a tag or full name:         |\n| agy (Antigravity)  cla (Claude Code) |\n| cod (Codex CLI)    gro (Grok Build)  |\n| cop (GitHub Copilot) cur (Cursor)    |\n| <name>: a name, tag (gro) or -7K     |\n| $ works in place of / everywhere.    |\n| X. Close help                        |\n+--------------------------------------+\n```",
      "menuView": {
       "format": "inline-html",
       "path": "<ROOT>\\v\\help.html",
       "reference": "\ue200visualize\ue202{\"path\": \"<ROOT>\\\\v\\\\help.html\"}\ue201"
      },
-     "text": "```text\n+--------------------------------------+\n| CLI-MODE                             |\n| Help                                 |\n+--------------------------------------+\n| AGENTS                               |\n| /cli                choose an agent  |\n| /cli <agent>        its setup page   |\n| /cli spawn <agent>  start another    |\n| /cli list           running agents   |\n| /cli use <name>     make it current  |\n| /cli close [name]   close (or all)   |\n|                                      |\n| SEND WORK                            |\n| /d <task>           to current agent |\n| /d <name> <task>    to one agent     |\n| /d <a>,<b> <task>   to several       |\n| Only /d reaches an agent.            |\n|                                      |\n| RESULTS                              |\n| /cli diff [name]    last turn's diff |\n| /cli dir [name]     where files go   |\n| /cli queue          queued requests  |\n| /cli cancel [name]  stop its turn    |\n|                                      |\n| SETTINGS                             |\n| /cli menu [name]    model, effort... |\n| /cli timeout ...    idle time (1 h)  |\n| /cli view on|off    live window      |\n| /cli progress ...   activity/quiet   |\n|                                      |\n| More: /cli attach, /cli resume,      |\n| /help (this page)                    |\n| <agent>: a tag or full name:         |\n| agy (Antigravity)  cla (Claude Code) |\n| cod (Codex CLI)    gro (Grok Build)  |\n| cop (GitHub Copilot) cur (Cursor)    |\n| <name>: a name, tag (gro) or -7K     |\n| $ works in place of / everywhere.    |\n| X. Close help                        |\n+--------------------------------------+\n```"
+     "text": "```text\n+--------------------------------------+\n| CLI-MODE                             |\n| Help                                 |\n+--------------------------------------+\n| AGENTS                               |\n| /cli                choose an agent  |\n| /cli <agent>        its setup page   |\n| /cli spawn <agent>  start another    |\n| /cli list           running agents   |\n| /cli use <name>     make it current  |\n| /cli close [name]   close (or all)   |\n|                                      |\n| SEND WORK                            |\n| /d <task>           to current agent |\n| /d <name> <task>    to one agent     |\n| /d <a>,<b> <task>   to several       |\n| Only /d reaches an agent.            |\n|                                      |\n| RESULTS                              |\n| /cli diff [name]    last turn's diff |\n| /cli dir [name]     where files go   |\n| /cli queue          queued requests  |\n| /cli cancel [name]  stop its turn    |\n| /cli undo [name]    undo last turn   |\n|                                      |\n| SETTINGS                             |\n| /cli menu [name]    model, effort... |\n| /cli timeout ...    idle time (1 h)  |\n| /cli view on|off    live window      |\n| /cli progress ...   activity/quiet   |\n| /cli test <cmd>     auto-run tests   |\n| /cli brief ...      shared brief     |\n|                                      |\n| More: /cli attach, /cli resume,      |\n| /help (this page)                    |\n| <agent>: a tag or full name:         |\n| agy (Antigravity)  cla (Claude Code) |\n| cod (Codex CLI)    gro (Grok Build)  |\n| cop (GitHub Copilot) cur (Cursor)    |\n| <name>: a name, tag (gro) or -7K     |\n| $ works in place of / everywhere.    |\n| X. Close help                        |\n+--------------------------------------+\n```"
     },
     "views": {
-     "<ROOT>\\v\\help.html": "<section id=\"cli-menu-00000000000000000000000000000001\" aria-label=\"CLI-MODE Help\">\n<style>\n#cli-menu-00000000000000000000000000000001{color:var(--card-foreground,#fff);background:var(--card,#202124);border:1px solid var(--border,#92979b);box-sizing:border-box;max-width:40ch;width:100%;font-family:ui-monospace,Consolas,monospace;font-size:14px;line-height:1.5;overflow-wrap:anywhere;}\n#cli-menu-00000000000000000000000000000001 .heading{padding:10px 12px;border-bottom:1px solid var(--border,#92979b);}\n#cli-menu-00000000000000000000000000000001 .title{color:var(--green,#42d392);font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .subtitle{color:var(--card-foreground,#fff);font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .body{padding:10px 12px;}\n#cli-menu-00000000000000000000000000000001 .row{min-width:0;white-space:pre-wrap;}\n#cli-menu-00000000000000000000000000000001 .ok{color:var(--green,#42d392);}\n#cli-menu-00000000000000000000000000000001 .command{font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .section{color:var(--green,#42d392);font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .warning,#cli-menu-00000000000000000000000000000001 .exit{color:var(--red,#ff4d4f);}\n</style>\n<header class=\"heading\"><div class=\"title\">CLI-MODE</div><div class=\"subtitle\">Help</div></header>\n<div class=\"body\">\n<div class=\"row\"><span class=\"section\">AGENTS</span></div>\n<div class=\"row\"><span class=\"command\">/cli</span>                choose an agent</div>\n<div class=\"row\"><span class=\"command\">/cli &lt;agent&gt;</span>        its setup page</div>\n<div class=\"row\"><span class=\"command\">/cli spawn &lt;agent&gt;</span>  start another</div>\n<div class=\"row\"><span class=\"command\">/cli list</span>           running agents</div>\n<div class=\"row\"><span class=\"command\">/cli use &lt;name&gt;</span>     make it current</div>\n<div class=\"row\"><span class=\"command\">/cli close [name]</span>   close (or all)</div>\n<div class=\"row\">&#160;</div>\n<div class=\"row\"><span class=\"section\">SEND WORK</span></div>\n<div class=\"row\"><span class=\"command\">/d &lt;task&gt;</span>           to current agent</div>\n<div class=\"row\"><span class=\"command\">/d &lt;name&gt; &lt;task&gt;</span>    to one agent</div>\n<div class=\"row\"><span class=\"command\">/d &lt;a&gt;,&lt;b&gt; &lt;task&gt;</span>   to several</div>\n<div class=\"row\">Only /d reaches an agent.</div>\n<div class=\"row\">&#160;</div>\n<div class=\"row\"><span class=\"section\">RESULTS</span></div>\n<div class=\"row\"><span class=\"command\">/cli diff [name]</span>    last turn&#x27;s diff</div>\n<div class=\"row\"><span class=\"command\">/cli dir [name]</span>     where files go</div>\n<div class=\"row\"><span class=\"command\">/cli queue</span>          queued requests</div>\n<div class=\"row\"><span class=\"command\">/cli cancel [name]</span>  stop its turn</div>\n<div class=\"row\">&#160;</div>\n<div class=\"row\"><span class=\"section\">SETTINGS</span></div>\n<div class=\"row\"><span class=\"command\">/cli menu [name]</span>    model, effort...</div>\n<div class=\"row\"><span class=\"command\">/cli timeout ...</span>    idle time (1 h)</div>\n<div class=\"row\"><span class=\"command\">/cli view on|off</span>    live window</div>\n<div class=\"row\"><span class=\"command\">/cli progress ...</span>   activity/quiet</div>\n<div class=\"row\">&#160;</div>\n<div class=\"row\">More: /cli attach, /cli resume,</div>\n<div class=\"row\"><span class=\"command\">/help (this page)</span></div>\n<div class=\"row\">&lt;agent&gt;: a tag or full name:</div>\n<div class=\"row\">agy (Antigravity)  cla (Claude Code)</div>\n<div class=\"row\">cod (Codex CLI)    gro (Grok Build)</div>\n<div class=\"row\">cop (GitHub Copilot) cur (Cursor)</div>\n<div class=\"row\">&lt;name&gt;: a name, tag (gro) or -7K</div>\n<div class=\"row\">$ works in place of / everywhere.</div>\n<div class=\"row\">X. <span class=\"exit\">Close help</span></div>\n</div>\n</section>\n"
+     "<ROOT>\\v\\help.html": "<section id=\"cli-menu-00000000000000000000000000000001\" aria-label=\"CLI-MODE Help\">\n<style>\n#cli-menu-00000000000000000000000000000001{color:var(--card-foreground,#fff);background:var(--card,#202124);border:1px solid var(--border,#92979b);box-sizing:border-box;max-width:40ch;width:100%;font-family:ui-monospace,Consolas,monospace;font-size:14px;line-height:1.5;overflow-wrap:anywhere;}\n#cli-menu-00000000000000000000000000000001 .heading{padding:10px 12px;border-bottom:1px solid var(--border,#92979b);}\n#cli-menu-00000000000000000000000000000001 .title{color:var(--green,#42d392);font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .subtitle{color:var(--card-foreground,#fff);font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .body{padding:10px 12px;}\n#cli-menu-00000000000000000000000000000001 .row{min-width:0;white-space:pre-wrap;}\n#cli-menu-00000000000000000000000000000001 .ok{color:var(--green,#42d392);}\n#cli-menu-00000000000000000000000000000001 .command{font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .section{color:var(--green,#42d392);font-weight:700;}\n#cli-menu-00000000000000000000000000000001 .warning,#cli-menu-00000000000000000000000000000001 .exit{color:var(--red,#ff4d4f);}\n</style>\n<header class=\"heading\"><div class=\"title\">CLI-MODE</div><div class=\"subtitle\">Help</div></header>\n<div class=\"body\">\n<div class=\"row\"><span class=\"section\">AGENTS</span></div>\n<div class=\"row\"><span class=\"command\">/cli</span>                choose an agent</div>\n<div class=\"row\"><span class=\"command\">/cli &lt;agent&gt;</span>        its setup page</div>\n<div class=\"row\"><span class=\"command\">/cli spawn &lt;agent&gt;</span>  start another</div>\n<div class=\"row\"><span class=\"command\">/cli list</span>           running agents</div>\n<div class=\"row\"><span class=\"command\">/cli use &lt;name&gt;</span>     make it current</div>\n<div class=\"row\"><span class=\"command\">/cli close [name]</span>   close (or all)</div>\n<div class=\"row\">&#160;</div>\n<div class=\"row\"><span class=\"section\">SEND WORK</span></div>\n<div class=\"row\"><span class=\"command\">/d &lt;task&gt;</span>           to current agent</div>\n<div class=\"row\"><span class=\"command\">/d &lt;name&gt; &lt;task&gt;</span>    to one agent</div>\n<div class=\"row\"><span class=\"command\">/d &lt;a&gt;,&lt;b&gt; &lt;task&gt;</span>   to several</div>\n<div class=\"row\">Only /d reaches an agent.</div>\n<div class=\"row\">&#160;</div>\n<div class=\"row\"><span class=\"section\">RESULTS</span></div>\n<div class=\"row\"><span class=\"command\">/cli diff [name]</span>    last turn&#x27;s diff</div>\n<div class=\"row\"><span class=\"command\">/cli dir [name]</span>     where files go</div>\n<div class=\"row\"><span class=\"command\">/cli queue</span>          queued requests</div>\n<div class=\"row\"><span class=\"command\">/cli cancel [name]</span>  stop its turn</div>\n<div class=\"row\"><span class=\"command\">/cli undo [name]</span>    undo last turn</div>\n<div class=\"row\">&#160;</div>\n<div class=\"row\"><span class=\"section\">SETTINGS</span></div>\n<div class=\"row\"><span class=\"command\">/cli menu [name]</span>    model, effort...</div>\n<div class=\"row\"><span class=\"command\">/cli timeout ...</span>    idle time (1 h)</div>\n<div class=\"row\"><span class=\"command\">/cli view on|off</span>    live window</div>\n<div class=\"row\"><span class=\"command\">/cli progress ...</span>   activity/quiet</div>\n<div class=\"row\"><span class=\"command\">/cli test &lt;cmd&gt;</span>     auto-run tests</div>\n<div class=\"row\"><span class=\"command\">/cli brief ...</span>      shared brief</div>\n<div class=\"row\">&#160;</div>\n<div class=\"row\">More: /cli attach, /cli resume,</div>\n<div class=\"row\"><span class=\"command\">/help (this page)</span></div>\n<div class=\"row\">&lt;agent&gt;: a tag or full name:</div>\n<div class=\"row\">agy (Antigravity)  cla (Claude Code)</div>\n<div class=\"row\">cod (Codex CLI)    gro (Grok Build)</div>\n<div class=\"row\">cop (GitHub Copilot) cur (Cursor)</div>\n<div class=\"row\">&lt;name&gt;: a name, tag (gro) or -7K</div>\n<div class=\"row\">$ works in place of / everywhere.</div>\n<div class=\"row\">X. <span class=\"exit\">Close help</span></div>\n</div>\n</section>\n"
     }
    },
    "step": "cli commands"
@@ -3739,6 +3817,7 @@
      "00000000000000000000000000000012": {
       "agent": "agy",
       "capturedAt": "<capturedAt>",
+      "endedAt": "<endedAt>",
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000013.jsonl",
       "generation": 0,
       "name": "ELON",
@@ -3769,7 +3848,8 @@
       },
       "status": "completed",
       "submittedAt": "<submittedAt>",
-      "submitterPid": "<submitterPid>"
+      "submitterPid": "<submitterPid>",
+      "touched": []
      },
      "00000000000000000000000000000014": {
       "agent": "agy",
@@ -3880,6 +3960,7 @@
      "00000000000000000000000000000012": {
       "agent": "agy",
       "capturedAt": "<capturedAt>",
+      "endedAt": "<endedAt>",
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000013.jsonl",
       "generation": 0,
       "name": "ELON",
@@ -3910,7 +3991,8 @@
       },
       "status": "completed",
       "submittedAt": "<submittedAt>",
-      "submitterPid": "<submitterPid>"
+      "submitterPid": "<submitterPid>",
+      "touched": []
      },
      "00000000000000000000000000000014": {
       "agent": "agy",
@@ -4044,6 +4126,7 @@
      "00000000000000000000000000000012": {
       "agent": "agy",
       "capturedAt": "<capturedAt>",
+      "endedAt": "<endedAt>",
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000013.jsonl",
       "generation": 0,
       "name": "ELON",
@@ -4074,7 +4157,8 @@
       },
       "status": "completed",
       "submittedAt": "<submittedAt>",
-      "submitterPid": "<submitterPid>"
+      "submitterPid": "<submitterPid>",
+      "touched": []
      },
      "00000000000000000000000000000014": {
       "agent": "agy",
@@ -4198,6 +4282,7 @@
      "00000000000000000000000000000012": {
       "agent": "agy",
       "capturedAt": "<capturedAt>",
+      "endedAt": "<endedAt>",
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000013.jsonl",
       "generation": 0,
       "name": "ELON",
@@ -4228,7 +4313,8 @@
       },
       "status": "completed",
       "submittedAt": "<submittedAt>",
-      "submitterPid": "<submitterPid>"
+      "submitterPid": "<submitterPid>",
+      "touched": []
      },
      "00000000000000000000000000000014": {
       "agent": "agy",
@@ -4320,6 +4406,7 @@
      "00000000000000000000000000000012": {
       "agent": "agy",
       "capturedAt": "<capturedAt>",
+      "endedAt": "<endedAt>",
       "events": "<ROOT>\\data\\requests\\d5c6491f668dfdaf6354911e71aa0e59872d47071b16063c41fd402029e92bf4\\operations\\00000000000000000000000000000013.jsonl",
       "generation": 0,
       "name": "ELON",
@@ -4350,7 +4437,8 @@
       },
       "status": "completed",
       "submittedAt": "<submittedAt>",
-      "submitterPid": "<submitterPid>"
+      "submitterPid": "<submitterPid>",
+      "touched": []
      },
      "00000000000000000000000000000014": {
       "agent": "agy",

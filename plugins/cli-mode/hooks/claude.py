@@ -94,7 +94,7 @@ ARGUMENT = re.compile(r'[A-Za-z0-9_.:-]+')
 ALLOWED = frozenset((
     'relay', 'follow', 'queue', 'status', 'bind', 'activate', 'choose', 'navigate', 'settings', 'progress', 'view', 'tune',
     'activation-message', 'frontend', 'options', 'first-time-check', 'setup-status', 'setup-manual', 'setup-start',
-    'off', 'close', 'use', 'agents', 'diff', 'dir', 'timeout', 'attach', 'cancel', 'resume', 'refresh', 'commands',
+    'off', 'close', 'use', 'agents', 'diff', 'dir', 'undo', 'timeout', 'attach', 'cancel', 'resume', 'refresh', 'commands',
     'catalog'))
 RESET = ('/cli reset', '$cli reset', '/cli-mode:cli reset')
 MAX_NUDGES = 3
@@ -738,8 +738,15 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
         return instant(event, root, 'use', *named(decision))
     if kind == 'agents':
         return instant(event, root, 'agents', *(['--max', str(decision['max'])] if decision.get('max') else []))
-    if kind in ('diff', 'dir'):
+    if kind in ('diff', 'dir', 'undo'):
         return instant(event, root, kind, *named(decision), render=lambda result: result['text'])
+    if kind == 'test':  # Your own text: passed as one argument, never through a shell line.
+        return instant(event, root, 'test', *(['--command=' + decision['command']] if decision.get('command') else []),
+                       render=lambda result: result['text'])
+    if kind == 'brief':
+        return instant(event, root, 'brief', '--action', decision['action'],
+                       *(['--text=' + decision['text']] if decision.get('text') else []),
+                       render=lambda result: result['text'])
     if kind == 'timeout':
         return instant(event, root, 'timeout', *named(decision),
                        *(['--minutes', str(decision['minutes'])] if decision.get('minutes') else []))

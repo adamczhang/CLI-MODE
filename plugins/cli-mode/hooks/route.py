@@ -326,6 +326,19 @@ def codex_output(event, store, state, decision, worker, cancellation):
         instruction = ('Run ' + run('diff' + named) + ' and reply with its `text` exactly as given: a line saying what '
                        'the agent\'s last turn changed, then the diff as a fenced diff block. It reads local files '
                        'only; nothing is sent to any agent.')
+    elif kind == 'undo':
+        instruction = ('Run ' + run('undo' + named) + ' and reply with its `text` exactly as given. It puts back the '
+                       'files the agent\'s last turn changed, only if none changed since; nothing is sent to any agent.')
+    elif kind in ('test', 'brief'):
+        # Your own text (a test command, a brief point) is applied here, in the hook, never through a shell line.
+        import controller as control
+        words = (['test'] + (['--command=' + decision['command']] if decision.get('command') else []) if kind == 'test'
+                 else ['brief', '--action', decision['action']] + (['--text=' + decision['text']]
+                                                                   if decision.get('text') else []))
+        result = control.run(control.build_parser().parse_args(
+            ['--thread', store.thread, '--workspace', str(store.workspace), '--data-root', str(store.root),
+             '--host', 'codex'] + words))
+        instruction = 'Reply with exactly ' + json.dumps(result['text']) + '; it is already done, no command runs.'
     elif kind == 'dir':
         instruction = ('Run ' + run('dir' + named) + ' and reply with its `text` exactly as given, as plain lines in a '
                        'code block: where the agent saves its files, as a full path and as the path in the project. '
@@ -484,7 +497,7 @@ def context(kind, state, instruction, core, relay_rules, menu_rules, setup_rules
         rules, fields = help_rules, MENU_STATE
     elif relaying:
         rules, fields = relay_rules, RELAY_STATE
-    elif kind in ('hint', 'off', 'close', 'use', 'agents', 'diff', 'dir', 'timeout', 'attach'):
+    elif kind in ('hint', 'off', 'close', 'use', 'agents', 'diff', 'dir', 'undo', 'test', 'brief', 'timeout', 'attach'):
         rules, fields = '', RELAY_STATE
     else:
         rules, fields = menu_rules, MENU_STATE

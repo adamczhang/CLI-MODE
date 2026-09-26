@@ -305,9 +305,9 @@ class DispatchMixin:
         if not owned:
             raise RuntimeError('No ready owned session matches this dispatch.')
         # A task names the agent's working folder (agent_folder); an agent's own slash command goes as typed.
-        if working_folder and not provider_command and agent_folder.ensure(
-                owned.get('workspace') or self.store.workspace, owned.get('alias')) is not None:
-            text += agent_folder.instruction(owned['alias'])
+        workspace = owned.get('workspace') or self.store.workspace
+        if working_folder and not provider_command and agent_folder.ensure(workspace, owned.get('alias')) is not None:
+            text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file())
         if hasattr(self.backend, 'validate_prompt'):
             self.backend.validate_prompt(owned)
         if hasattr(self.backend, 'prepare'):
