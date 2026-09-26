@@ -211,9 +211,11 @@ class Frontends(unittest.TestCase):
                         '/cli model Flash', '$cli effort high', '/cli permissions allow'):
             with self.subTest(command=command):
                 self.assertEqual(route(command, self.store.read()), dict(route='hint', text=(
-                    'CLI-MODE: Agent not activated. /CLI to setup' if command == '/cli model Flash' else INACTIVE_HINT)))
+                    'CLI-MODE: Agent not activated. /CLI to setup' if command == '/cli model Flash' else
+                    'CLI-MODE has no /cli unknown. Say /help to see options.' if command == '/cli unknown' else INACTIVE_HINT)))
         state = dict(active=True, pending=None)
-        self.assertEqual(route('/cli unknown', state), dict(route='hint', text='Say /help to see options.'))
+        self.assertEqual(route('/cli unknown', state),
+                         dict(route='hint', text='CLI-MODE has no /cli unknown. Say /help to see options.'))
         self.assertEqual(route('commands', state)['route'], 'host')
         self.assertEqual(route('/commands extra', state)['route'], 'host')
         self.assertEqual(route('$commands', state)['route'], 'host')

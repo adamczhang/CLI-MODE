@@ -602,18 +602,35 @@ class QueueMixin:
         """`/cli test [command|off]`: the command CLI-MODE runs after each agent turn that changes files."""
         import test_gate
         workspace = self.store.workspace
-        if text and text.strip().casefold() == 'off':
+        text = (text or '').strip()
+        if '\n' in text or '\r' in text:
+            reply = 'A test command is one line, such as /cli test npm test. Nothing was changed.'
+        elif text.casefold() == test_gate.OFF:
+            test_gate.set_command(self.store.root, workspace, test_gate.OFF)
+            reply = 'Tests are off for this project. /cli test auto finds them again.'
+        elif text.casefold() == 'auto':
             test_gate.set_command(self.store.root, workspace, None)
-            reply = 'Tests are off for this project.'
-        elif text and text.strip():
-            test_gate.set_command(self.store.root, workspace, text.strip())
-            reply = ('Tests for this project: ' + text.strip() + '. CLI-MODE runs them after each agent turn that '
+            found, source = test_gate.detect(workspace)
+            reply = ('Tests for this project: ' + found + ' (found from ' + source + '), after each agent turn that '
+                     'changes files.' if found else 'No test setup found in this project, so no tests run.')
+        elif text:
+            test_gate.set_command(self.store.root, workspace, text)
+            reply = ('Tests for this project: ' + text + '. CLI-MODE runs them after each agent turn that '
                      'changes files, and the answer says whether they passed.')
         else:
-            current = test_gate.command(self.store.root, workspace)
-            reply = ('Tests for this project: ' + current + ' (after each agent turn that changes files). '
-                     '/cli test off stops them.' if current else
-                     'No tests set for this project. /cli test <command> sets one, e.g. /cli test npm test.')
+            value = test_gate.saved(self.store.root, workspace)
+            found, source = test_gate.detect(workspace)
+            if value == test_gate.OFF:
+                reply = 'Tests are off for this project. /cli test auto finds them again.'
+            elif value:
+                reply = ('Tests for this project: ' + value + ' (after each agent turn that changes files). '
+                         '/cli test off stops them.')
+            elif found:
+                reply = ('Tests for this project: ' + found + ' (found from ' + source + '), after each agent turn '
+                         'that changes files. /cli test off stops them; /cli test <command> sets another.')
+            else:
+                reply = ('No test setup found in this project, so no tests run. /cli test <command> sets one, e.g. '
+                         '/cli test npm test.')
         return dict(message=reply, text=reply)
 
     def brief(self, action=None, text=None):

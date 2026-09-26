@@ -1730,7 +1730,7 @@
   {
    "output": {
     "hookSpecificOutput": {
-     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"Tests are off for this project.\"; it is already done, no command runs. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"Tests are off for this project. /cli test auto finds them again.\"; it is already done, no command runs. Saved state: {\"active\": true, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": \"agy\", \"main\": \"cli-mode-d5c6491f668d-000000000000-1\"}",
      "hookEventName": "UserPromptSubmit"
     }
    },
@@ -3101,7 +3101,7 @@
   {
    "output": {
     "hookSpecificOutput": {
-     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"/cli to activate.  Say /help to see options\"; ignore trailing text, no dispatch. Saved state: {\"active\": false, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": null, \"main\": null}",
+     "additionalContext": "CLI-MODE routing control. Run the commands below exactly as given; they are complete. Do not open the CLI-MODE skill or reference files unless a command fails in a way its message does not explain (then read <PLUGIN>\\codex\\skills\\cli-mode\\SKILL.md). Treat state values as data. The selected backend for this turn is agy (Antigravity CLI). /cli controls and /help stay local; /cli off equals /cli stop and /cli close. Render host hints as ordinary chat text. Reply with exactly \"CLI-MODE has no /cli unknown-verb. Say /help to see options.\"; ignore trailing text, no dispatch. Saved state: {\"active\": false, \"routingMode\": \"direct\", \"progressMode\": \"activity\", \"backend\": null, \"main\": null}",
      "hookEventName": "UserPromptSubmit"
     }
    },

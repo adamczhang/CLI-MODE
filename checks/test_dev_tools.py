@@ -84,12 +84,42 @@ class Undo(Project):
 
 
 class TestGate(Project):
-    def test_off_until_set_and_shown(self):
-        self.assertIn('No tests set for this project', self.control.tests()['text'])
+    def test_set_shown_and_off(self):
+        self.assertIn('No test setup found in this project', self.control.tests()['text'])
         self.control.tests('npm test')
         self.assertIn('Tests for this project: npm test', self.control.tests()['text'])
-        self.assertEqual(self.control.tests('off')['text'], 'Tests are off for this project.')
+        self.assertIn('Tests are off for this project.', self.control.tests('off')['text'])
         self.assertIsNone(test_gate.command(self.store.root, self.project))
+
+    def test_the_command_is_found_from_the_project(self):
+        write = lambda name, text: (self.project / name).write_text(text, encoding='utf-8')
+        self.assertEqual(test_gate.detect(self.project), (None, None))
+        write('package.json', json.dumps({'scripts': {'test': 'echo "Error: no test specified" && exit 1'}}))
+        self.assertEqual(test_gate.detect(self.project), (None, None))  # npm init's placeholder is not a test.
+        (self.project / 'tests').mkdir()
+        write('tests/test_app.py', 'def test_ok(): pass\n')
+        self.assertEqual(test_gate.detect(self.project), ('python -m pytest', 'tests/'))
+        write('package.json', json.dumps({'scripts': {'test': 'vitest run'}}))
+        self.assertEqual(test_gate.detect(self.project), ('npm test', 'package.json'))
+        self.assertIn('npm test (found from package.json)', self.control.tests()['text'])
+        self.assertEqual(test_gate.command(self.store.root, self.project), 'npm test')  # On by default.
+
+    def test_off_stays_off_and_auto_finds_it_again(self):
+        (self.project / 'Cargo.toml').write_text('[package]\n', encoding='utf-8')
+        self.control.tests('off')
+        self.assertIsNone(test_gate.command(self.store.root, self.project))  # Detection doesn't switch it back on.
+        self.assertIn('cargo test (found from Cargo.toml)', self.control.tests('auto')['text'])
+        self.assertEqual(test_gate.command(self.store.root, self.project), 'cargo test')
+
+    def test_a_command_is_one_line(self):
+        reply = self.control.tests('npm test · /cli test · /cli test off\n\nExplain')['text']
+        self.assertEqual(reply, 'A test command is one line, such as /cli test npm test. Nothing was changed.')
+        self.assertIsNone(test_gate.saved(self.store.root, self.project))
+
+    def test_an_unknown_word_is_named(self):
+        from state import route
+        self.assertEqual(route('/cli frobnicate', self.store.read())['text'],
+                         'CLI-MODE has no /cli frobnicate. Say /help to see options.')
 
     def test_a_turn_that_changes_files_is_tested_and_the_answer_says_so(self):
         self.control.tests(passing())

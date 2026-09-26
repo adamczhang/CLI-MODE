@@ -252,7 +252,8 @@ class Commands(unittest.TestCase):
             # Both prefixes reach help; /commands is still not a help alias.
             self.assertEqual(route(prefix + 'help', self.store.read())['route'], 'help')
             self.assertEqual(route(prefix + 'commands', self.store.read())['route'], 'host')
-            self.assertEqual(route(prefix + 'cli typo', self.store.read())['text'], INACTIVE_HINT)
+            self.assertEqual(route(prefix + 'cli typo', self.store.read())['text'],
+                             'CLI-MODE has no /cli typo. Say /help to see options.')
         self.bind()
         for phase in ('model', 'effort', 'access', 'permissions'):
             for choice in ('', 'use the lower effort', 'Gemini 3.1 Pro', 'ask me before tools'):

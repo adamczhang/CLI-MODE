@@ -29,16 +29,57 @@ def key(workspace):
     return os.path.normcase(str(Path(workspace).resolve()))
 
 
-def command(root, workspace):
-    """The test command set for this project, or None."""
+OFF = 'off'
+NPM_PLACEHOLDER = 'no test specified'  # `npm init`'s test script, which only fails.
+
+
+def detect(workspace):
+    """The project's usual test command from its files, as (command, source), or (None, None).
+
+    package.json with a real test script: npm test; pytest.ini, pyproject.toml with pytest settings, or a tests
+    folder of test_*.py files: python -m pytest; Cargo.toml: cargo test; go.mod: go test ./... A folder with none
+    of these (research, art, docs) has no tests, so nothing runs there.
+    """
+    root = Path(workspace)
+    try:
+        script = ((json.loads((root / 'package.json').read_text(encoding='utf-8')).get('scripts') or {})
+                  .get('test') if (root / 'package.json').is_file() else None)
+    except (OSError, ValueError, AttributeError):
+        script = None
+    if isinstance(script, str) and script.strip() and NPM_PLACEHOLDER not in script:
+        return 'npm test', 'package.json'
+    try:
+        pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8') if (root / 'pyproject.toml').is_file() else ''
+    except OSError:
+        pyproject = ''
+    if (root / 'pytest.ini').is_file() or '[tool.pytest' in pyproject or any((root / 'tests').glob('test_*.py')):
+        return 'python -m pytest', 'pytest.ini' if (root / 'pytest.ini').is_file() else (
+            'pyproject.toml' if '[tool.pytest' in pyproject else 'tests/')
+    if (root / 'Cargo.toml').is_file():
+        return 'cargo test', 'Cargo.toml'
+    if (root / 'go.mod').is_file():
+        return 'go test ./...', 'go.mod'
+    return None, None
+
+
+def saved(root, workspace):
+    """What `/cli test` saved for this project: a command, OFF, or None (then the command is detected)."""
     try:
         return json.loads((Path(root) / SETTINGS).read_text(encoding='utf-8')).get(key(workspace))
     except (OSError, ValueError, AttributeError):
         return None
 
 
+def command(root, workspace):
+    """The test command for this project: the one set with /cli test, else the detected one; None when off."""
+    value = saved(root, workspace)
+    if value == OFF:
+        return None
+    return value or detect(workspace)[0]
+
+
 def set_command(root, workspace, text):
-    """Set (or with None, remove) this project's test command."""
+    """Save this project's test command, or OFF, or with None forget it (detection applies again)."""
     path = Path(root) / SETTINGS
     try:
         saved = json.loads(path.read_text(encoding='utf-8'))

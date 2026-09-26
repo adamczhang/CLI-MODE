@@ -100,7 +100,7 @@ class Routing(unittest.TestCase):
             self.assertEqual(help_route['route'], 'help')
             self.assertIn('/cli help', help_route['text'])
             self.assertEqual(route('/cli typo', dict(self.STATE, active=False))['text'],
-                             '/cli to activate.  Say /cli help to see options')
+                             'CLI-MODE has no /cli typo. Say /cli help to see options.')
 
     def test_codex_routing_is_unchanged(self):
         with patch.dict(os.environ, {}, clear=False):

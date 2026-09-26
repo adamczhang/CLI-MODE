@@ -177,9 +177,10 @@ Files: docs/engine-report.md
 ```
 
 **Safety nets.** `/cli undo [name]` puts back the files an agent's last turn changed (only if none changed
-since). When two agents working at once edit the same file, the later answer warns you. `/cli test <command>`
-(such as `/cli test npm test`) runs your tests after every turn that changes files, and the answer says whether
-they passed. `/cli brief-add <text>` builds a short brief, `Agent_Working_Folder/BRIEF.md`, that every agent reads
+since). When two agents working at once edit the same file, the later answer warns you. After every turn that
+changes files, CLI-MODE runs your project's tests (found automatically: `npm test`, `python -m pytest`,
+`cargo test` or `go test ./...`) and the answer says whether they passed; `/cli test <command>` sets another,
+`/cli test off` turns them off. `/cli brief-add <text>` builds a short brief, `Agent_Working_Folder/BRIEF.md`, that every agent reads
 before its task; `/cli brief` shows it and `/cli brief clear` removes it.
 
 **Agents from earlier sessions.** An agent you didn't close keeps its conversation. In a new session in the

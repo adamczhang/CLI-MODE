@@ -608,6 +608,9 @@ def cli_route(verb, choice, state):
         if verb == 'menu' or (verb == 'model' and not text):
             return dict({'route': 'settings'}, **target)
         return dict({'route': 'tune', 'phase': verb, 'text': text}, **target)
+    if verb not in names.RESERVED and not selected:  # An agent's name or tag is a known word too.
+        # A word CLI-MODE doesn't know: say so, rather than suggest activating (there may be nothing to activate).
+        return {'route': 'hint', 'text': 'CLI-MODE has no /cli ' + verb + '. ' + help_hint()}
     return {'route': 'hint', 'text': inactive_hint() if not state['active'] else help_hint()}
 
 
