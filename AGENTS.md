@@ -1,6 +1,6 @@
 # CLI-MODE — agent guide (read this first)
 
-> **Written for CLI-MODE 0.3.6** (tag `v0.3.6`, 2026-09-26).
+> **Written for CLI-MODE 0.3.7** (tag `v0.3.7`, 2026-09-26).
 > If `plugins/cli-mode/.codex-plugin/plugin.json` shows a different version, parts of this file may be
 > out of date. Verify any file, function or rule named here against the code before relying on it; when
 > they disagree, the code wins. Fix this file in the same change. `checks/test_agent_docs.py` fails
