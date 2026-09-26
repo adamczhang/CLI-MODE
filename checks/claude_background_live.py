@@ -435,6 +435,29 @@ TOOLS_SAVE = ('Write a three-line research note about this project and save it a
               'Reply with only the file\'s path.')
 
 
+def folded_answers(events, plain):
+    """Agent answers posted before their turn's last message: the desktop app folds those out of view.
+
+    Relays tell Claude to post each answer in the turn's last message, and to carry every relay's output there
+    when several run in one turn (agents that finish together). An answer anywhere else counts as lost, even
+    though a plain transcript shows it (live, 2026-09-25: a run passed only because Claude happened to post
+    after each relay).
+    """
+    problems, turn = [], []
+    for event in events:
+        if event.get('type') == 'assistant':
+            turn += [block['text'] for block in (event.get('message') or {}).get('content') or []
+                     if block.get('type') == 'text' and block.get('text', '').strip()]
+        elif event.get('type') == 'result':
+            for text in turn[:-1]:
+                heads = [line for line in plain(text).splitlines() if line.rstrip('*').endswith(' says...')]
+                if heads:
+                    problems.append('folded: ' + ', '.join(head.strip('*') for head in heads) + ' posted before '
+                                    'the last message of its turn')
+            turn = []
+    return problems
+
+
 def run_tools(agents, model, keep):
     """The agent tools, live, in a git repository: one prompt to two agents, a change receipt and /cli diff,
     a note saved (with no location given) in the agent's git-ignored Agent_Working_Folder/<NAME>/ and its
@@ -579,6 +602,7 @@ def run_tools(agents, model, keep):
                         block.get('name') in ('Bash', 'PowerShell') and 'controller.py' in command
                         and (' follow --request ' in command or ' relay --request ' in command)):
                     problems.append('session %d used %s %s' % (index, block.get('name'), command[-100:]))
+        problems += ['session %d %s' % (index, problem) for problem in folded_answers(events, plain_strong)]
     report['problems'] = problems
     report['passed'] = not problems
     import host as host_module
