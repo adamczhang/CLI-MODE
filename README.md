@@ -213,6 +213,8 @@ continues where it left off, and the earlier session no longer has it.
   can run at once (4 by default, up to 8).
 - **`/cli use <name>`** — make that agent the current one.
 - **`/cli diff [name]`** — what an agent's last turn changed, as a diff.
+- **`/cli usage [name]`** — each running agent's plan usage from its own CLI (or that it can't report it); one
+  agent with its name.
 - **`/cli timeout [name] <time>`** — how long an idle agent keeps running, from 5 minutes to 24 hours
   (`90`, `90m`, `2h`; 1 hour by default). Without a name it sets the default for every conversation and this
   one's agents. `/cli timeout` shows the values.
@@ -282,8 +284,10 @@ level followed by the agent's own name for it, for example `Allow (Bypass permis
   `/allow-all` and similar) and points to the `/cli` control instead. Unknown commands are refused before
   anything is sent. Antigravity's native commands hand off to its own CLI in a fresh conversation, and
   CLI-MODE says so.
-- **Usage when available:** Antigravity and Claude can report subscription use; other agents show "Usage not
-  available through CLI".
+- **Usage:** `/cli usage` asks every running agent's own CLI what it has used, without a model request:
+  Claude (five-hour and weekly), Codex (its plan windows), Copilot (monthly requests left, when the GitHub CLI
+  is signed in as the same account) and Antigravity report their limits; Grok and Cursor show "Usage
+  reporting not supported through its CLI". The activation card shows Claude's and Antigravity's.
 - **Attachments:** files and pasted images attached to a `/d` in the Claude Code or Codex desktop app are
   copied into each named agent's folder (`Agent_Working_Folder/<NAME>/attachments/`) and named in its task.
   They are removed when the agent closes; `/cli dir` lists them. Local file paths in your prompt work too.

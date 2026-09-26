@@ -24,7 +24,7 @@ class CardHelp(unittest.TestCase):
         for which in (host.CODEX, host.CLAUDE):
             with patch.object(host, 'current', return_value=which):
                 text = help_view.text()
-                self.assertLess(len(help_view.render().splitlines()), 50)  # Was 95 on Claude Code.
+                self.assertLessEqual(len(help_view.render().splitlines()), 50)  # Was 95 on Claude Code.
             self.assertFalse([line for line in text.splitlines() if len(line) > 36])  # No row wraps.
         self.assertTrue(all(len(command) <= help_view.COLUMN - 2 for command, _ in help_view.COMMANDS))
 

@@ -309,6 +309,67 @@ class ClaudeAttach(unittest.TestCase):
                          ['Agent_Working_Folder/' + alias + '/attachments/image.png'])
 
 
+class Usage(Flow):
+    """/cli usage: every running agent reports what its own CLI knows, or says it can't."""
+    def summaries(self, by_agent):
+        import confirmation
+        return patch.object(confirmation, 'lookup', lambda agent, settings, workspace, session=None: by_agent[agent])
+
+    def test_every_agent_reports_or_says_it_cannot(self):
+        with self.store.edit() as state:
+            state['owned'].append(dict(state['owned'][0], name='second', alias='GRO-4K', backend='grok-build'))
+        by_agent = {'agy': {'status': 'ok', 'windows': [{'window': 'Weekly', 'utilization': '13% used',
+                                                        'resetRemaining': '4 days 2 hours'}]},
+                    'grok-build': {'status': 'unavailable'}}  # No helper: its CLI can't be asked.
+        with self.summaries(by_agent):
+            text = self.control.usage_report()['text']
+        self.assertEqual(text.splitlines(), [self.label + ':', '  Weekly: 13% used | resets in 4 days 2 hours',
+                                             'Grok GRO-4K:', '  Usage reporting not supported through its CLI'])
+
+    def test_grok_and_cursor_have_no_usage_helper(self):
+        backends = Path(__file__).resolve().parents[1] / 'plugins/cli-mode/backends'
+        for agent in ('grok-build', 'cursor'):
+            self.assertFalse((backends / agent / 'scripts/usage-summary.py').exists(), agent)
+
+    def test_one_agent_by_name_and_an_agent_that_cannot(self):
+        with self.summaries({'agy': {'status': 'unavailable', 'reason': 'Cursor shows usage only on cursor.com'}}):
+            self.prompt('/cli usage ' + self.alias.lower())
+            state = self.store.read()
+            self.assertEqual(state['turnRoute']['route'], 'usage')
+            text = self.control.usage_report(state['turnRoute']['session'])['text']
+        self.assertEqual(text, self.label + ':\n  can\'t report its usage: Cursor shows usage only on cursor.com')
+
+    def test_nobody_running(self):
+        self.control.off()
+        self.prompt('/cli usage')
+        self.assertIn('No agent is running', self.store.read()['turnRoute']['text'])
+
+
+class Helpers(unittest.TestCase):
+    """The new helpers' parsing, without calling the CLIs."""
+    def load(self, agent):
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / 'plugins/cli-mode/backends' / agent / 'scripts/usage-summary.py'
+        spec = importlib.util.spec_from_file_location('usage_' + agent.replace('-', '_'), path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_codex_names_its_windows(self):
+        codex = self.load('codex')
+        row = codex.window({'usedPercent': 93, 'windowDurationMins': 10080, 'resetsAt': 1000 + 3 * 86400}, 1000)
+        self.assertEqual(row, {'window': 'Weekly', 'utilization': '93% used', 'resetRemaining': '3 days 0 hours'})
+        self.assertEqual(codex.window({'usedPercent': 5, 'windowDurationMins': 300}, 0)['window'], 'Five hour')
+
+    def test_copilot_reads_only_a_matching_account(self):
+        copilot = self.load('copilot')
+        with patch.object(copilot, 'copilot_login', return_value='someone'), \
+                patch.object(copilot, 'gh', return_value={'login': 'someone-else'}), \
+                patch('sys.argv', ['usage-summary.py']), patch('builtins.print') as printed:
+            copilot.main()
+        self.assertIn('different account', printed.call_args[0][0])
+
+
 @unittest.skipUnless(HOOK.is_file(), 'The Claude Code hook is not in the Codex package')
 class HostNote(unittest.TestCase):
     """A new agent's activation asks the host to write its note in the brief, in the same turn."""

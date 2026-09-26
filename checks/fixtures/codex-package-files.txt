@@ -20,10 +20,12 @@ backends/codex/assets/models.json
 backends/codex/backend.md
 backends/codex/references/acpx.md
 backends/codex/references/confirmation.md
+backends/codex/scripts/usage-summary.py
 backends/copilot/assets/models.json
 backends/copilot/backend.md
 backends/copilot/references/acpx.md
 backends/copilot/references/confirmation.md
+backends/copilot/scripts/usage-summary.py
 backends/cursor/assets/models.json
 backends/cursor/backend.md
 backends/cursor/references/acpx.md

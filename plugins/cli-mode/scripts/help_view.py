@@ -27,6 +27,7 @@ SECTIONS = (
     ('RESULTS', (
         ('/cli diff [name]', 'last turn\'s diff'),
         ('/cli dir [name]', 'where files go'),
+        ('/cli usage [name]', 'plan usage left'),
         ('/cli queue', 'queued requests'),
         ('/cli cancel [name]', 'stop its turn'),
         ('/cli undo [name]', 'undo last turn'),

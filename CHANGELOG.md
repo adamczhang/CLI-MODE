@@ -11,6 +11,14 @@ Found by a full live validation of 0.3.7 on the Codex host (`checks/codex-valida
 ### Relays (both hosts)
 - **An agent's paragraphs no longer run together with `/cli progress quiet`.** Text sent before and after a tool call under one message ID (as Grok Build does) was joined mid-line ("I will run the tests.The tests passed."), because quiet progress drops the tool events that separate them. The bridge now starts a new paragraph after any tool call.
 
+### /cli usage (both hosts)
+- **`/cli usage`** shows every running agent's usage from its own CLI, all asked at once and with no model request; **`/cli usage <name>`** (or `-7K`) shows one. Each agent reports what it can and the others say why they can't:
+  - Claude: five-hour and weekly windows (its local `/usage`); Antigravity: its quota windows (as before).
+  - Codex CLI: its plan windows, from `account/rateLimits/read` on a short-lived `codex app-server`.
+  - GitHub Copilot: monthly premium and chat requests left, from GitHub's `copilot_internal/user` through the GitHub CLI, read only when `gh` is signed in as the account Copilot CLI uses.
+  - Grok Build and Cursor: "Usage reporting not supported through its CLI" (neither CLI reports its plan's limits).
+- The help card has `/cli usage [name]`.
+
 ### Validation tools
 - `checks/codex_release_validation.py` runs the plan's Part 2 (brief, approvals, attachments, undo, quiet relays) against the installed Codex plugin through `codex app-server`. `codex_user_validation.py` accepts the host's brief note edit and the host's own work on turns that are not CLI-MODE's.
 
