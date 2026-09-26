@@ -29,7 +29,7 @@ import zipfile
 PROJECT = Path(__file__).resolve().parents[1]
 PLUGIN = PROJECT / 'plugins' / 'cli-mode'
 HOOK_EVENTS = 'SessionStart, UserPromptSubmit, PreToolUse, Stop'
-HOOK_HANDLERS = 6  # SessionStart, UserPromptSubmit, PreToolUse x3 (Agent, Bash, PowerShell), Stop.
+HOOK_HANDLERS = 7  # SessionStart, UserPromptSubmit, PreToolUse x4 (Agent, Bash, PowerShell, Edit), Stop.
 # Prompts CLI-MODE answers itself, and a phrase each answer must contain. Replies are chat messages by
 # default (a model turn, and no sign-in here), so the first prompt switches to instant replies, which
 # is itself answered instantly and saved for the prompts after it.

@@ -34,6 +34,8 @@ VOLATILE = ('time', 'capturedAt', 'started', 'startedAt', 'createdAt', 'updatedA
             'idleSeconds', 'withoutPublicUpdateSeconds', 'ageSeconds', 'age', 'elapsed', 'waitSeconds',
             'pid', 'submitterPid', 'runnerPid', 'expires', 'expiresAt', 'mtime')
 VOLATILE_IN_TEXT = re.compile(r'("(?:' + '|'.join(VOLATILE) + r'|[A-Za-z]+At)": )-?\d+(?:\.\d+)?(?:e-?\d+)?')
+# The minute a new agent started, as the project brief's host-note headings write it.
+STAMP = re.compile(r'\b\d{4}-\d{2}-\d{2} \d{2}:\d{2}\b')
 
 
 def volatile(key):
@@ -70,6 +72,7 @@ class Normalizer:
         if isinstance(value, str):
             for old, new in self.pairs:
                 value = value.replace(old, new)
+            value = STAMP.sub('<stamp>', value)
             return VOLATILE_IN_TEXT.sub(lambda match: match.group(1) + '"<volatile>"', value)
         if isinstance(value, dict):
             # Keys can be paths too (views are keyed by file).

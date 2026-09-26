@@ -35,6 +35,13 @@
           {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 15,
            "if": "PowerShell(python *)"}
         ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {"type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"], "timeout": 15,
+           "if": "Edit(**/Agent_Working_Folder/BRIEF.md)"}
+        ]
       }
     ],
     "Stop": [

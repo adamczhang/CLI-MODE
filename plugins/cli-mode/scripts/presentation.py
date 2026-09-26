@@ -61,6 +61,27 @@ def effort_rank(name, value=None):
     return EFFORT_ORDER.index(key) if key else len(EFFORT_ORDER)
 
 
+HOST_NOTE_WORDS = ('2 to 6 short lines, in plain words, on what this conversation has been working on so far: the '
+                   'task, what is done, what is still open, and the key files. If nothing yet, write: Nothing yet, '
+                   'this conversation has just started.')
+
+
+# For a host that runs an activation as a command and reads its JSON (Codex, or Claude widening access). Short:
+# Codex carries it in every menu turn's instructions.
+HOST_NOTE_RULE = ('A result with hostNote started a new agent: first replace its placeholder line in hostNote.file '
+                  'with 2-6 plain lines on what this conversation has worked on (or: Nothing yet), editing only that '
+                  'line. ')
+
+
+def host_note_step(note):
+    """What the host does when an activation starts a new agent: write its note in the project brief, or None."""
+    if not isinstance(note, dict) or not note.get('placeholder'):
+        return None
+    return ('First, for the agents to read: in the project file `' + note['file'] + '`, replace the line `' +
+            note['placeholder'] + '` (under `' + note['heading'] + '`) with ' + HOST_NOTE_WORDS + ' Use the Edit '
+            'tool on that one line (no headings in the note), and change nothing else in the file.')
+
+
 def approval_rule(asked):
     """The ACPX rule `/cli approve` adds for a request: its kind (edit, execute...), else its exact title.
 

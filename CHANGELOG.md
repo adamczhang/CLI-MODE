@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### The project brief tells agents about each other (both hosts)
+- **Agents running now.** `Agent_Working_Folder/BRIEF.md` lists every running agent: its name, working folder, whether it is working and its last saved answer. CLI-MODE rewrites the list before each task, after each turn and when an agent closes, so it is always current. Each task now starts "you are <Agent NAME>", so an agent knows which entry is its own, and names the brief every time.
+- **A note from the host.** When an agent starts, the brief gets a dated entry ("…, when Grok GRO-4K started") and the host (Claude Code or Codex) writes 2 to 6 lines on what the conversation has been working on, or "Nothing yet", in the same turn that shows the activation. Earlier notes are kept. With `/cli display instant` on Claude Code there is no model turn, so the entry stays unwritten.
+- On Claude Code, CLI-MODE's permission hook approves that one edit (an `Edit` of this project's `BRIEF.md` that replaces a "not written yet" line with plain lines), so a new agent never asks you to allow it; any other edit is left to Claude Code's permissions.
+- The brief has three sections: your points, the host's notes and the agents running now. A 0.3.5 brief is read as points. `/cli brief` shows all three; `/cli brief clear` clears your points and the host's notes.
+
 ### Fixes (both hosts)
 - **The test gate's time limit ends the whole test run.** On Windows, a run past its 10 minutes ended only the shell, and waiting for the output then blocked on the test runner still holding it, so the agent's queue stalled and the project's test lock stayed taken. The run and everything it started are now ended together.
 - **`/cli undo` gives a file back its own line endings.** It wrote files back as git stores them, so with Git for Windows' default `core.autocrlf` (or an `eol` rule in `.gitattributes`) a restored CRLF file came back with LF endings. Files are now written as a checkout writes them.

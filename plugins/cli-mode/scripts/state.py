@@ -388,6 +388,25 @@ def agent_label(state, session=None, record=None):
     return label + (' ' + name if name else '')
 
 
+def team_lines(state):
+    """The brief's list of agents running now: each one's name, folder, whether it is working, its last answer.
+
+    Built from this conversation's state at the moment it is written, so an agent closed since the last task is
+    gone from it and a new one is in it.
+    """
+    lines = []
+    for alias, session in live_agents(state).items():
+        records = sorted((record for record in (state.get('requests') or {}).values()
+                          if record.get('session') == session), key=lambda record: record.get('capturedAt') or 0)
+        working = any(record.get('status') in ('captured', 'submitting') for record in records)
+        answer = next((record['refs']['answer'] for record in reversed(records)
+                       if (record.get('refs') or {}).get('answer')), None)
+        lines.append('- ' + agent_label(state, session) + ': folder `Agent_Working_Folder/' + alias + '/`, ' +
+                     ('working now' if working else 'idle') +
+                     ('; last answer `' + answer + '`' if answer else '') + '.')
+    return lines
+
+
 def passing_line(label):
     return 'Passing to ' + label + '...'
 

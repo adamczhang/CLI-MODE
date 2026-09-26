@@ -232,21 +232,40 @@ class SameFile(Project):
 
 class Brief(Project):
     def test_add_show_clear(self):
-        self.assertIn('No project brief yet', self.control.brief()['text'])
+        # Starting the agent wrote the brief: its entry for the host's note and the agents running now.
+        self.assertEqual(self.control.brief()['text'].splitlines()[1:],
+                         ['No points yet: /cli brief-add <text> adds one.',
+                          'Host notes: 1 (latest: ' + self.started() + ').', 'Agents listed: ' + self.label + '.'])
         self.control.brief('add', 'Use TypeScript strict mode.')
         self.assertIn('(2 points', self.control.brief('add', 'Tests live in tests/.')['text'])
-        self.assertEqual(self.control.brief()['text'].splitlines()[1:],
+        self.assertEqual(self.control.brief()['text'].splitlines()[1:3],
                          ['1. Use TypeScript strict mode.', '2. Tests live in tests/.'])
-        self.assertEqual(self.control.brief('clear')['text'], 'The project brief is cleared.')
-        self.assertIn('no project brief to clear', self.control.brief('clear')['text'])
+        self.assertTrue(self.control.brief('clear')['text'].startswith('Your points and the host\'s notes are cleared'))
+        self.assertEqual(agent_folder.read_brief(self.project)[:2], ([], []))
+        self.assertIn('nothing in the project brief to clear', self.control.brief('clear')['text'])
 
-    def test_every_task_asks_the_agent_to_read_it(self):
+    def started(self):
+        return next(line[4:] for line in agent_folder.read_brief(self.project)[1] if line.startswith('### '))
+
+    def test_every_task_names_it_with_the_agents_running_now(self):
         self.turn()
-        self.assertNotIn('BRIEF.md', self.backend.sent[-1])
-        self.control.brief('add', 'Use tabs.')
-        self.turn('/d next')
-        self.assertIn('first read `Agent_Working_Folder/BRIEF.md`', self.backend.sent[-1])
+        self.assertIn('you are ' + self.label + '. First read `Agent_Working_Folder/BRIEF.md`', self.backend.sent[-1])
+        team = agent_folder.read_brief(self.project)[2]
+        self.assertEqual(len(team), 1)
+        self.assertTrue(team[0].startswith('- ' + self.label + ': folder `Agent_Working_Folder/'))
+        self.assertIn('last answer `Agent_Working_Folder/', team[0])  # The first turn's saved answer.
         self.assertNotIn('Agent_Working_Folder', git(self.project, 'status', '--porcelain'))
+
+    def test_the_host_note_entry_is_kept_and_a_closed_agent_leaves_the_list(self):
+        note = agent_folder.read_brief(self.project)[1]
+        self.assertTrue(note[0].startswith('### ') and note[0].endswith(', when ' + self.label + ' started'))
+        self.assertEqual(note[1], '(The host has not written this note yet for ' + self.label + '.)')
+        path = agent_folder.brief_path(self.project)  # The host writes its note in place of that line.
+        path.write_text(path.read_text(encoding='utf-8').replace(note[1], 'Rewriting the parser.'), encoding='utf-8')
+        self.control.off()
+        points, notes, team = agent_folder.read_brief(self.project)
+        self.assertEqual(notes[1], 'Rewriting the parser.')  # Kept: the notes are a history.
+        self.assertEqual(team, [])
 
     def test_codex_applies_your_text_in_the_hook(self):
         reply = hook.handle(dict(session_id='tools', cwd=str(self.project), hook_event_name='UserPromptSubmit',

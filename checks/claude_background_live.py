@@ -161,12 +161,29 @@ def newest_name(session, workspace):
     return max(owned, key=lambda item: item.get('lastUsedAt') or 0)['alias']
 
 
+def brief_edit(tool):
+    """The host writing its note: a file edit of the project brief (and the read Claude Code requires first)."""
+    return tool['name'] in ('Read', 'Edit', 'MultiEdit', 'Write') and (tool.get('path') or '').replace(
+        '\\', '/').endswith('Agent_Working_Folder/BRIEF.md')
+
+
+def host_note(workspace):
+    """The host's newest note in the project brief (its lines under the last dated heading), or None."""
+    sys.path.insert(0, str(DEV / 'scripts'))
+    import agent_folder
+    notes = agent_folder.read_brief(workspace)[1]
+    last = max((index for index, line in enumerate(notes) if line.startswith('### ')), default=None)
+    return None if last is None else '\n'.join(line for line in notes[last + 1:] if line.strip())
+
+
 def summary(events):
     blocks = [block for event in events if event.get('type') == 'assistant'
               for block in (event.get('message') or {}).get('content') or []]
-    result = events[-1] if events and events[-1].get('type') == 'result' else {}
+    # The turn's result, which newer Claude Code versions follow with a `task_summary` event.
+    result = next((event for event in reversed(events) if event.get('type') == 'result'), {})
     return dict(
-        tools=[dict(name=block.get('name'), command=(block.get('input') or {}).get('command'))
+        tools=[dict(name=block.get('name'), command=(block.get('input') or {}).get('command'),
+                    path=(block.get('input') or {}).get('file_path'))
                for block in blocks if block.get('type') == 'tool_use'],
         tasks=[dict(subtype=event.get('subtype'), description=event.get('description'), status=event.get('status'),
                     backgrounded=event.get('is_backgrounded'))
@@ -236,6 +253,8 @@ def run(agent, model, keep):
         if step['denials']:
             problems.append(name + ': permission denials ' + json.dumps(step['denials']))
         for tool in step['tools']:
+            if name == 'bind' and brief_edit(tool):
+                continue  # The host's note in the project brief, written as the new agent's card is shown.
             if tool['name'] not in ('Bash', 'PowerShell') or 'controller.py' not in (tool['command'] or ''):
                 problems.append(name + ': used ' + str(tool['name']) + ' ' + str(tool['command'])[:120])
     sys.path.insert(0, str(DEV / 'scripts'))
@@ -245,11 +264,16 @@ def run(agent, model, keep):
     request = None
     bind = steps.get('bind')
     if bind:
-        # Activation runs in the prompt hook: no command for Claude, so no background-tasks row of its own.
-        if bind['tools'] or any(item['subtype'] == 'task_started' for item in bind['tasks']):
-            problems.append('bind: ran as a command (' + json.dumps(bind['tools'])[:200] + ')')
+        # Activation runs in the prompt hook: no command for Claude, so no background-tasks row of its own. Its one
+        # tool is the host's note in the project brief.
+        commands = [tool for tool in bind['tools'] if not brief_edit(tool)]
+        if commands or any(item['subtype'] == 'task_started' for item in bind['tasks']):
+            problems.append('bind: ran as a command (' + json.dumps(commands)[:200] + ')')
         if 'CLI-MODE Activated' not in plain_strong(bind['result']):
             problems.append('bind: no activation card')
+        report['hostNote'] = host_note(workspace)
+        if not report['hostNote'] or 'has not written this note yet' in report['hostNote']:
+            problems.append('bind: the host did not write its note in the project brief')
     if task:
         follows = [tool['command'] for tool in task['tools'] if ' follow --request ' in (tool['command'] or '')]
         relays = [tool for tool in task['tools'] if ' relay --request ' in (tool['command'] or '')]

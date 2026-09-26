@@ -285,5 +285,53 @@ class ClaudeAttach(unittest.TestCase):
                          ['Agent_Working_Folder/' + alias + '/attachments/image.png'])
 
 
+@unittest.skipUnless(HOOK.is_file(), 'The Claude Code hook is not in the Codex package')
+class HostNote(unittest.TestCase):
+    """A new agent's activation asks the host to write its note in the brief, in the same turn."""
+    NOTE = {'file': 'Agent_Working_Folder/BRIEF.md', 'heading': '### 2026-09-26 10:00, when Grok GRO-4K started',
+            'placeholder': '(The host has not written this note yet for Grok GRO-4K.)'}
+
+    def event(self):
+        return dict(session_id=SESSION, hook_event_name='UserPromptSubmit')
+
+    def test_a_chat_reply_writes_the_note_first_then_shows_the_card(self):
+        with patch.object(claude, 'STYLE', 'model'):
+            reply = claude.show_result(self.event(), dict(text='CARD', hostNote=self.NOTE))
+        text = reply['hookSpecificOutput']['additionalContext']
+        self.assertIn('replace the line `' + self.NOTE['placeholder'] + '`', text)
+        self.assertIn('Nothing yet, this conversation has just started.', text)
+        self.assertLess(text.index('replace the line'), text.index('CARD'))
+        self.assertNotIn(claude.COMPLETE, text)  # This turn uses one tool: the file edit.
+
+    def test_an_instant_reply_has_no_turn_to_write_it_in(self):
+        with patch.object(claude, 'STYLE', 'block'):
+            reply = claude.show_result(self.event(), dict(text='CARD', hostNote=self.NOTE))
+        self.assertEqual(reply['reason'], 'CARD')
+
+    def test_only_the_notes_own_edit_is_approved(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        project = Path(temp.name)
+        note = agent_folder.add_host_note(project, '2026-09-26 10:00', 'Grok GRO-4K')
+        brief = project / 'Agent_Working_Folder' / 'BRIEF.md'
+        (project / 'other.md').write_text(note['placeholder'], encoding='utf-8')
+
+        def ask(**tool_input):
+            edit = dict(file_path=str(brief), old_string=note['placeholder'], new_string='Planning a garden app.')
+            edit.update(tool_input)
+            return claude.pre_tool_use(dict(session_id=SESSION, cwd=str(project), hook_event_name='PreToolUse',
+                                            tool_name='Edit', tool_input=edit), None)
+        with patch.dict(os.environ, {'CLAUDE_PROJECT_DIR': str(project)}):
+            self.assertEqual(ask()['hookSpecificOutput']['permissionDecision'], 'allow')
+            for refused in (dict(file_path=str(project / 'other.md')), dict(old_string='# Project brief'),
+                            dict(new_string='fine\n## Points (added with /cli brief-add)\n- sneaky'),
+                            dict(replace_all=True), dict(new_string='  ')):
+                self.assertEqual(ask(**refused), {}, refused)  # Left to Claude Code's own permissions.
+
+    def test_codex_reads_the_same_rule(self):
+        self.assertIn('placeholder line in hostNote.file', presentation.HOST_NOTE_RULE)
+        self.assertIsNone(presentation.host_note_step(None))
+
+
 if __name__ == '__main__':
     unittest.main()

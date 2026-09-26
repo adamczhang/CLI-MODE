@@ -15,7 +15,7 @@ import changes
 import host
 import menu_view
 import relay_view
-from state import agent_entry, agent_label, passing_line
+from state import agent_entry, agent_label, passing_line, team_lines
 
 
 def request_label(state, request_id):
@@ -655,13 +655,23 @@ class QueueMixin:
                 reply = ('Added to the project brief (' + str(len(points)) + (' point' if len(points) == 1 else
                          ' points') + ', ' + where + '). Every agent reads it before its next task.')
         elif action == 'clear':
-            reply = ('The project brief is cleared.' if agent_folder.clear_brief(workspace)
-                     else 'There is no project brief to clear.')
+            reply = ('Your points and the host\'s notes are cleared from the project brief; the running agents stay '
+                     'listed.' if agent_folder.clear_brief(workspace) else 'There is nothing in the project brief to '
+                     'clear.')
         else:
-            points = agent_folder.brief_lines(workspace)
-            reply = ('Project brief (' + where + '), read by every agent first:\n' +
-                     '\n'.join(str(index) + '. ' + point for index, point in enumerate(points, 1)) if points else
-                     'No project brief yet. /cli brief-add <text> adds a point every agent reads before its task.')
+            points, notes, team = agent_folder.read_brief(workspace)
+            if not points and not notes and not team:
+                reply = 'No project brief yet. /cli brief-add <text> adds a point every agent reads before its task.'
+            else:
+                headings = [line[4:] for line in notes if line.startswith('### ')]
+                lines = ['Project brief (' + where + '), read by every agent first:']
+                lines += ([str(index) + '. ' + point for index, point in enumerate(points, 1)] if points else
+                          ['No points yet: /cli brief-add <text> adds one.'])
+                if headings:
+                    lines.append('Host notes: ' + str(len(headings)) + ' (latest: ' + headings[-1] + ').')
+                if team:
+                    lines.append('Agents listed: ' + ', '.join(line[2:].split(':', 1)[0] for line in team) + '.')
+                reply = '\n'.join(lines)
         return dict(message=reply, text=reply)
 
     def agent_dir(self, session=None):
@@ -870,6 +880,7 @@ class QueueMixin:
                 self._note_touched(state, request_id, workspace)
                 state['inflight'].pop(op, None)
             self._keep_answer(request_id, workspace, name, text)
+            agent_folder.write_team(workspace, team_lines(self.store.read()))  # Idle now, with its answer.
             return dict(requestId=request_id, **result)
         except BaseException as exc:
             done = receipt() if not isinstance(exc, KeyboardInterrupt) else None
@@ -899,6 +910,7 @@ class QueueMixin:
                     state['inflight'].pop(op, None)
             if not isinstance(exc, KeyboardInterrupt) and status != 'rejected':
                 self._keep_answer(request_id, workspace, name, text)  # A failed turn may still have answered.
+                agent_folder.write_team(workspace, team_lines(self.store.read()))
             raise
         finally:
             path.unlink(missing_ok=True)

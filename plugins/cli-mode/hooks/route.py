@@ -8,6 +8,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from state import Store, route
+from presentation import HOST_NOTE_RULE
 
 PLUGIN = Path(__file__).resolve().parents[1]
 
@@ -276,7 +277,7 @@ def codex_output(event, store, state, decision, worker, cancellation):
                   ref('settings --dismiss', menu=True) + ' and keeps the CLI active; X on activation menus runs ' +
                   ref('off') + '. Default the agent workspace to the exact thread cwd, including its worktree. '
                   'When a command returns activation.messageView, display it as the activation confirmation; never '
-                  'compose one yourself. ')
+                  'compose one yourself. ' + HOST_NOTE_RULE)
     setup_rules = ('Check hostAccess first; if not ready show its message and request Full Access in this task without escalating commands. '
                    'Follow pending.onboarding: select-agent means a numbered selection runs ' + ref('first-time-check --agent <id>', menu=True) +
                    '; check means R reruns that check, I offers explicit install/sign-in approval, and M runs ' + ref('setup-manual') +
