@@ -86,6 +86,25 @@ function permissionRequest(message) {
     ...(detail ? {detail: detail.slice(0, 300)} : {})};
 }
 
+/** A command or file write an agent sent straight to ACPX's terminal or file system, without asking first (Grok
+ * runs commands this way): what it would be as a question, should ACPX's own check refuse it. */
+function directCall(message) {
+  const params = message.params ?? {};
+  if (message.method === 'terminal/create' && typeof params.command === 'string') {
+    const command = [params.command, ...(Array.isArray(params.args) ? params.args : [])].join(' ').trim();
+    return {type: 'permission', kind: 'execute', title: ('Run `' + command + '`').slice(0, 300),
+      detail: command.slice(0, 300)};
+  }
+  if (message.method === 'fs/write_text_file' && typeof params.path === 'string') {
+    return {type: 'permission', kind: 'edit', title: ('Write `' + params.path + '`').slice(0, 300),
+      detail: params.path.slice(0, 300)};
+  }
+}
+
+/** ACPX's reply refusing a direct call because nobody could be asked. */
+const refusedForPermission = message => message.error && /permission/i.test(
+  JSON.stringify(message.error.data ?? message.error.message ?? ''));
+
 /** A request the turn's rule escalated (refused, not approved): the same question, from ACPX's reply. */
 function escalation(message) {
   const found = message.result?._meta?.acpx?.permissionEscalation;
@@ -144,6 +163,9 @@ async function main(input, cancellation, checkCancellation, progress) {
   const observer = new AbortController();
   let turn, watchTask, lastCursor, observedResult = false, watchError;
   let sawStart = false, observationGap = false, repairedCursor = false, escalated = false;
+  const directCalls = new Map();  // An agent's terminal or file-write requests to ACPX, by JSON-RPC id.
+  const directKinds = new Set();  // The kinds of those this turn, each reported once.
+  let workedSinceText = false, segment = 0;  // Tool calls since the last text, and paragraphs they have split.
   try {
     const locate = () => runtime.findSession({sessionKey: input.session, agent: input.profile, cwd: input.workspace});
     const handle = await locate();
@@ -203,6 +225,18 @@ async function main(input, cancellation, checkCancellation, progress) {
             if (event.type === 'turn_started') sawStart = true;
             if (event.type === 'message') {
               if (!sawStart) { observationGap = true; continue; }
+              const call = directCall(event.message);
+              if (call && !directKinds.has(call.kind)) {
+                // The agent acts without asking first: approving it can't be limited to one kind (dispatch keeps it).
+                directKinds.add(call.kind);
+                write({type: 'direct', kind: call.kind});
+              }
+              if (call && event.message.id !== undefined) directCalls.set(event.message.id, call);
+              else if (event.message.method === undefined && directCalls.has(event.message.id)) {
+                // Refused because nobody could be asked: that call is the question the stopped turn asks.
+                if (refusedForPermission(event.message)) write(directCalls.get(event.message.id));
+                directCalls.delete(event.message.id);
+              }
               const refused = input.permissionPolicy && !escalated ? escalation(event.message) : undefined;
               if (refused) {
                 // A request the approval didn't cover: stop here and ask, as an unapproved turn would.
@@ -210,8 +244,16 @@ async function main(input, cancellation, checkCancellation, progress) {
                 write(refused);
                 runtime.cancel({handle, reason: 'CLI-MODE: approval needed'}).catch(() => {});
               }
-              const update = publicUpdate(event.message) ??
-                (event.message.method === 'session/update' ? publicProgress(event.message.params?.update) : undefined);
+              const progress = event.message.method === 'session/update' ? event.message.params?.update : undefined;
+              if (['tool_call', 'tool_call_update'].includes(progress?.sessionUpdate)) workedSinceText = true;
+              const update = publicUpdate(event.message) ?? (progress ? publicProgress(progress) : undefined);
+              if (update?.type === 'message' && workedSinceText) {
+                // Text after a tool call is a new paragraph even under the same message ID (Grok Build's). With
+                // quiet progress no activity event lies between them to say so, and they would join mid-line.
+                segment += 1;
+                workedSinceText = false;
+              }
+              if (update?.type === 'message' && segment) update.messageId = (update.messageId ?? 'text') + '#' + segment;
               if (update) write(update);
             }
             lastCursor = event.cursor;

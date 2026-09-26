@@ -44,9 +44,16 @@ Pass: the report's `problems` list is empty for every step. `gates` proves a thr
 
 ## Part 2: 0.3.6 and 0.3.7 features, headless (scripted)
 
-Not in the shared scenario yet. Drive them through the same `Session` class the harness uses
-(`from codex_user_validation import Session`): one thread in a throwaway git project, prompts sent with
-`session.send(prompt, step_id)`, and files and state read back from the project and CLI-MODE's state. Use one
+Scripted in `checks/codex_release_validation.py` (steps A to D below, plus Q: a quiet-progress relay):
+
+```powershell
+python checks/codex_release_validation.py --agent grok-build --second codex --keep
+```
+
+It drives the same `Session` class the harness uses (`from codex_user_validation import Session`): one thread in a
+throwaway git project, prompts sent with `session.send(prompt, step_id)`, and files and state read back from the
+project and CLI-MODE's state. For an agent that acts without asking (Grok), `/cli approve always` is expected to be
+refused and B5 continues with `/cli approve`. Use one
 Prompt-capable agent (`/cli spawn gro`). Each row is one turn unless it says otherwise.
 
 ### A. Project brief (0.3.7)

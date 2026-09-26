@@ -255,7 +255,11 @@ Its turn stopped for your answer (Prompt access). /cli approve lets it run comma
 `/cli approve` sends the agent on with that kind of request allowed (editing files, running commands,
 deleting, moving, fetching) for that turn; `/cli approve always` keeps it allowed while the agent runs;
 `/cli deny` tells it no and lets it carry on without it. Add a name when several agents are waiting
-(`/cli approve gro-4k`). A new `/d` to the agent also settles the question. Access is shown as the shared
+(`/cli approve gro-4k`). A new `/d` to the agent also settles the question.
+
+Some agents (Grok Build) run commands and edit files without asking first, so an approval can't be limited
+to one kind for them: their question says that `/cli approve` lets them act freely for that one turn, and
+`/cli approve always` is refused (use `/cli access allow` to let them act freely from now on). Access is shown as the shared
 level followed by the agent's own name for it, for example `Allow (Bypass permissions)` or `Allow (YOLO)`.
 
 ## What to expect

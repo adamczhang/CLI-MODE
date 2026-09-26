@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from state import (Store, TIMEOUT_RANGE, agent_entry, agent_label, agent_limit, default_timeout, last_used, live_agents,
-                   save_default_timeout, team_lines)
+                   save_default_timeout, team_lines, ACTS_WITHOUT_ASKING)
 
 
 def duration(minutes):
@@ -603,6 +603,8 @@ class BindingMixin:
                     state['usedNames'] = (state.get('usedNames') or []) + [name]  # Never given out again.
                 owned['alias'] = name
                 owned['timeout'] = default_timeout(self.store.root)  # Minutes idle before its process exits.
+                if target in ACTS_WITHOUT_ASKING:
+                    owned['actsWithoutAsking'] = True  # Approvals can't be limited to one kind for it.
             if not reuse and getattr(self.backend, 'profile', None):
                 owned['acpxProfile'] = self.backend.profile
             if hasattr(self.backend, 'prepare'):

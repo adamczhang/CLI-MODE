@@ -166,6 +166,21 @@ class SharedRuntime(unittest.TestCase):
         finally:
             self.assertTrue(control.off()['shutdownComplete'])
 
+    def test_text_on_either_side_of_a_tool_call_stays_two_paragraphs_in_both_progress_modes(self):
+        import relay_view
+        control = Controller(Store('runtime-split', self.workspace, self.root / 'split'), self.backend)
+        try:
+            control.frontend()
+            control.activate('gemini-3.8-flash-high', 'allow')
+            for mode in ('activity', 'quiet'):
+                control.progress(mode)
+                output = []
+                control.send('/d split-message', output=output.append)
+                self.assertEqual(relay_view.messages(output), 'I will run the tests.\n\nThe tests passed.', mode)
+                self.assertEqual(relay_view.messages(output, last_only=True), 'The tests passed.', mode)
+        finally:
+            self.assertTrue(control.off()['shutdownComplete'])
+
     def test_hook_worker_queues_steering_without_host_turn_lifetime(self):
         control = Controller(Store('runtime-worker', self.workspace, self.root / 'worker'), self.backend)
         try:
@@ -330,6 +345,27 @@ class SharedRuntime(unittest.TestCase):
             after = []
             control.send('/d after denial', output=after.append)
             self.assertEqual([e['text'] for e in after if e['type'] == 'message'], ['after denial'])
+        finally:
+            self.assertTrue(control.off()['shutdownComplete'])
+
+    def test_a_command_run_without_asking_is_still_the_question(self):
+        control = Controller(Store('runtime-direct', self.workspace, self.root / 'direct'), self.backend)
+        try:
+            control.frontend()
+            control.activate('gemini-3.8-flash-high', 'prompt')
+            events = []
+            try:
+                control.send('/d direct-command', output=events.append)
+            except RuntimeError:
+                pass  # The turn stops at the refused command.
+            errors = [event['message'] for event in events if event['type'] == 'error']
+            self.assertTrue(any(' asks to run commands: git status' in text for text in errors), errors)
+            owned = control.store.read()['owned'][0]
+            self.assertEqual({key: owned['approval'][key] for key in ('kind', 'detail')},
+                             {'kind': 'execute', 'detail': 'git status'})
+            # It ran a command without asking: marked, and its question says what approving then means.
+            self.assertTrue(owned.get('actsWithoutAsking'))
+            self.assertTrue(any('it can also run commands and edit files without asking' in text for text in errors))
         finally:
             self.assertTrue(control.off()['shutdownComplete'])
 

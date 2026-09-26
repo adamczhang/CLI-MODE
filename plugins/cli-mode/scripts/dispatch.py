@@ -48,6 +48,14 @@ def approval_policy(record, target):
 
 
 class DispatchMixin:
+    def acts_without_asking(self, session):
+        """Mark an agent that ran a command or wrote a file straight through ACPX, without asking: an approved turn
+        (at approve-all, dispatch.approval_policy) can't be limited to one kind for it."""
+        with self.store.edit() as state:
+            for item in state['owned']:
+                if item['name'] == session:
+                    item['actsWithoutAsking'] = True
+
     def remember_approval(self, session, asked, request_id):
         """Keep the permission a stopped turn asked for on its agent, for `/cli approve` or `/cli deny`."""
         with self.store.edit() as state:
@@ -213,6 +221,9 @@ class DispatchMixin:
                                 asked = {key: raw[key] for key in ('kind', 'title', 'detail')
                                          if isinstance(raw.get(key), str)}
                                 event = None
+                            elif kind == 'direct':
+                                self.acts_without_asking(owned['name'])
+                                event = None
                             elif kind == 'prompt_started':
                                 with self.store.edit() as latest:
                                     if op in latest['inflight']:
@@ -234,8 +245,10 @@ class DispatchMixin:
                                     access = owned['settings'].get('accessName') or owned['settings']['access']
                                     if asked:
                                         self.remember_approval(owned['name'], asked, request_id)
+                                    direct = bool((agent_entry(self.store.read(), owned['name']) or {}).get(
+                                        'actsWithoutAsking'))
                                     publish([{'type': 'error', 'code': error['code'],
-                                              'message': permission_stop(label, access, asked)}])
+                                              'message': permission_stop(label, access, asked, direct=direct)}])
                                 elif outcome['status'] != 'completed':
                                     publish([{'type': 'error', 'message': error.get('message', 'Agent turn canceled.')}])
                                 elif not raw.get('outputComplete'):

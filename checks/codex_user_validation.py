@@ -57,6 +57,12 @@ LABELS = {'claude': 'Claude', 'copilot': 'Copilot', 'agy': 'Antigravity', 'grok-
 REFERENCE = re.compile('[]visualize[](\\{.*?\\})[]')
 
 
+def host_note_edit(text):
+    """A command or file change that writes the host's note in the project brief (0.3.7): it names BRIEF.md in
+    the agents' folder and runs no CLI-MODE controller."""
+    return 'agent_working_folder/brief.md' in norm(text) and 'controller.py' not in text
+
+
 def norm(path):
     """A comparable path; Codex quotes commands with doubled backslashes (C:\\\\Users\\\\...)."""
     return re.sub(r'/+', '/', str(path).replace('\\', '/')).rstrip('/').casefold()
@@ -172,6 +178,7 @@ class Session:
         started = self.server.request('turn/start', dict(threadId=self.thread, input=[dict(type='text', text=prompt)]))
         turn_id = (started.get('turn') or {}).get('id')
         texts, commands, errors, hooks, requests, others = [], [], [], [], [], []
+        brief_changes = False
         interrupted, completed = False, None
         deadline = time.monotonic() + 900
         while time.monotonic() < deadline:
@@ -204,6 +211,9 @@ class Session:
                                          output=(item.get('aggregatedOutput') or '')[-2000:]))
                 elif kind not in ('reasoning', 'userMessage', 'contextCompaction', 'plan'):
                     others.append(kind)
+                    if kind == 'fileChange':
+                        changed = [change.get('path') or '' for change in item.get('changes') or []]
+                        brief_changes = changed and all(host_note_edit(path) for path in changed)
             elif method == 'error':
                 errors.append(json.dumps(params)[:300])
             elif method == 'thread/tokenUsage/updated':
@@ -229,12 +239,21 @@ class Session:
             turn['problems'].append('hook ran from ' + seen)
         for command in commands:
             paths = re.findall(r"([A-Za-z]:[/\\][^'\" ]*controller\.py)", command['command'])
+            if not paths and host_note_edit(command['command']):
+                turn['notes'].append('wrote the host note in the project brief by command')
+                continue  # A new agent's activation asks the host to write it (0.3.7); any way of editing counts.
+            if not paths and turn['route'] == 'host':
+                turn['notes'].append('the host did its own work: ' + command['command'][:100])
+                continue  # A prompt that is not CLI-MODE's (an attached file with no /d, say) is Codex's own turn.
             if not paths:
                 turn['problems'].append('ran a non-CLI-MODE command: ' + command['command'][:160])
             for path in paths:
                 if not norm(path).startswith(norm(INSTALLED)):
                     turn['problems'].append('controller outside the installed copy: ' + path)
         for kind in others:
+            if kind == 'fileChange' and brief_changes:
+                turn['notes'].append('wrote the host note in the project brief with a file change')
+                continue
             turn['problems'].append('used ' + str(kind))
         if requests:
             turn['problems'].append('approval requests: ' + ', '.join(requests))
