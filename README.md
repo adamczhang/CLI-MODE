@@ -72,8 +72,8 @@ working folder, using its own account and model access. Up to four run at once, 
 
 Pick your host and run its block in PowerShell.
 
-**Claude Code:** download `cli-mode-claude-0.3.3.zip` from the
-[v0.3.3 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.3), extract it, and run:
+**Claude Code:** download `cli-mode-claude-0.3.4.zip` from the
+[v0.3.4 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.4), extract it, and run:
 
 ```powershell
 .\install-claude.ps1
@@ -82,7 +82,7 @@ Pick your host and run its block in PowerShell.
 Or install it straight from GitHub:
 
 ```powershell
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.3 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.4 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
@@ -92,7 +92,7 @@ autocomplete; see [Claude Code](#claude-code).
 **Codex:**
 
 ```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.3
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.4
 codex plugin add cli-mode@cli-mode
 ```
 
@@ -100,9 +100,9 @@ codex plugin add cli-mode@cli-mode
 for one host is ready in the other. Conversations and settings stay separate per host.
 
 **Upgrading?** A GitHub install stays on its tag; the [release notes](RELEASE_NOTES.md#upgrading-from-an-earlier-03-release)
-show how to move it to 0.3.3 and keep your settings.
+show how to move it to 0.3.4 and keep your settings.
 
-Release **0.3.3** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
+Release **0.3.4** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
 
 ## Get started
 
