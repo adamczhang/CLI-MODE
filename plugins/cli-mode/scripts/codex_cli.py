@@ -31,13 +31,6 @@ def provider_identity(record):
     return record.get('agentSessionId') or record.get('acpSessionId')
 
 
-def access_label(data, access):
-    for option in data['accessControl']['options']:
-        if option['access'] == access:
-            return option['nativeName']
-    raise ValueError('Codex currently supports Full access only; Prompt and Auto-edit are not enforceable by this integration.')
-
-
 def catalog(root):
     cached = Path(root) / 'catalogs/codex.json'
     data = json.loads((cached if cached.exists() else CATALOG).read_text(encoding='utf-8-sig'))

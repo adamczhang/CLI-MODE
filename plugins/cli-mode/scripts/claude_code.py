@@ -31,13 +31,6 @@ def provider_identity(record):
     return record.get('agentSessionId') or record.get('acpSessionId')
 
 
-def access_label(data, access):
-    for option in data['accessControl']['options']:
-        if option['access'] == access:
-            return option['nativeName']
-    raise ValueError('Unsupported access mapping; refresh and implement a verified policy.')
-
-
 def catalog(root):
     cached = Path(root) / 'catalogs/claude.json'
     data = json.loads((cached if cached.exists() else CATALOG).read_text(encoding='utf-8-sig'))

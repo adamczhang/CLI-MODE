@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from test_agent_folder import Saving, git
@@ -59,9 +60,14 @@ class Project(unittest.TestCase):
 
 
 class Undo(Project):
+    def own(self, request, *paths):
+        """The files the agent's own tools edited in that turn, as its edit events record them."""
+        with self.store.edit() as state:
+            state['requests'][request]['touched'] = list(paths)
+
     def test_undo_puts_back_the_turn_and_only_once(self):
         self.backend.work = self.edit
-        self.turn()
+        self.own(self.turn(), 'app.py', 'new.py', 'old.py')
         text = self.control.undo()['text']
         self.assertTrue(text.startswith('Undid ' + self.label + '\'s last turn: restored '))
         self.assertEqual((self.project / 'app.py').read_text(encoding='utf-8'), 'one\n')
@@ -72,12 +78,39 @@ class Undo(Project):
 
     def test_nothing_changes_if_a_file_changed_since(self):
         self.backend.work = self.edit
-        self.turn()
+        self.own(self.turn(), 'app.py', 'new.py', 'old.py')
         (self.project / 'app.py').write_text('yours\n', encoding='utf-8')
         result = self.control.undo()
         self.assertEqual(result['conflicts'], ['app.py'])
         self.assertTrue(result['text'].startswith('Nothing was undone: app.py has changed since'))
         self.assertTrue((self.project / 'new.py').is_file())  # All or nothing.
+
+    def test_a_crlf_file_comes_back_with_its_own_line_endings(self):
+        # Git for Windows' default: the repository stores LF, the folder holds CRLF.
+        git(self.project, 'config', 'core.autocrlf', 'true')
+        (self.project / 'notes.txt').write_bytes(b'one\r\ntwo\r\n')
+        git(self.project, 'add', 'notes.txt')
+        git(self.project, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'notes')
+        self.backend.work = lambda project, name: (project / 'notes.txt').write_bytes(b'one\r\nchanged\r\n')
+        self.own(self.turn(), 'notes.txt')
+        self.assertIn('restored notes.txt', self.control.undo()['text'])
+        self.assertEqual((self.project / 'notes.txt').read_bytes(), b'one\r\ntwo\r\n')
+
+    def test_another_agents_edit_in_the_same_turn_is_left_alone(self):
+        self.backend.work = self.edit  # It changes app.py, new.py and old.py; its own tools edited only app.py.
+        self.own(self.turn(), 'app.py')
+        text = self.control.undo()['text']
+        self.assertTrue(text.startswith('Undid ' + self.label + '\'s last turn: restored app.py.'))
+        self.assertIn('not edited by ' + self.label + '\'s own tools: new.py, old.py', text)
+        self.assertEqual((self.project / 'app.py').read_text(encoding='utf-8'), 'one\n')
+        self.assertTrue((self.project / 'new.py').is_file())
+        self.assertFalse((self.project / 'old.py').exists())
+
+    def test_a_turn_whose_tools_edited_nothing_undoes_nothing(self):
+        self.backend.work = self.edit
+        self.own(self.turn())
+        self.assertTrue(self.control.undo()['text'].startswith('Nothing was undone: ' + self.label + '\'s own tools'))
+        self.assertTrue((self.project / 'new.py').is_file())
 
     def test_nothing_to_undo_says_so(self):
         self.assertIn('has no turn to undo', self.control.undo()['text'])
@@ -148,6 +181,19 @@ class TestGate(Project):
         self.control.tests(failing())
         request = self.turn()
         self.assertNotIn('tests', self.store.read()['requests'][request])
+
+    def test_a_run_past_its_limit_ends_with_everything_it_started(self):
+        # The shell's child keeps the output pipes open; ending only the shell would leave the gate waiting.
+        script = self.root / 'hang.py'
+        script.write_text('import subprocess, sys, time\n'
+                          'subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])\n'
+                          'time.sleep(120)\n', encoding='utf-8')
+        text = '"' + sys.executable + '" "' + str(script) + '"'
+        began = time.monotonic()
+        result = test_gate.run(self.root / 'state', self.project, text, None, timeout=3)
+        self.assertLess(time.monotonic() - began, 60)
+        self.assertFalse(result['passed'])
+        self.assertTrue(result['summary'].startswith('stopped after'))
 
     def test_runner_summaries(self):
         self.assertEqual(test_gate.summary('x\n===== 1 failed, 41 passed in 3.2s =====\n'), '1 failed, 41 passed in 3.2s')

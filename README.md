@@ -183,8 +183,8 @@ Codex RESEARCH answer: Agent_Working_Folder/RESEARCH/answers/003-compare-3d-engi
 Files: docs/engine-report.md
 ```
 
-**Safety nets.** `/cli undo [name]` puts back the files an agent's last turn changed (only if none changed
-since). When two agents working at once edit the same file, the later answer warns you. After every turn that
+**Safety nets.** `/cli undo [name]` puts back the files an agent's own tools changed in its last turn (only if
+none changed since); another agent's edits made meanwhile are left as they are. When two agents working at once edit the same file, the later answer warns you. After every turn that
 changes files, CLI-MODE runs your project's tests (found automatically: `npm test`, `python -m pytest`,
 `cargo test` or `go test ./...`) and the answer says whether they passed; `/cli test <command>` sets another,
 `/cli test off` turns them off. `/cli brief-add <text>` builds a short brief, `Agent_Working_Folder/BRIEF.md`, that every agent reads

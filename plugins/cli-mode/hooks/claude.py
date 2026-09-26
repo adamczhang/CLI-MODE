@@ -250,7 +250,7 @@ def handle(event, root=None):
         return reset(event, root)
     import route
     if name == 'UserPromptSubmit':
-        event = with_images(route.attached(event), event.get('prompt') or '')
+        event = with_images(route.attached(event), event.get('prompt') or '', root)
     prompt = event.get('prompt', '')
     capture = host.unwrap_prompt(prompt, host.CLAUDE)
     store, state, decision, worker, cancellation = route.decide(event, root, workspace=workspace(event), capture=capture)
@@ -273,14 +273,15 @@ def handle(event, root=None):
     return prompt_reply(event, root, state, decision, worker, cancellation)
 
 
-def with_images(event, typed):
+def with_images(event, typed, root=None):
     """A /d event with the images pasted into it added to its `attachments`; `typed` is the prompt as sent.
 
     The desktop app saves every attached file in `uploads/<session>/` just before the prompt is sent. A file
     reaches the prompt text as an @"path" mention (route.attached), but an image does not appear in it at all.
     So an image of this prompt is a file in that folder that no earlier message of the conversation named: the
     transcript names each earlier message's files. The transcript may already end with this very prompt, so
-    that last user message is not counted as earlier.
+    that last user message is not counted as earlier. Uploads a /d has already sorted are kept in the session's
+    state (`seenUploads`), so the transcript is read only when a new file appears.
     """
     from state import direct_payload
     if direct_payload(event.get('prompt') or '') is None:
@@ -290,14 +291,29 @@ def with_images(event, typed):
         uploads = sorted((path for path in folder.iterdir() if path.is_file()), key=lambda path: path.stat().st_mtime)
     except OSError:
         return event
+    # Uploads already sorted by an earlier /d are never this prompt's: only a new one needs the transcript, which
+    # holds every pasted image as base64 and grows to tens of MB in a long session.
+    try:
+        import route
+        store = route.Store(event['session_id'], workspace(event), root)
+        seen = set(store.read().get('seenUploads') or [])
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        store, seen = None, set()
+    every = {path.name for path in uploads}
     known = {os.path.normcase(os.path.abspath(path)) for path in event.get('attachments') or []}
-    uploads = [path for path in uploads if os.path.normcase(str(path)) not in known]
+    uploads = [path for path in uploads if os.path.normcase(str(path)) not in known and path.name not in seen]
     if not uploads:
         return event
     try:
         lines = Path(event['transcript_path']).read_text(encoding='utf-8', errors='replace').splitlines()
     except (OSError, KeyError, TypeError):
         return event  # Without the transcript, which uploads are new can't be told: none are added.
+    if store is not None:
+        try:
+            with store.edit() as state:  # Every upload there now is this prompt's or an earlier message's.
+                state['seenUploads'] = sorted(set(state.get('seenUploads') or []) | every)
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+            pass
     def text_of(content):
         return content if isinstance(content, str) else ''.join(
             part.get('text', '') for part in content or [] if isinstance(part, dict) and part.get('type') == 'text')

@@ -129,11 +129,12 @@ async function sharedRuntime(input) {
     ...(input.permissionPolicy ? {permissionPolicy: input.permissionPolicy} : {}),
     timeoutMs: input.timeout * 1000, ttlMs: (input.ttl ?? 1800) * 1000};
   const key = JSON.stringify([input.install.package, config.agents, options]);
-  if (!runtimes.has(key)) {
-    const registry = createAgentRegistry({overrides: Object.fromEntries(
-      Object.entries(config.agents).map(([name, value]) => [name, value.argv ?? value.command]))});
-    runtimes.set(key, createSharedAcpRuntime({...options, agentRegistry: registry}));
-  }
+  const create = () => createSharedAcpRuntime({...options, agentRegistry: createAgentRegistry({
+    overrides: Object.fromEntries(Object.entries(config.agents).map(([name, value]) => [name, value.argv ?? value.command]))})});
+  // A turn's own approval rule makes a one-off client (main shuts it down after the turn): cached, every
+  // different approval would leave another client in this long-lived bridge.
+  if (input.permissionPolicy) return create();
+  if (!runtimes.has(key)) runtimes.set(key, create());
   return runtimes.get(key);
 }
 
@@ -269,6 +270,8 @@ async function main(input, cancellation, checkCancellation, progress) {
       await turn.closeStream().catch(() => {});
     }
     if (watchTask) await watchTask;
+    // Detaches this turn's one-off client; the owner keeps the session, as for any other detach.
+    if (input.permissionPolicy) await runtime.shutdown().catch(() => {});
   }
 }
 

@@ -66,18 +66,22 @@ def compare(workspace, before, after):
                 added=sum(item['added'] or 0 for item in files), removed=sum(item['removed'] or 0 for item in files))
 
 
-def undo(workspace, receipt):
-    """Put back every file a turn changed, as it was before the turn: (restored, removed, conflicts).
+def undo(workspace, receipt, only=None):
+    """Put back the files a turn changed, as they were before the turn: (restored, removed, conflicts, left).
 
-    All or nothing: if any of those files changed again since the turn (by you or another agent), nothing is
-    touched and those files come back as conflicts. A file the turn created is removed; one it removed or
-    changed is written back from the before snapshot, as bytes.
+    The receipt covers the whole folder, so it can hold another agent's edits made while the turn ran; `only`
+    (the files the agent's own tools edited) limits undo to those, and the receipt's other files come back as
+    `left`, untouched. All or nothing: if any file to undo changed again since the turn (by you or another
+    agent), nothing is touched and those files come back as conflicts. A file the turn created is removed; one it
+    removed or changed is written back from the before snapshot.
     """
     before, after = receipt.get('before'), receipt.get('after')
     if not before or not after:
         raise RuntimeError('This turn has no snapshots to undo from (they are taken in a git repository).')
     out = _git(workspace, 'diff-tree', '-r', '--name-only', '-z', '--no-renames', before, after)
     paths = [path for path in out.split('\0') if path]
+    left = [path for path in paths if only is not None and path not in only]
+    paths = [path for path in paths if path not in left]
     root = Path(workspace)
 
     def blob(tree, path):
@@ -92,7 +96,7 @@ def undo(workspace, receipt):
             conflicts.append(path)
         plan.append((path, blob(before, path)))
     if conflicts:
-        return [], [], conflicts
+        return [], [], conflicts, left
     restored, removed = [], []
     for path, old in plan:
         target = root / path
@@ -101,9 +105,11 @@ def undo(workspace, receipt):
             removed.append(path)
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(_git(workspace, 'cat-file', 'blob', old, text=False))
+            # As a checkout writes it: the snapshot holds the file as git stores it (with core.autocrlf, LF
+            # endings), and the path's filters give it back its own endings and encoding.
+            target.write_bytes(_git(workspace, 'cat-file', '--filters', '--path=' + path, old, text=False))
             restored.append(path)
-    return restored, removed, []
+    return restored, removed, [], left
 
 
 def diff_text(workspace, receipt):
