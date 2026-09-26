@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.7 — Agents that know each other — 2026-09-26
 
 ### The project brief tells agents about each other (both hosts)
 - **Agents running now.** `Agent_Working_Folder/BRIEF.md` lists every running agent: its name, working folder, whether it is working and its last saved answer. CLI-MODE rewrites the list before each task, after each turn and when an agent closes, so it is always current. Each task now starts "you are <Agent NAME>", so an agent knows which entry is its own, and names the brief every time.
