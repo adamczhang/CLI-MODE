@@ -1,6 +1,6 @@
 # CLI-MODE — working notes for Claude
 
-> **Written for CLI-MODE 0.3.3** (tag `v0.3.3`, 2026-09-25).
+> **Written for CLI-MODE 0.3.4** (tag `v0.3.4`, 2026-09-25).
 > If `plugins/cli-mode/.codex-plugin/plugin.json` shows a different version, parts of this file may be
 > out of date. Verify any file, function or rule named here against the code before relying on it; when
 > they disagree, the code wins. Fix this file in the same change. `checks/test_agent_docs.py` fails
@@ -24,7 +24,10 @@ lands in one of three zones below; know which before editing.
   Gates are per agent: `pending_work(state, session=…)`, `operations.menu_holds`, one worker per agent (`runners`).
   `/d a,b <prompt>` captures one request per named agent (`turnRoute.requestIds`); a registry `tag` names the
   only agent of its kind. `scripts/changes.py` takes git-tree snapshots around each turn (a temporary index copy)
-  for the change receipt and `/cli diff`. Each owned entry's `timeout` (minutes) is its ACPX owner TTL
+  for the change receipt and `/cli diff`. `scripts/agent_folder.py` gives each agent
+  `Agent_Working_Folder/<NAME>/` (git-ignored) for files that are not project edits: `_send(working_folder=True)`
+  makes it and names it in each task (never after an agent's own slash command), and a before/after listing
+  becomes the request's `saved`. Each owned entry's `timeout` (minutes) is its ACPX owner TTL
   (`acpx.AcpxBackend.ttl`); `/cli attach` moves an open owned entry from another conversation in the folder.
 - `hooks/route.py`: `decide()` and `task_through_settings()` (shared), `codex_output()` and
   `activation_reply()` (Codex only).
@@ -76,7 +79,7 @@ files) and `dist/cli-mode-claude-<v>.zip` (without the `CODEX_ONLY` files).
 
 | Guard | Protects | Fails when |
 |---|---|---|
-| `checks/test_codex_golden.py` with `checks/fixtures/codex-golden.json` (160 steps, 31 route kinds) | every hook response and controller result **Codex** receives | a shared or Claude change alters anything Codex sees |
+| `checks/test_codex_golden.py` with `checks/fixtures/codex-golden.json` (163 steps, 32 route kinds) | every hook response and controller result **Codex** receives | a shared or Claude change alters anything Codex sees |
 | `test_claude_package.py` with `checks/fixtures/codex-package-files.txt` | the Codex zip's exact file list; the Claude zip's contents; the root marketplace in sync; Claude's hook rules | a file leaks into the wrong package, or the marketplace or hooks drift |
 | `test_host.py`, `test_claude_hook.py` | Claude routing, relay, colour, menus, the Stop guard, the fast path | a Codex or shared change breaks Claude behaviour |
 | `test_package_reproducibility.py` | identical zips from LF and CRLF checkouts | packaging depends on line endings |

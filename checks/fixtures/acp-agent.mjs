@@ -48,7 +48,8 @@ createInterface({input: process.stdin}).on('line', line => {
     const sessions = state();
     sessions[params.sessionId].count += 1;
     writeFileSync(statePath, JSON.stringify(sessions));
-    const text = params.prompt.map(item => item.text ?? '').join('');
+    // The user's words: CLI-MODE adds a working-folder paragraph to each task (scripts/agent_folder.py).
+    const text = params.prompt.map(item => item.text ?? '').join('').split('\n\n---\nCLI-MODE: your working folder is ')[0];
     if (text === 'lose-owner') { process.kill(process.ppid); process.exit(1); }
     if (text === 'hold' || (text.startsWith('Confirm readiness') &&
         existsSync(join(process.cwd(), 'hold-readiness')))) { held = request; return; }

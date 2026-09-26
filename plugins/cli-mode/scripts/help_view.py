@@ -1,55 +1,77 @@
-"""The help page: the same framed card as every other CLI-MODE menu."""
+"""The help page: a compact card, one short line per command, grouped by what you want to do.
+
+It is framed like every other CLI-MODE menu (40 columns, the phone's code-block width), so each command and its
+description share one line: the command column is COLUMN wide and descriptions stay short. The README explains
+every command in full.
+"""
 import host
 from presentation import menu_block
 
-COMMANDS = (
-    ('/cli', 'Choose an agent and open its setup.'),
-    ('/cli <agent>', 'Open agy (Antigravity), cla (Claude Code), cod (Codex CLI), gro (Grok Build), '
-                     'cop (GitHub Copilot) or cur (Cursor). Full names work too.'),
-    ('/cli bind|spawn <agent> [name]', 'Start an agent with its saved settings. Several can run at once, each with '
-                                       'a name: yours (letters and digits) or one like COD-7K.'),
-    ('/d [names] <PROMPT>', 'Send a prompt to the current agent, or to the agents named first, commas between '
-                            '(gro-4k,elon or a tag like cod). Nothing else reaches an agent.'),
-    ('/cli list|agents', 'List the running agents. /cli agents max <n> sets how many can run (4).'),
-    ('/cli use <name>', 'Make an agent the current one.'),
-    ('/cli diff [name]', 'Show what an agent\'s last turn changed, as a diff.'),
-    ('/cli timeout [name] <time>', 'How long an idle agent keeps running (1 hour by default), e.g. 90m or 2h.'),
-    ('/cli attach [name]', 'Bring an open agent from an earlier session in this folder here.'),
-    ('/cli menu|settings [name]', 'Agent Settings: model, effort, access and progress.'),
-    ('/cli progress <mode>', 'activity shows tool work and usage; quiet shows messages and plans only.'),
-    ('/cli view on|off', 'Watch each agent turn live in a PowerShell window. Off by default.'),
-    ('/cli queue', 'Show queued, running and completed requests.'),
-    ('/cli cancel [name]', 'Cancel an agent\'s running turn; keep queued follow-ups.'),
-    ('/cli resume', 'Reattach status monitoring and restart a stopped queue worker without resending a prompt.'),
-    ('/cli close|stop [name|all]', 'Close one agent, or all of them. With several running and no name, it asks '
-                                   'which. Same as /cli off.'),
-    ('/help', 'Show this page.'),
+COLUMN = 20  # Command width: the longest command is 18 characters, and two spaces always follow it.
+
+SECTIONS = (
+    ('AGENTS', (
+        ('/cli', 'choose an agent'),
+        ('/cli <agent>', 'its setup page'),
+        ('/cli spawn <agent>', 'start another'),
+        ('/cli list', 'running agents'),
+        ('/cli use <name>', 'make it current'),
+        ('/cli close [name]', 'close (or all)'),
+    )),
+    ('SEND WORK', (
+        ('/d <task>', 'to current agent'),
+        ('/d <name> <task>', 'to one agent'),
+        ('/d <a>,<b> <task>', 'to several'),
+    )),
+    ('RESULTS', (
+        ('/cli diff [name]', 'last turn\'s diff'),
+        ('/cli dir [name]', 'where files go'),
+        ('/cli queue', 'queued requests'),
+        ('/cli cancel [name]', 'stop its turn'),
+    )),
+    ('SETTINGS', (
+        ('/cli menu [name]', 'model, effort...'),
+        ('/cli timeout ...', 'idle time (1 h)'),
+        ('/cli view on|off', 'live window'),
+        ('/cli progress ...', 'activity/quiet'),
+    )),
 )
+CLAUDE_SETTINGS = (
+    ('/cli display ...', 'chat or instant'),
+    ('/cli color on|off', 'green or plain'),
+)
+AGENTS = ('agy (Antigravity)  cla (Claude Code)', 'cod (Codex CLI)    gro (Grok Build)',
+          'cop (GitHub Copilot) cur (Cursor)')
+COMMANDS = tuple(row for _, rows in SECTIONS for row in rows)
+
+
+def sections():
+    """The sections for this host: Claude Code adds its display and colour settings."""
+    if not host.claude():
+        return SECTIONS
+    return SECTIONS[:-1] + ((SECTIONS[-1][0], SECTIONS[-1][1] + CLAUDE_SETTINGS),)
 
 
 def commands():
-    """The rows for this host. Claude Code's own /help is built in, so CLI-MODE's is /cli help."""
-    if not host.claude():
-        return COMMANDS
-    return COMMANDS[:-1] + (('/cli display chat|instant', 'Show CLI-MODE replies as chat messages, or at once '
-                                                          'as notices without a model turn.'),
-                            ('/cli color on|off', 'Green titles and names in chat, or plain bold for the '
-                                                  'terminal.'),
-                            ('/cli shortcuts', 'Add /cli and /d to autocomplete (the zip installer '
-                                               'already does).'),
-                            ('/cli reset', 'Set aside unreadable CLI-MODE state for this session.'),
-                            ('/cli help|commands', 'Show this page.'))
+    """Every command row shown on this host."""
+    return tuple(row for _, rows in sections() for row in rows)
 
 
 def text():
-    """Unframed menu text: each command, then its description indented under it."""
-    lines = ['CLI-MODE', 'Help', '']
-    for command, description in commands():
-        lines += [command, '  ' + description]
-    lines += ['', '$ works in place of / for these commands.']
+    """Unframed card text: grouped command lines, then the rarer commands and what the placeholders mean."""
+    lines = ['CLI-MODE', 'Help']
+    for index, (heading, rows) in enumerate(sections()):
+        lines += ([''] if index else []) + [heading] + [command.ljust(COLUMN) + description
+                                                       for command, description in rows]
+        if heading == 'SEND WORK':
+            lines.append('Only /d reaches an agent.')
+    lines += ['', 'More: /cli attach, /cli resume,',
+              *(['/cli shortcuts, /cli reset,', '/cli help (this page)'] if host.claude() else ['/help (this page)']),
+              '<agent>: a tag or full name:', *AGENTS, '<name>: a name, tag (gro) or -7K',
+              '$ works in place of / everywhere.']
     if host.claude():
-        lines += ['/cli-mode:cli and /cli-mode:d work if another plugin also uses /cli or /d.']
-    lines += ['X. Close help']
+        lines.append('/cli-mode:cli if /cli clashes.')
+    lines.append('X. Close help')
     return '\n'.join(lines)
 
 

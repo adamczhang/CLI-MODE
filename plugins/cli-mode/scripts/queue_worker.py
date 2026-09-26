@@ -9,6 +9,7 @@ import time
 import uuid
 
 from operations import _detached_workers, emit, follow_path, menu_holds, operation_running, pending_work, status_age
+import agent_folder
 import changes
 import host
 import menu_view
@@ -333,7 +334,8 @@ class QueueMixin:
             path, text, _ = relay_view.render(
                 label, [event for event in history if event.get('type') != 'context_warning'],
                 folder / (request_id + '-final-' + uuid.uuid4().hex[:6] + '.html'),
-                footer=footer, show_work=show_work, workspace=self.store.workspace, receipt=receipt.get('changes'))
+                footer=footer, show_work=show_work, workspace=self.store.workspace, receipt=receipt.get('changes'),
+                saved=receipt.get('saved'))
             self._prune_views(folder)
             result.update(text=text, reference=menu_view.reference(path), messageView=dict(
                 path=path, format='inline-html', label=label, kind='relay'))
@@ -400,7 +402,7 @@ class QueueMixin:
                    if event.get('type') != 'context_warning']
         return dict(result, cursor=position, done=True, artifacts=artifacts, text=relay_view.final_markdown(
             label, public, history, footer=footer, show_work=show_work, color=color,
-            receipt=view['receipt'].get('changes')))
+            receipt=view['receipt'].get('changes'), saved=view['receipt'].get('saved')))
 
     def relay_chain(self, request_ids, cursor=0, wait=25.0, poll=.25):
         """Relay a turn's requests with one command, for a text host (Claude Code).
@@ -545,14 +547,42 @@ class QueueMixin:
             except OSError:
                 pass  # Another follow took the file over, or it is already gone.
         end = self.FOLLOW_ENDS.get(status, '{} stopped (' + status + ').').format(label)
-        receipt = ((self.store.read().get('requests') or {}).get(request_id) or {}).get('changes')
+        record = (self.store.read().get('requests') or {}).get(request_id) or {}
+        receipt = record.get('changes')
         if receipt:
             count = receipt.get('files') or 0
             end += (' It changed ' + str(count) + (' file' if count == 1 else ' files') + ' (+' +
                     str(receipt.get('added', 0)) + ' -' + str(receipt.get('removed', 0)) + ').' if count else
                     ' It changed no files.')
+        if record.get('saved'):
+            end += ' ' + agent_folder.summary('It', record['saved'])
         say(end)
         return dict(requestId=request_id, status=status, done=True)
+
+    def agent_dir(self, session=None):
+        """`/cli dir [name]`: where an agent saves its files, as a full path and as the path in the project."""
+        state = self.store.read()
+        session = session or state.get('main')
+        entry = agent_entry(state, session) if session else None
+        if not entry or not entry.get('alias'):
+            text = 'No agent is running. /cli starts one; each agent saves its files in its own folder.'
+            return dict(message=text, text=text)
+        label = agent_label(state, session)
+        folder = agent_folder.path(entry.get('workspace') or self.store.workspace, entry['alias'])
+        lines = [label + ' saves its files in:', str(folder),
+                 'In this project: ' + agent_folder.relative(entry['alias']) + '/']
+        listing = agent_folder.listing(folder)
+        files = sorted((listing or {}).get('files', {}).items(), key=lambda item: item[1][1], reverse=True)
+        if not files:
+            lines.append('Nothing saved yet.' if folder.is_dir() else
+                         'Nothing saved yet; the folder is made with its next task.')
+        else:
+            more = listing.get('truncated')
+            lines.append(('More than ' if more else '') + str(len(files)) + (' file' if len(files) == 1 else ' files') +
+                         ', newest first: ' + ', '.join(path for path, _ in files[:5]) +
+                         (', ...' if len(files) > 5 else ''))
+        text = '\n'.join(lines)
+        return dict(message=text, text=text, path=str(folder), relative=agent_folder.relative(entry['alias']))
 
     def diff(self, session=None):
         """`/cli diff [name]`: what an agent's last turn changed in its folder, as a diff block."""
@@ -687,23 +717,37 @@ class QueueMixin:
             state['inflight'][op] = dict(session=record['session'], kind='prompt', phase='admitted',
                                          requestId=request_id, submitterPid=os.getpid(), running=True)
             workspace = target.get('workspace') or self.store.workspace
+            name = target.get('alias')
+        # The agent's working folder, listed before the turn (empty until it exists). _send makes it, git-ignored,
+        # when the task names it; the request file keeps the user's text, only the agent sees the added paragraph.
+        folder = agent_folder.path(workspace, name)
+        kept = agent_folder.listing(folder)
+        agent_folder.keep_ignored(workspace)
         # The folder before the turn, for its change receipt (none outside a git repository).
         before = changes.snapshot(workspace)
 
         def receipt():
             """Taken before the request settles, so a relay started by its end always finds it."""
             return changes.compare(workspace, before, changes.snapshot(workspace)) if before else None
+
+        def saved():
+            """What the turn saved in the agent's working folder, git or not."""
+            return agent_folder.compare(name, kept, agent_folder.listing(folder)) if folder is not None else None
         try:
-            result = self._send(text, output=output, timeout=timeout, request_id=request_id)
-            done = receipt()
+            result = self._send(text, output=output, timeout=timeout, request_id=request_id,
+                                working_folder=folder is not None)
+            done, stored = receipt(), saved()
             with self.store.edit() as state:
                 state['requests'][request_id].update(status='completed', result=result)
                 if done:
                     state['requests'][request_id]['changes'] = done
+                if stored:
+                    state['requests'][request_id]['saved'] = stored
                 state['inflight'].pop(op, None)
             return dict(requestId=request_id, **result)
         except BaseException as exc:
             done = receipt() if not isinstance(exc, KeyboardInterrupt) else None
+            stored = saved() if not isinstance(exc, KeyboardInterrupt) else None
             with self.store.edit() as state:
                 entry = state['inflight'].get(op, {})
                 record = state['requests'][request_id]
@@ -717,6 +761,8 @@ class QueueMixin:
                 record['status'] = status
                 if done and done['files'] and status != 'rejected':
                     record['changes'] = done  # A failed or canceled turn may still have edited files.
+                if stored and status != 'rejected':
+                    record['saved'] = stored
                 if status == 'rejected' and str(exc):
                     record['rejectedReason'] = str(exc)  # The relay shows it: the agent never saw the request.
                 if status == 'uncertain':

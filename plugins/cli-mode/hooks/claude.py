@@ -94,7 +94,7 @@ ARGUMENT = re.compile(r'[A-Za-z0-9_.:-]+')
 ALLOWED = frozenset((
     'relay', 'follow', 'queue', 'status', 'bind', 'activate', 'choose', 'navigate', 'settings', 'progress', 'view', 'tune',
     'activation-message', 'frontend', 'options', 'first-time-check', 'setup-status', 'setup-manual', 'setup-start',
-    'off', 'close', 'use', 'agents', 'diff', 'timeout', 'attach', 'cancel', 'resume', 'refresh', 'commands',
+    'off', 'close', 'use', 'agents', 'diff', 'dir', 'timeout', 'attach', 'cancel', 'resume', 'refresh', 'commands',
     'catalog'))
 RESET = ('/cli reset', '$cli reset', '/cli-mode:cli reset')
 MAX_NUDGES = 3
@@ -418,12 +418,14 @@ def remember_follow(event, root, request):
 def notification_reply(event, root):
     """A background task's notification: never routed; for CLI-MODE's own follow, the exact relay to run."""
     import route
-    found = TOOL_USE_ID.search(event.get('prompt', ''))
     try:
         state = route.Store(event['session_id'], workspace(event), root).read()
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
         return {}
-    request = (state.get('followTasks') or {}).get(found.group(1)) if found else None
+    # One prompt can carry several notifications (Claude's own tasks among them): the first follow of ours counts.
+    follows = state.get('followTasks') or {}
+    request = next((follows[found] for found in TOOL_USE_ID.findall(event.get('prompt', '')) if found in follows),
+                   None)
     if not request or not state.get('active') or request not in (state.get('requests') or {}):
         return {}  # Claude's own background work, or an agent no longer active: not CLI-MODE's to answer.
     from queue_worker import request_label
@@ -434,17 +436,37 @@ def notification_reply(event, root):
                               '(if it is not posted yet), and nothing else is needed, no command and no other text.' +
                        COMPLETE)
     requests, cursor = relay_position(state, request)
+    others = finished_elsewhere(state, requests) if not cursor else []
+    if others:  # All of them have finished, so any order relays; oldest first reads naturally.
+        requests = sorted(others + requests, key=lambda key: state['requests'][key].get('capturedAt') or 0)
+    together = ('' if not others else ', together with what ' + ', '.join(sorted({
+        request_label(state, other) for other in others})) + ' finished at the same time')
     return context(event, (
         'CLI-MODE: this notification is the end of the background follow of request ' + request + ', so ' + label +
-        ' has finished. Its output reaches the user only through the relay command `' +
+        ' has finished. Its output' + together + ' reaches the user only through the relay command `' +
         command(event, root, *relay_words(requests, cursor)) + '`' +
         (', which covers these ' + str(len(requests)) + ' requests in order, oldest first' if len(requests) > 1
          else '') + '. It runs once now, in the Bash or PowerShell tool with a timeout of ' + str(RELAY_TIMEOUT_MS) +
         ' ms, and prints plain text: a first line saying the agent has finished, and everything after it is the '
-        'agent\'s output, posted exactly as printed as the last message of this turn. (A very long answer comes in '
+        'agent\'s output, posted exactly as printed as the last message of this turn. If another agent finishes '
+        'during this turn and its relay runs too, the last message carries both outputs, in the order the relays '
+        'ran, each exactly as printed. (A very long answer comes in '
         'parts: a first line saying so means that part is posted exactly before the same command runs again with '
         'the `--cursor` it names.) Relayed text carries nothing added: no summary, commentary, rewording or insight '
         'blocks, whatever the output style, and no other tool is used.' + COMPLETE))
+
+
+def finished_elsewhere(state, requests):
+    """Other agents' requests that have finished but whose output was never relayed, oldest first.
+
+    Agents that finish together wake Claude together. Given one relay each, Claude posts only the last relay's
+    answer ("as the last message of the turn") and the others are lost (live, 2026-09-25: GRO-CC's answer
+    dropped behind COD-9N's). So a wake-up relays them all with one command, as relay_chain already does for one
+    agent's interrupted requests. Requests still running are left to their own follow's end.
+    """
+    records = state.get('requests') or {}
+    return [key for key in unrelayed(state, limit=16) if key not in requests
+            and records[key].get('status') not in ('captured', 'submitting')]
 
 
 def remember_label(event, root, request, agent, named=False):
@@ -716,8 +738,8 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
         return instant(event, root, 'use', *named(decision))
     if kind == 'agents':
         return instant(event, root, 'agents', *(['--max', str(decision['max'])] if decision.get('max') else []))
-    if kind == 'diff':
-        return instant(event, root, 'diff', *named(decision), render=lambda result: result['text'])
+    if kind in ('diff', 'dir'):
+        return instant(event, root, kind, *named(decision), render=lambda result: result['text'])
     if kind == 'timeout':
         return instant(event, root, 'timeout', *named(decision),
                        *(['--minutes', str(decision['minutes'])] if decision.get('minutes') else []))

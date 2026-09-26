@@ -514,6 +514,24 @@ class BackgroundFollow(ClaudeHook):
             state['relayProgress'] = {request: dict(cursor=10, done=True)}
         self.assertIn('relay has already run', self.context(self.prompt(self.notification('toolu_follow1'))))
 
+    def test_a_prompt_carrying_claudes_own_task_first_still_relays_the_follow(self):
+        _, request = self.start()
+        self.pre_tool_use(self.command('follow', '--request', request), tool_use_id='toolu_follow1')
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'completed'
+        text = self.context(self.prompt(self.notification('toolu_claudes_own_build') + '\n' +
+                                        self.notification('toolu_follow1')))
+        self.assertIn('`' + self.command('relay', '--request', request) + '`', text)
+        self.assertIn('the last message carries both outputs', text)
+
+    def test_a_relay_asks_for_every_relay_of_the_turn_in_its_last_message(self):
+        import presentation
+        lead = presentation.relay_plain(dict(agent='Grok ART', done=True, text='answer', cursor=4))
+        self.assertTrue(lead.startswith('Grok ART has finished. Post everything below this line exactly, as the '
+                                        'last message of the turn. If another CLI-MODE relay ran in this turn too, '
+                                        'that last message carries every relay\'s output'))
+        self.assertTrue(lead.endswith('\n\nanswer'))
+
     def test_other_notifications_are_left_to_claude(self):
         self.activate()
         self.prompt('/d Explain the parser')
@@ -848,7 +866,9 @@ class Colour(ClaudeHook):
         rule = box[1][1:-1]
         band = ['+' + row[1:-1] + '+' for row in box[2:4]]  # "+ CLI-MODE ... +", "+ Help ... +": green.
         # Borders take ".", "|" and "'" corners: a "+" would colour them too.
-        self.assertIn('\n'.join(['```diff', '.' + rule + '.', *band, '|' + rule + '|', *box[5:-2],
+        headings = ['+' + row[1:-1] + '+' if row[2:-2].strip() in ('AGENTS', 'SEND WORK', 'RESULTS', 'SETTINGS')
+                    else row for row in box[5:-2]]  # The help card's section headings are green too.
+        self.assertIn('\n'.join(['```diff', '.' + rule + '.', *band, '|' + rule + '|', *headings,
                                  "'" + rule + "'", '```']), card)
         with patch.dict(os.environ, {'CLI_MODE_CLAUDE_INSTANT': 'block'}):
             notice = self.prompt('/cli help')['reason']  # A hook notice is plain text: no colour.

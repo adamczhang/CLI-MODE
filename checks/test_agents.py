@@ -323,6 +323,46 @@ class Agents(unittest.TestCase):
         self.assertIn('could mean FIRST or THIRD', route('/d agy go', self.store.read())['text'])
         self.assertEqual(route('/cli close cod', self.store.read())['session'], codex['name'])
 
+    def test_agents_that_finish_together_come_back_in_one_relay(self):
+        # Live, 2026-09-25: both agents finished within a second, Claude ran one relay each in the same turn and
+        # posted only the last ("as the last message of the turn"): the first answer was lost.
+        import importlib.util
+        import host
+        from presentation import plain_strong
+        from test_claude_hook import HOOK
+        self.spawn('agy', 'FIRST')
+        self.spawn('codex', 'SECOND')
+        spec = importlib.util.spec_from_file_location('claude_hook_together', HOOK)
+        claude = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(claude)
+        self.addCleanup(host.select, host.CODEX)
+        base = dict(session_id='agents', cwd=str(self.workspace))
+        with unittest.mock.patch.dict(os.environ, {'CLAUDE_PROJECT_DIR': str(self.workspace)}):
+            claude.handle(dict(base, hook_event_name='UserPromptSubmit', prompt='/d first,second review it'),
+                          self.store.root)
+            first, second = self.store.read()['turnRoute']['requestIds']
+            for request, tool_use in ((first, 'toolu_first'), (second, 'toolu_second')):
+                follow = claude.command(dict(base, hook_event_name='PreToolUse'), self.store.root,
+                                        'follow', '--request', request)
+                claude.handle(dict(base, hook_event_name='PreToolUse', tool_name='Bash', tool_use_id=tool_use,
+                                   tool_input={'command': follow, 'timeout': 30000}), self.store.root)
+            self.control.send_request(first, output=lambda event: None)
+
+            def wake(tool_use):
+                prompt = ('<task-notification>\n<tool-use-id>' + tool_use + '</tool-use-id>\n<status>completed'
+                          '</status>\n</task-notification>')
+                return claude.handle(dict(base, hook_event_name='UserPromptSubmit', prompt=prompt),
+                                     self.store.root)['hookSpecificOutput']['additionalContext']
+            self.assertIn('relay --request ' + first + '`', wake('toolu_first'))  # SECOND still works: not waited on.
+            self.control.send_request(second, output=lambda event: None)
+            text = wake('toolu_first')  # Both have finished: one relay for both, oldest first.
+            self.assertIn('relay --request ' + first + ' --request ' + second + '`', text)
+            self.assertIn('together with what Codex SECOND finished at the same time', text)
+            host.select(host.CLAUDE)
+            answer = plain_strong(self.control.relay_chain([first, second], 0, wait=1)['text'])
+            self.assertLess(answer.index('Antigravity FIRST says...'), answer.index('Codex SECOND says...'))
+            self.assertIn('relay has already run', wake('toolu_second'))  # Nothing is posted twice.
+
     def test_both_hosts_relay_each_agent(self):
         import importlib.util
         import host

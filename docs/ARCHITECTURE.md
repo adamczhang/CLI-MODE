@@ -24,12 +24,19 @@ To add a CLI, start with the
 
 ## ACPX
 
-Setup installs CLI-MODE's own copy of ACPX with `npm ci` from the lockfile in
-`plugins/cli-mode/runtime/acpx`, under `%LOCALAPPDATA%\CLI-MODE\acpx\0.18.0`.
-CLI-MODE uses that copy first. An existing global `acpx@0.18.0` from npm still
-works as a fallback, and a global upgrade to another version never changes
-which ACPX a binding uses. Each binding saves its tested ACPX installation, so a
-PATH change cannot silently switch its runtime.
+CLI-MODE runs ACPX 0.18.0 exactly. When setup finds no ACPX 0.18.0, it installs
+CLI-MODE's own copy with `npm ci` from the lockfile in
+`plugins/cli-mode/runtime/acpx`, under `%LOCALAPPDATA%\CLI-MODE\acpx\0.18.0`. An
+existing global `acpx@0.18.0` from npm counts as installed, so setup then adds no
+copy of its own and CLI-MODE uses the global one. When both exist, CLI-MODE uses
+its own copy first.
+
+Each binding saves the ACPX installation it started with, so a PATH change cannot
+silently switch its runtime. If that installation later stops being 0.18.0 (for
+example, a global `npm install -g acpx@latest`), the binding stops with a repair
+message rather than running another version, and running setup again installs
+CLI-MODE's own copy. Installing that copy next to a global one keeps CLI-MODE independent of
+global npm upgrades: new bindings pick it up.
 
 ACPX 0.18.0's shared runtime does not support injecting `mcpServers` or interactive
 permission callbacks. Configure MCP tools in the provider CLI itself; a nonempty
@@ -78,6 +85,17 @@ the repository's index to a temporary file, runs `git add --all` against that co
 the real index never changes. `git diff-tree --numstat` between the two trees is the receipt, saved on the
 request before it settles, so the relay that follows always has it. The trees stay reachable only through
 the receipt; git's garbage collection removes them eventually, after which `/cli diff` says the diff is gone.
+
+## Agent working folders
+
+Each agent has `Agent_Working_Folder/<NAME>/` in the project (`scripts/agent_folder.py`), flat and named after
+the agent, for files it creates that are not edits to the project: notes, reports, assets, drafts. Before a
+turn the worker makes the folder, with a `.gitignore` of `*` inside `Agent_Working_Folder/` that keeps it out
+of git and out of the git receipt without touching the project's own `.gitignore`. Each task gets one added
+paragraph naming the folder (the request file and the chat keep the user's words); an agent's own slash
+command is sent exactly as typed. Listings of the agent's folder (path, size, modified time) before and after
+the turn give the request's `saved`: new, changed and removed files, shown under the change receipt. They
+work outside git and stay fast for large media; past 5,000 files the line only says the folder changed.
 
 ## Stopping
 

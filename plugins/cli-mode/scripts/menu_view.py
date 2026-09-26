@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import uuid
 import json
+from presentation import SECTION
 from progress import ActivityRelay, STATUSES, TERMINAL, activity_text, usage_text
 
 
@@ -33,8 +34,12 @@ def render(block):
             content = escape(row[:-9]) + '<span class="ok">Installed</span>'
         elif row.endswith(': Needs installation'):
             content = escape(row[:-18]) + '<span class="warning">Needs installation</span>'
+        elif SECTION.fullmatch(row.strip()):
+            content = '<span class="section">' + content + '</span>'  # Help's section headings.
         elif row.startswith('/'):
-            content = '<span class="command">' + content + '</span>'  # Help's command rows.
+            # Help's command rows: the command in bold, its short description (after two spaces) plain.
+            command, gap, description = re.match(r'(\S+(?: \S+)*?)( {2,}|$)(.*)', row).groups()
+            content = '<span class="command">' + escape(command) + '</span>' + escape(gap + description)
         body.append('<div class="row">' + (content or '&#160;') + '</div>')
     # The Codex inline surface supplies theme tokens; the original dark card
     # palette is each token's fallback, so other renderers look unchanged.
@@ -50,6 +55,7 @@ def render(block):
             '#' + ident + ' .row{min-width:0;white-space:pre-wrap;}\n'
             '#' + ident + ' .ok{color:' + GREEN + ';}\n'
             '#' + ident + ' .command{font-weight:700;}\n'
+            '#' + ident + ' .section{color:' + GREEN + ';font-weight:700;}\n'
             '#' + ident + ' .warning,#' + ident + ' .exit{color:' + RED + ';}\n'
             '</style>\n<header class="heading"><div class="title">CLI-MODE</div>'
             '<div class="subtitle">' + escape(rows[1]) + '</div></header>\n'

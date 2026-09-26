@@ -198,7 +198,12 @@ def chat_menu(text, color=False):
         return text
     rule = lines[1][1:-1]
     band = ['+' + row[1:-1] + '+' for row in lines[2:4]]
-    return '\n'.join(['```diff', '.' + rule + '.', *band, '|' + rule + '|', *lines[5:-2], "'" + rule + "'", '```'])
+    # Section headings (the help card's AGENTS, SEND WORK...) are green too.
+    body = ['+' + row[1:-1] + '+' if SECTION.fullmatch(row[2:-2].strip()) else row for row in lines[5:-2]]
+    return '\n'.join(['```diff', '.' + rule + '.', *band, '|' + rule + '|', *body, "'" + rule + "'", '```'])
+
+
+SECTION = re.compile(r'[A-Z]{3,}(?: [A-Z]{2,})*')
 
 
 def menu_frame(text, width=MENU_WIDTH):
@@ -270,7 +275,11 @@ def relay_plain(result):
     if result.get('posted'):
         return agent + '\'s answer is already posted above, so there is nothing more to post.'
     if result['done']:
-        lead = agent + ' has finished. Post everything below this line exactly, as the last message of the turn.'
+        # Agents that finish together can mean several relays in one turn; the desktop app folds text between
+        # tool calls out of view, so only a final message that carries them all shows every answer.
+        lead = (agent + ' has finished. Post everything below this line exactly, as the last message of the turn. '
+                'If another CLI-MODE relay ran in this turn too, that last message carries every relay\'s output, '
+                'in the order they ran, each exactly as printed.')
     elif post:
         lead = (agent + ' has finished, and its answer is long, so it comes in parts. Post everything below this '
                 'line exactly, then run the same command again with --cursor ' + str(result['cursor']) + '.')

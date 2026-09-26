@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.4 — Agent working folders — 2026-09-25
+
+### Agent working folders (both hosts)
+- **Each agent has a folder for its files: `Agent_Working_Folder/<NAME>/` in the project.** A coding task still changes the project's files as asked; anything else an agent creates (notes, reports, assets, drafts) goes in its own folder, flat, so it finds its earlier files. CLI-MODE adds one paragraph naming the folder to each task it sends (never to an agent's own slash command); the chat shows the prompt as typed.
+- **Saved-files receipt.** Each answer ends with what the agent saved there (new, changed, removed), under the change receipt, in the Claude Code chat, the Codex view and the background-task row. It comes from listing the agent's folder, so it works outside git, stays fast for images and audio, and names the right agent even while several work at once.
+- The folder holds a `.gitignore` of `*`, so agent files stay out of git and out of the change receipt; the project's own `.gitignore` is untouched.
+- **`/cli dir [name]`** shows where an agent saves its files: the full folder path (to open or paste elsewhere), its path in the project, and its newest files. It takes a name, a tag or the short form (`-7K`); without one, the current agent.
+
+### Help (both hosts)
+- **A compact help card.** `/cli help` shows one short line per command, grouped under AGENTS, SEND WORK, RESULTS and SETTINGS (green headings), with the rarer commands and the placeholders (`<agent>`, `<name>`) at the end: about 46 lines instead of 95 on Claude Code, and nothing wraps in the 40-column card. The README still explains every command in full.
+
+### Claude Code
+- **Agents that finish at the same time no longer lose an answer.** When several agents' turns ended together, Claude ran one relay per agent in a single turn and posted only the last one's answer. The wake-up now relays every agent that has finished but not been posted with one command, so their answers arrive together, oldest first. An agent that finishes during that turn gets its own relay, and each relay now asks for the turn's last message to carry every relay's output, so none is folded out of view or dropped.
+- A wake-up that carries several task notifications, Claude's own among them, still finds CLI-MODE's follow.
+
+### Docs
+- The README and `docs/ARCHITECTURE.md` say when setup installs CLI-MODE's own ACPX: only when no ACPX 0.18.0 is found; a global `acpx@0.18.0` from npm is used instead.
+
 ## 0.3.3 — Antigravity's temp folder — 2026-09-25
 
 ### Antigravity

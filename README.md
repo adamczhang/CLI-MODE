@@ -47,7 +47,8 @@ come back into your conversation. No second app, no second chat window, no termi
 - **Windows 10 or 11.** Setup and the agent runtime are Windows-only for now.
 - **A host:** **Claude Code 2.1.147 or later** (recommended), or the Codex desktop app (the install uses the
   Codex CLI).
-- **Python 3.10+ and Node.js 22.13+.** Setup installs the rest, including CLI-MODE's own copy of ACPX.
+- **Python 3.10+ and Node.js 22.13+.** Setup installs the rest, including a pinned copy of ACPX for CLI-MODE
+  (unless a global `acpx@0.18.0` from npm is already installed, which CLI-MODE then uses).
 - **At least one supported agent CLI,** installed and signed in with its own subscription. You only need the
   ones you plan to use; `/cli` checks each one and guides installation and sign-in.
 
@@ -71,8 +72,8 @@ working folder, using its own account and model access. Up to four run at once, 
 
 Pick your host and run its block in PowerShell.
 
-**Claude Code:** download `cli-mode-claude-0.3.3.zip` from the
-[v0.3.3 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.3), extract it, and run:
+**Claude Code:** download `cli-mode-claude-0.3.4.zip` from the
+[v0.3.4 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.4), extract it, and run:
 
 ```powershell
 .\install-claude.ps1
@@ -81,7 +82,7 @@ Pick your host and run its block in PowerShell.
 Or install it straight from GitHub:
 
 ```powershell
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.3 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.4 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
@@ -91,17 +92,17 @@ autocomplete; see [Claude Code](#claude-code).
 **Codex:**
 
 ```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.3
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.4
 codex plugin add cli-mode@cli-mode
 ```
 
-**Using both?** Install both. They share CLI-MODE's ACPX copy and each agent's sign-in, so an agent set up
+**Using both?** Install both. They share one ACPX installation and each agent's sign-in, so an agent set up
 for one host is ready in the other. Conversations and settings stay separate per host.
 
 **Upgrading?** A GitHub install stays on its tag; the [release notes](RELEASE_NOTES.md#upgrading-from-an-earlier-03-release)
-show how to move it to 0.3.3 and keep your settings.
+show how to move it to 0.3.4 and keep your settings.
 
-Release **0.3.3** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
+Release **0.3.4** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
 
 ## Get started
 
@@ -152,6 +153,19 @@ To ask several agents the same thing, name them all, with commas between:
 
 Each gets its own copy and works at the same time; the answers arrive one by one, each under its own name.
 If any name matches no running agent, nothing is sent.
+
+**Where agents save files.** A coding task changes your project's files as asked. Anything else an agent
+creates (research notes, reports, art, drafts) goes in its own folder, `Agent_Working_Folder/<NAME>/` in the
+project, such as `Agent_Working_Folder/ART/`. CLI-MODE tells the agent this with each task, and the answer
+ends with what it saved there:
+
+```text
+Grok ART saved 3 files in Agent_Working_Folder/ART/: marble/face-1.svg new · marble/preview.html new · notes.md new
+```
+
+The folder is kept out of git (it holds its own `.gitignore`), so drafts never reach your history; copy what
+you keep into the project. It is reported in folders outside git too. `/cli dir [name]` shows an agent's
+folder as a full path (to open or paste elsewhere) and as its path in the project, with its newest files.
 
 **Agents from earlier sessions.** An agent you didn't close keeps its conversation. In a new session in the
 same folder, `/cli attach` lists them and `/cli attach <name or number>` brings one here; its next `/d`

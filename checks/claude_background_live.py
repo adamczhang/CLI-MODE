@@ -430,11 +430,39 @@ def run_pair(agents, model, keep):
 TOOLS_ASK = 'Reply with only the codename in README.md.'
 TOOLS_EDIT = 'Append one line with the single word checked to NOTES.md, then reply with only the word done.'
 TOOLS_RECALL = 'What single word did you append to NOTES.md earlier? Reply with only that word.'
+# No location given: the working-folder paragraph CLI-MODE adds must decide where the file goes.
+TOOLS_SAVE = ('Write a three-line research note about this project and save it as a Markdown file. '
+              'Reply with only the file\'s path.')
+
+
+def folded_answers(events, plain):
+    """Agent answers posted before their turn's last message: the desktop app folds those out of view.
+
+    Relays tell Claude to post each answer in the turn's last message, and to carry every relay's output there
+    when several run in one turn (agents that finish together). An answer anywhere else counts as lost, even
+    though a plain transcript shows it (live, 2026-09-25: a run passed only because Claude happened to post
+    after each relay).
+    """
+    problems, turn = [], []
+    for event in events:
+        if event.get('type') == 'assistant':
+            turn += [block['text'] for block in (event.get('message') or {}).get('content') or []
+                     if block.get('type') == 'text' and block.get('text', '').strip()]
+        elif event.get('type') == 'result':
+            for text in turn[:-1]:
+                heads = [line for line in plain(text).splitlines() if line.rstrip('*').endswith(' says...')]
+                if heads:
+                    problems.append('folded: ' + ', '.join(head.strip('*') for head in heads) + ' posted before '
+                                    'the last message of its turn')
+            turn = []
+    return problems
 
 
 def run_tools(agents, model, keep):
     """The agent tools, live, in a git repository: one prompt to two agents, a change receipt and /cli diff,
-    /cli timeout, then /cli attach of an open agent from an ended session, which remembers its earlier turn."""
+    a note saved (with no location given) in the agent's git-ignored Agent_Working_Folder/<NAME>/ and its
+    saved-files line, /cli timeout, then /cli attach of an open agent from an ended session, which remembers its
+    earlier turn."""
     workspace = Path(tempfile.mkdtemp(prefix='cli-mode-tools-')).resolve()
     (workspace / 'README.md').write_text('# Notes\n\nThe project codename is ' + MARKER + '.\n', encoding='utf-8')
     (workspace / 'NOTES.md').write_text('# Notes\n\nfirst line\n', encoding='utf-8')
@@ -509,6 +537,25 @@ def run_tools(agents, model, keep):
         if not any('changed 1 file' in plain_strong(text) and '\\color{cf222e}' in text and '\\color{228b22}' in text
                    for text in raw):
             problems.append('receipt: the relayed answer has no coloured "changed 1 file" line')
+        saver = names[agents[0]]
+        save = first.mark()
+        first.send('/d ' + saver.lower() + ' ' + TOOLS_SAVE)
+        settle(first, session, 4)
+        state = saved_state(session, workspace)
+        latest = max(state['requests'].values(), key=lambda record: record.get('capturedAt') or 0)
+        stored = latest.get('saved') or {}
+        folder = 'Agent_Working_Folder/' + saver
+        report['saved'] = {key: stored.get(key) for key in ('folder', 'saved', 'paths')}
+        if stored.get('folder') != folder or not stored.get('saved'):
+            problems.append('saved: no file saved in ' + folder + ': ' + json.dumps(report['saved']))
+        if (latest.get('changes') or {}).get('files'):
+            problems.append('saved: the note also changed project files: ' + json.dumps(latest.get('changes')))
+        if not any(saver + ' saved' in plain_strong(text) and '`' + folder + '/`' in text for text in said(first, save)):
+            problems.append('saved: the relayed answer has no "saved ... in `' + folder + '/`" line')
+        status = subprocess.run(['git', '-C', str(workspace), 'status', '--porcelain'], capture_output=True,
+                                text=True).stdout
+        if 'Agent_Working_Folder' in status:
+            problems.append('saved: git status shows the working folder: ' + status)
         diff = ' '.join(plain_strong(text) for text in said(first, ask(first, '/cli diff ' + editor)))
         if '```diff' not in diff or '+checked' not in diff.casefold():
             problems.append('diff: no diff block with +checked')
@@ -555,6 +602,7 @@ def run_tools(agents, model, keep):
                         block.get('name') in ('Bash', 'PowerShell') and 'controller.py' in command
                         and (' follow --request ' in command or ' relay --request ' in command)):
                     problems.append('session %d used %s %s' % (index, block.get('name'), command[-100:]))
+        problems += ['session %d %s' % (index, problem) for problem in folded_answers(events, plain_strong)]
     report['problems'] = problems
     report['passed'] = not problems
     import host as host_module
