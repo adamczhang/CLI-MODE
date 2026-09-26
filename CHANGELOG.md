@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Agent to agent (both hosts)
+- **A copy box under every answer.** Each agent's full answer is also saved as `Agent_Working_Folder/<NAME>/answers/NNN-<task>.md`, and the relayed answer ends with a small box listing that file and the files the turn created, changed or mentioned (existing ones only). On Claude Code the box has a copy button: paste it into another agent's `/d` and that agent reads the exact answer and files from the project. The answer above the box is shown as before.
+- `/cli dir` counts an agent's saved answers apart from its own files.
+
 ## 0.3.4 — Agent working folders — 2026-09-25
 
 ### Agent working folders (both hosts)

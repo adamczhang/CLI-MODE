@@ -107,10 +107,14 @@ def listing(folder):
 
 
 def compare(name, before, after):
-    """What a turn saved in the agent's folder, or None when nothing changed (or it couldn't be read)."""
+    """What a turn saved in the agent's folder, or None when nothing changed (or it couldn't be read).
+
+    The agent's saved answers (ANSWERS/) are CLI-MODE's own copies, shown in the reference box instead.
+    """
     if before is None or after is None:
         return None
-    old, new = before['files'], after['files']
+    old, new = ({path: value for path, value in listed['files'].items() if not path.startswith(ANSWERS + '/')}
+                for listed in (before, after))
     if before['truncated'] or after['truncated']:
         # Past LIMIT a listing is cut off, so a file beyond the cut would read as removed: say only that it changed.
         return dict(folder=relative(name), partial=True, saved=0, removed=0, files=0, paths=[]) if old != new else None
@@ -122,6 +126,66 @@ def compare(name, before, after):
     return dict(folder=relative(name), saved=sum(item['status'] != 'removed' for item in paths),
                 removed=sum(item['status'] == 'removed' for item in paths), files=len(paths),
                 paths=sorted(paths, key=lambda item: item['path'])[:PATHS_KEPT], partial=False)
+
+
+ANSWERS = 'answers'
+REFERENCES_KEPT = 8
+# A file path as an answer mentions it: relative (src/app.py, notes.md) or absolute, ending in an extension.
+MENTION = re.compile(r'(?:[A-Za-z]:[\\/])?[\w.\-]+(?:[\\/][\w.\-]+)*\.[A-Za-z0-9]{1,10}')
+
+
+def save_answer(workspace, name, label, task, text):
+    """Keep an agent's full answer as `Agent_Working_Folder/<NAME>/answers/NNN-<task words>.md`; its path, or None.
+
+    Another agent can then be given the answer by path (the reference box under each answer lists it), and
+    reads the exact text, formatting included. Numbered, so the names sort in order.
+    """
+    folder = ensure(workspace, name)
+    if folder is None or not text.strip():
+        return None
+    answers = folder / ANSWERS
+    try:
+        answers.mkdir(exist_ok=True)
+        taken = [int(match[1]) for match in (re.match(r'(\d+)-', entry.name) for entry in answers.glob('*.md'))
+                 if match]
+        words = '-'.join(re.findall(r'[a-z0-9]+', task.casefold())[:6])[:40].strip('-') or 'answer'
+        path = answers / ('%03d-%s.md' % ((max(taken) + 1) if taken else 1, words))
+        path.write_text('# ' + label + '\'s answer\n\nTask: ' + ' '.join(task.split()) + '\n\n---\n\n' +
+                        text.strip() + '\n', encoding='utf-8')
+    except (OSError, ValueError):
+        return None
+    return path.relative_to(workspace).as_posix()
+
+
+def references(workspace, text, changes=None, saved=None, answer=None):
+    """Files to hand to another agent: those the turn created or changed, then existing ones its answer mentions.
+
+    Paths are relative to the project, which every agent works in. A mentioned path counts only if it is a file
+    in the project, so an example or made-up path never gets in.
+    """
+    root = Path(workspace).resolve()
+    found = [item['path'] for item in (changes or {}).get('paths') or [] if (root / item['path']).is_file()]
+    found += [saved['folder'] + '/' + item['path'] for item in (saved or {}).get('paths') or []
+              if item['status'] != 'removed']
+    for token in MENTION.findall(text or ''):
+        try:
+            path = (root / token).resolve()
+            if path.is_file() and path.is_relative_to(root):
+                found.append(path.relative_to(root).as_posix())
+        except (OSError, ValueError):
+            continue
+    unique = [path for index, path in enumerate(found) if path not in found[:index] and path != answer]
+    return unique
+
+
+def box(label, answer, files):
+    """The reference box's lines: the saved answer, then the files (at most REFERENCES_KEPT)."""
+    lines = [label + ' answer: ' + answer] if answer else []
+    if files:
+        shown = files[:REFERENCES_KEPT]
+        more = len(files) - len(shown)
+        lines.append('Files: ' + ', '.join(shown) + (', and ' + str(more) + ' more' if more > 0 else ''))
+    return lines
 
 
 def summary(label, saved):

@@ -167,6 +167,15 @@ The folder is kept out of git (it holds its own `.gitignore`), so drafts never r
 you keep into the project. It is reported in folders outside git too. `/cli dir [name]` shows an agent's
 folder as a full path (to open or paste elsewhere) and as its path in the project, with its newest files.
 
+**Passing work between agents.** Every answer ends with a small box listing where the full answer is saved
+(`Agent_Working_Folder/<NAME>/answers/`) and the files the turn created, changed or mentioned. Copy it into
+another agent's `/d`, and that agent reads the exact answer and files itself:
+
+```text
+Codex RESEARCH answer: Agent_Working_Folder/RESEARCH/answers/003-compare-3d-engines.md
+Files: docs/engine-report.md
+```
+
 **Agents from earlier sessions.** An agent you didn't close keeps its conversation. In a new session in the
 same folder, `/cli attach` lists them and `/cli attach <name or number>` brings one here; its next `/d`
 continues where it left off, and the earlier session no longer has it.

@@ -335,7 +335,7 @@ class QueueMixin:
                 label, [event for event in history if event.get('type') != 'context_warning'],
                 folder / (request_id + '-final-' + uuid.uuid4().hex[:6] + '.html'),
                 footer=footer, show_work=show_work, workspace=self.store.workspace, receipt=receipt.get('changes'),
-                saved=receipt.get('saved'))
+                saved=receipt.get('saved'), refs=receipt.get('refs'))
             self._prune_views(folder)
             result.update(text=text, reference=menu_view.reference(path), messageView=dict(
                 path=path, format='inline-html', label=label, kind='relay'))
@@ -402,7 +402,8 @@ class QueueMixin:
                    if event.get('type') != 'context_warning']
         return dict(result, cursor=position, done=True, artifacts=artifacts, text=relay_view.final_markdown(
             label, public, history, footer=footer, show_work=show_work, color=color,
-            receipt=view['receipt'].get('changes'), saved=view['receipt'].get('saved')))
+            receipt=view['receipt'].get('changes'), saved=view['receipt'].get('saved'),
+            refs=view['receipt'].get('refs')))
 
     def relay_chain(self, request_ids, cursor=0, wait=25.0, poll=.25):
         """Relay a turn's requests with one command, for a text host (Claude Code).
@@ -572,7 +573,10 @@ class QueueMixin:
         lines = [label + ' saves its files in:', str(folder),
                  'In this project: ' + agent_folder.relative(entry['alias']) + '/']
         listing = agent_folder.listing(folder)
-        files = sorted((listing or {}).get('files', {}).items(), key=lambda item: item[1][1], reverse=True)
+        everything = (listing or {}).get('files', {})
+        answers = sum(path.startswith(agent_folder.ANSWERS + '/') for path in everything)
+        files = sorted(((path, value) for path, value in everything.items()
+                        if not path.startswith(agent_folder.ANSWERS + '/')), key=lambda item: item[1][1], reverse=True)
         if not files:
             lines.append('Nothing saved yet.' if folder.is_dir() else
                          'Nothing saved yet; the folder is made with its next task.')
@@ -581,6 +585,9 @@ class QueueMixin:
             lines.append(('More than ' if more else '') + str(len(files)) + (' file' if len(files) == 1 else ' files') +
                          ', newest first: ' + ', '.join(path for path, _ in files[:5]) +
                          (', ...' if len(files) > 5 else ''))
+        if answers:
+            lines.append(str(answers) + (' answer' if answers == 1 else ' answers') + ' saved in ' +
+                         agent_folder.ANSWERS + '/.')
         text = '\n'.join(lines)
         return dict(message=text, text=text, path=str(folder), relative=agent_folder.relative(entry['alias']))
 
@@ -744,6 +751,7 @@ class QueueMixin:
                 if stored:
                     state['requests'][request_id]['saved'] = stored
                 state['inflight'].pop(op, None)
+            self._keep_answer(request_id, workspace, name, text)
             return dict(requestId=request_id, **result)
         except BaseException as exc:
             done = receipt() if not isinstance(exc, KeyboardInterrupt) else None
@@ -769,9 +777,36 @@ class QueueMixin:
                     entry['running'] = False
                 else:
                     state['inflight'].pop(op, None)
+            if not isinstance(exc, KeyboardInterrupt) and status != 'rejected':
+                self._keep_answer(request_id, workspace, name, text)  # A failed turn may still have answered.
             raise
         finally:
             path.unlink(missing_ok=True)
+
+    def _keep_answer(self, request_id, workspace, name, text):
+        """Save the turn's full answer in the agent's folder and record the reference box: that file, then the
+        files the turn created or changed, then existing ones its answer mentions. Never fails a turn."""
+        from dispatch import without_name
+        import native_commands
+        from state import direct_payload
+        try:
+            state = self.store.read()
+            record = state['requests'][request_id]
+            task = direct_payload(text) or text
+            task = without_name(task, record['named']) if record.get('named') else task
+            if native_commands.name_of(task) is not None:
+                return  # An agent's own command: its output is not an answer, and the project stays untouched.
+            path = Path(record['events']) if record.get('events') else None
+            events = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()] \
+                if path and path.is_file() else []
+            words = relay_view.messages(events)
+            answer = agent_folder.save_answer(workspace, name, request_label(state, request_id), task, words)
+            files = agent_folder.references(workspace, words, record.get('changes'), record.get('saved'), answer)
+            if answer or files:
+                with self.store.edit() as latest:
+                    latest['requests'][request_id]['refs'] = dict(answer=answer, files=files)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass  # The answer still reaches the chat; only its reference box is missing.
 
     def send(self, text, output=emit, timeout=86400):
         """File/programmatic input joins the same lifecycle as hook input."""

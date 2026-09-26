@@ -249,7 +249,32 @@ def saved_html(label, saved):
     return ('<div class="changes saved"><strong>' + escape(head) + '</strong><ul>' + rows + '</ul></div>'), head + '.'
 
 
-def final_markdown(label, batch, history, footer=None, show_work=True, color=False, receipt=None, saved=None):
+def refs_markdown(label, refs):
+    """The reference box at the bottom of an answer: a code block, so the host gives it a copy button.
+
+    It holds the saved answer's path and the files the turn made or mentioned, ready to paste into another
+    agent's /d; the answer itself stays above it, as usual.
+    """
+    from agent_folder import box
+    lines = box(label, (refs or {}).get('answer'), (refs or {}).get('files'))
+    if not lines:
+        return None
+    body = '\n'.join(lines)
+    fence = '`' * max(3, max((len(run) for run in re.findall('`+', body)), default=0) + 1)
+    return fence + 'text\n' + body + '\n' + fence
+
+
+def refs_html(label, refs):
+    """The same references in a view (selectable text; views have no copy button), with a plain fallback."""
+    from agent_folder import box
+    lines = box(label, (refs or {}).get('answer'), (refs or {}).get('files'))
+    if not lines:
+        return '', None
+    return '<pre class="refs">' + escape('\n'.join(lines)) + '</pre>', '\n'.join(lines)
+
+
+def final_markdown(label, batch, history, footer=None, show_work=True, color=False, receipt=None, saved=None,
+                   refs=None):
     """The end of a turn for hosts without inline views (Claude Code), as chat Markdown.
 
     It carries the agent's words, artifacts and errors (all of the turn's, unless
@@ -285,10 +310,14 @@ def final_markdown(label, batch, history, footer=None, show_work=True, color=Fal
         parts.append('_' + footer + '_')
     if not parts and not messages(history):
         parts.append('_' + label + ' finished without public output._')
+    box = refs_markdown(label, refs)
+    if box:
+        parts.append(box)  # Last: the answer stays above, and this is what gets copied into another agent.
     return '\n\n'.join(parts)
 
 
-def render(label, history, destination, footer=None, show_work=True, workspace=None, receipt=None, saved=None):
+def render(label, history, destination, footer=None, show_work=True, workspace=None, receipt=None, saved=None,
+           refs=None):
     """The turn's one inline view: final words, artifacts, errors and nested work.
 
     Returns (path, plain-text fallback, artifacts).
@@ -358,6 +387,10 @@ def render(label, history, destination, footer=None, show_work=True, workspace=N
     if not html:
         html.append('<div class="state">' + escape(label) + ' finished without public output.</div>')
         plain.append(label + ' finished without public output.')
+    box, box_text = refs_html(label, refs)
+    if box:
+        html.append(box)
+        plain.append(box_text)
     muted = 'var(--muted-foreground,inherit)'
     fragment = ('<section id="' + ident + '" aria-label="' + escape(label + ' update', quote=True) + '">'
         '<style>#' + ident + '{color:var(--foreground,inherit);background:transparent;font:inherit;line-height:1.5;'
@@ -367,6 +400,8 @@ def render(label, history, destination, footer=None, show_work=True, workspace=N
         + block_styles(ident) +
         '#' + ident + ' .body code{font-family:ui-monospace,Consolas,monospace;background:transparent;color:inherit;}'
         '#' + ident + ' .error{color:var(--destructive,inherit);}'
+        '#' + ident + ' .refs{white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,Consolas,monospace;'
+        'border:1px solid var(--border,#92979b);border-radius:6px;padding:6px 8px;margin:8px 0 0;}'
         '#' + ident + ' details{margin:4px 0;}'
         '#' + ident + ' details details{margin-left:1.1em;}'
         '#' + ident + ' summary{cursor:pointer;}'
