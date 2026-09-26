@@ -61,20 +61,63 @@ def ensure(workspace, name):
     if folder is None:
         return None
     try:
-        folder.parent.mkdir(exist_ok=True)
-        ignore = folder.parent / '.gitignore'
-        if not ignore.exists():
-            ignore.write_text(IGNORE, encoding='utf-8')
+        ensure_root(workspace)
         folder.mkdir(exist_ok=True)
         return folder
     except OSError:
         return None
 
 
-def instruction(name):
+BRIEF = 'BRIEF.md'
+
+
+def brief_path(workspace):
+    """The project brief every agent reads: `Agent_Working_Folder/BRIEF.md`, shared by all agents and hosts."""
+    return Path(workspace) / ROOT / BRIEF
+
+
+def brief_lines(workspace):
+    """The brief's points (its `- ` lines), or [] when there is none."""
+    try:
+        text = brief_path(workspace).read_text(encoding='utf-8')
+    except OSError:
+        return []
+    return [line[2:] for line in text.splitlines() if line.startswith('- ')]
+
+
+def add_brief(workspace, text):
+    """Add one point to the brief, creating it (and the git-ignored folder) if needed; the points after it."""
+    path = brief_path(workspace)
+    ensure_root(workspace)
+    lines = brief_lines(workspace) + [' '.join(text.split())]
+    path.write_text('# Project brief\n\nEvery agent working in this project reads this first.\n\n' +
+                    ''.join('- ' + line + '\n' for line in lines), encoding='utf-8')
+    return lines
+
+
+def clear_brief(workspace):
+    """Remove the brief; True if there was one."""
+    try:
+        brief_path(workspace).unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def ensure_root(workspace):
+    """`Agent_Working_Folder/` with its ignore file."""
+    root = Path(workspace) / ROOT
+    root.mkdir(exist_ok=True)
+    if not (root / '.gitignore').exists():
+        (root / '.gitignore').write_text(IGNORE, encoding='utf-8')
+    return root
+
+
+def instruction(name, brief=False):
     """The line added to a task when it is sent. The sender skips it for an agent's own slash command, which must
-    go exactly as typed (dispatch's `provider_command`)."""
-    return ('\n\n---\nCLI-MODE: your working folder is `' + relative(name) + '/` in this project. If this task is '
+    go exactly as typed (dispatch's `provider_command`). With a project brief, it asks the agent to read it."""
+    return ('\n\n---\nCLI-MODE: ' + ('first read `' + ROOT + '/' + BRIEF + '`, the brief every agent on this '
+            'project follows. Y' if brief else 'y') + 'our working folder is `' + relative(name) + '/` in this project. If this task is '
             'coding, change the project\'s files as asked. Save any other file you create (notes, reports, assets, '
             'drafts, downloads) in your working folder, not elsewhere in the project, and name the files you saved '
             'in your answer.')
@@ -107,10 +150,14 @@ def listing(folder):
 
 
 def compare(name, before, after):
-    """What a turn saved in the agent's folder, or None when nothing changed (or it couldn't be read)."""
+    """What a turn saved in the agent's folder, or None when nothing changed (or it couldn't be read).
+
+    The agent's saved answers (ANSWERS/) are CLI-MODE's own copies, shown in the reference box instead.
+    """
     if before is None or after is None:
         return None
-    old, new = before['files'], after['files']
+    old, new = ({path: value for path, value in listed['files'].items() if not path.startswith(ANSWERS + '/')}
+                for listed in (before, after))
     if before['truncated'] or after['truncated']:
         # Past LIMIT a listing is cut off, so a file beyond the cut would read as removed: say only that it changed.
         return dict(folder=relative(name), partial=True, saved=0, removed=0, files=0, paths=[]) if old != new else None
@@ -122,6 +169,66 @@ def compare(name, before, after):
     return dict(folder=relative(name), saved=sum(item['status'] != 'removed' for item in paths),
                 removed=sum(item['status'] == 'removed' for item in paths), files=len(paths),
                 paths=sorted(paths, key=lambda item: item['path'])[:PATHS_KEPT], partial=False)
+
+
+ANSWERS = 'answers'
+REFERENCES_KEPT = 8
+# A file path as an answer mentions it: relative (src/app.py, notes.md) or absolute, ending in an extension.
+MENTION = re.compile(r'(?:[A-Za-z]:[\\/])?[\w.\-]+(?:[\\/][\w.\-]+)*\.[A-Za-z0-9]{1,10}')
+
+
+def save_answer(workspace, name, label, task, text):
+    """Keep an agent's full answer as `Agent_Working_Folder/<NAME>/answers/NNN-<task words>.md`; its path, or None.
+
+    Another agent can then be given the answer by path (the reference box under each answer lists it), and
+    reads the exact text, formatting included. Numbered, so the names sort in order.
+    """
+    folder = ensure(workspace, name)
+    if folder is None or not text.strip():
+        return None
+    answers = folder / ANSWERS
+    try:
+        answers.mkdir(exist_ok=True)
+        taken = [int(match[1]) for match in (re.match(r'(\d+)-', entry.name) for entry in answers.glob('*.md'))
+                 if match]
+        words = '-'.join(re.findall(r'[a-z0-9]+', task.casefold())[:6])[:40].strip('-') or 'answer'
+        path = answers / ('%03d-%s.md' % ((max(taken) + 1) if taken else 1, words))
+        path.write_text('# ' + label + '\'s answer\n\nTask: ' + ' '.join(task.split()) + '\n\n---\n\n' +
+                        text.strip() + '\n', encoding='utf-8')
+    except (OSError, ValueError):
+        return None
+    return path.relative_to(workspace).as_posix()
+
+
+def references(workspace, text, changes=None, saved=None, answer=None):
+    """Files to hand to another agent: those the turn created or changed, then existing ones its answer mentions.
+
+    Paths are relative to the project, which every agent works in. A mentioned path counts only if it is a file
+    in the project, so an example or made-up path never gets in.
+    """
+    root = Path(workspace).resolve()
+    found = [item['path'] for item in (changes or {}).get('paths') or [] if (root / item['path']).is_file()]
+    found += [saved['folder'] + '/' + item['path'] for item in (saved or {}).get('paths') or []
+              if item['status'] != 'removed']
+    for token in MENTION.findall(text or ''):
+        try:
+            path = (root / token).resolve()
+            if path.is_file() and path.is_relative_to(root):
+                found.append(path.relative_to(root).as_posix())
+        except (OSError, ValueError):
+            continue
+    unique = [path for index, path in enumerate(found) if path not in found[:index] and path != answer]
+    return unique
+
+
+def box(label, answer, files):
+    """The reference box's lines: the saved answer, then the files (at most REFERENCES_KEPT)."""
+    lines = [label + ' answer: ' + answer] if answer else []
+    if files:
+        shown = files[:REFERENCES_KEPT]
+        more = len(files) - len(shown)
+        lines.append('Files: ' + ', '.join(shown) + (', and ' + str(more) + ' more' if more > 0 else ''))
+    return lines
 
 
 def summary(label, saved):

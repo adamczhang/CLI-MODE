@@ -127,7 +127,10 @@ class Turns(unittest.TestCase):
         self.assertIn('`' + self.folder + '/`', self.backend.sent[-1])
         host.select(host.CLAUDE)
         self.addCleanup(host.select, host.CODEX)
-        self.assertNotIn('Agent_Working_Folder', self.control.relay_text(request, wait=0)['text'])  # Nothing saved.
+        text = self.control.relay_text(request, wait=0)['text']
+        self.assertNotIn(self.label + ' saved', text)  # Nothing saved, but the answer itself is kept:
+        self.assertTrue(text.endswith('```text\n' + self.label + ' answer: ' + self.folder +
+                                      '/answers/001-draw-four-cube-themes.md\n```'))
         self.assertIsNone(self.store.read()['requests'][request].get('saved'))
         self.assertTrue((self.project / self.folder).is_dir())  # Made when the task named it.
 
@@ -178,9 +181,47 @@ class Turns(unittest.TestCase):
         self.assertEqual(text[3], 'Nothing saved yet; the folder is made with its next task.')
         self.backend.work = self.saving_art
         self.turn()
-        listed = self.control.agent_dir()['text'].splitlines()[3]
-        self.assertTrue(listed.startswith('2 files, newest first: '))
+        listed, answers = self.control.agent_dir()['text'].splitlines()[3:5]
+        self.assertTrue(listed.startswith('2 files, newest first: '))  # Its own files; answers are counted apart.
         self.assertEqual(set(listed.split(': ')[1].split(', ')), {'marble/face-1.svg', 'notes.md'})
+        self.assertEqual(answers, '1 answer saved in answers/.')
+
+    def test_each_answer_is_kept_as_a_file_with_its_task(self):
+        self.turn('/d compare 3D engines for the cube')
+        saved = self.project / self.folder / 'answers' / '001-compare-3d-engines-for-the-cube.md'
+        self.assertEqual(saved.read_text(encoding='utf-8'), '# ' + self.label + '\'s answer\n\nTask: compare 3D '
+                         'engines for the cube\n\n---\n\ncompare 3D engines for the cube\n')  # The fake agent echoes.
+        self.turn('/d again')
+        self.assertTrue((self.project / self.folder / 'answers' / '002-again.md').is_file())  # Numbered in order.
+        self.assertNotIn('git', git(self.project, 'status', '--porcelain'))  # Kept out of git with the folder.
+
+    def test_the_box_lists_created_changed_and_mentioned_files_that_exist(self):
+        self.backend.work = self.saving_art
+        (self.project / 'docs').mkdir()
+        (self.project / 'docs' / 'engines.md').write_text('x', encoding='utf-8')
+        request = self.turn('/d see docs/engines.md and README-missing.md then draw')
+        refs = self.store.read()['requests'][request]['refs']
+        self.assertEqual(refs['files'], ['app.py', self.folder + '/marble/face-1.svg', self.folder + '/notes.md',
+                                         'docs/engines.md'])  # Changed, saved, then mentioned; no made-up path.
+        host.select(host.CLAUDE)
+        self.addCleanup(host.select, host.CODEX)
+        text = self.control.relay_text(request, wait=0)['text']
+        box = text[text.rindex('```text\n'):]
+        self.assertEqual(box, '```text\n' + self.label + ' answer: ' + refs['answer'] + '\nFiles: ' +
+                         ', '.join(refs['files']) + '\n```')
+        self.assertLess(text.index('says...'), text.index('```text'))  # The answer stays above the box.
+
+    def test_codex_shows_the_references_as_text(self):
+        request = self.turn()
+        result = self.control.relay(request, wait=0, view_dir=self.root / 'views')
+        html = Path(result['messageView']['path']).read_text(encoding='utf-8')
+        self.assertIn('<pre class="refs">' + self.label + ' answer: ' + self.folder + '/answers/', html)
+        self.assertIn(self.label + ' answer: ', result['text'])
+
+    def test_the_box_keeps_eight_files(self):
+        files = ['f%d.md' % index for index in range(11)]
+        self.assertEqual(agent_folder.box('Grok ART', 'a.md', files),
+                         ['Grok ART answer: a.md', 'Files: ' + ', '.join(files[:8]) + ', and 3 more'])
 
     def test_dir_names_an_agent_by_name_tag_or_short_form(self):
         from state import route

@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,22 @@ import acpx
 import agy
 
 
+def remove_temp(temp, seconds=10):
+    """Delete a test's folder, waiting for the processes it started to let go of their files.
+
+    A turn cut short by a failing test leaves the ACPX owner (Node) shutting down with files open, and Windows
+    refuses to delete open files: the folder was left in %TEMP% (2026-09-25) and its cleanup error was reported
+    on top of the real failure. Retrying while those processes exit removes it; nothing here ever raises.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        shutil.rmtree(temp.name, ignore_errors=True)
+        if not os.path.exists(temp.name) or time.monotonic() >= deadline:
+            break
+        time.sleep(.25)
+    temp.cleanup()  # Nothing left to do; ignore_cleanup_errors keeps a stubborn leftover from raising.
+
+
 class SharedRuntime(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -25,7 +42,7 @@ class SharedRuntime(unittest.TestCase):
             raise unittest.SkipTest(str(exc))
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='cli-mode-runtime-')
+        self.temp = tempfile.TemporaryDirectory(prefix='cli-mode-runtime-', ignore_cleanup_errors=True)
         self.root = Path(self.temp.name)
         self.workspace = self.root / 'workspace'
         self.workspace.mkdir()
@@ -44,7 +61,7 @@ class SharedRuntime(unittest.TestCase):
             self.backend.control(self.owned, ['sessions', 'ensure', '--name', self.owned['name']])
         except BaseException:
             self.environment.stop()
-            self.temp.cleanup()
+            remove_temp(self.temp)
             raise
 
     def tearDown(self):
@@ -52,7 +69,7 @@ class SharedRuntime(unittest.TestCase):
             self.backend.close(self.owned)
         finally:
             self.environment.stop()
-            self.temp.cleanup()
+            remove_temp(self.temp)
 
     def start(self, text):
         prompt = self.root / 'prompt.txt'

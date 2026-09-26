@@ -431,8 +431,11 @@ TOOLS_ASK = 'Reply with only the codename in README.md.'
 TOOLS_EDIT = 'Append one line with the single word checked to NOTES.md, then reply with only the word done.'
 TOOLS_RECALL = 'What single word did you append to NOTES.md earlier? Reply with only that word.'
 # No location given: the working-folder paragraph CLI-MODE adds must decide where the file goes.
-TOOLS_SAVE = ('Write a three-line research note about this project and save it as a Markdown file. '
-              'Reply with only the file\'s path.')
+NOTE_WORD = 'LANTERN_' + MARKER[-6:]  # Not the README codename: only the saved note carries it.
+TOOLS_SAVE = ('Write a three-line research note about this project that includes the word ' + NOTE_WORD +
+              ', and save it as a Markdown file. Reply with only the file\'s path.')
+# The hand-off: the other agent gets only what the first answer's copy box holds.
+TOOLS_HANDOFF = 'Which word in capitals with an underscore appears in the files below? Reply with only that word.\n\n'
 
 
 def folded_answers(events, plain):
@@ -461,7 +464,8 @@ def folded_answers(events, plain):
 def run_tools(agents, model, keep):
     """The agent tools, live, in a git repository: one prompt to two agents, a change receipt and /cli diff,
     a note saved (with no location given) in the agent's git-ignored Agent_Working_Folder/<NAME>/ and its
-    saved-files line, /cli timeout, then /cli attach of an open agent from an ended session, which remembers its
+    saved-files line and its answer's copy box, handed by that box's text alone to the other agent, /cli timeout,
+    then /cli attach of an open agent from an ended session, which remembers its
     earlier turn."""
     workspace = Path(tempfile.mkdtemp(prefix='cli-mode-tools-')).resolve()
     (workspace / 'README.md').write_text('# Notes\n\nThe project codename is ' + MARKER + '.\n', encoding='utf-8')
@@ -556,9 +560,26 @@ def run_tools(agents, model, keep):
                                 text=True).stdout
         if 'Agent_Working_Folder' in status:
             problems.append('saved: git status shows the working folder: ' + status)
+        # The copy box: the saved answer and its files, at the end of the relayed answer.
+        refs = latest.get('refs') or {}
+        report['refs'] = refs
+        boxes = [text[text.rindex('```text\n') + 8:].rsplit('\n```', 1)[0] for text in said(first, save)
+                 if '```text\n' in text and ' answer: ' + folder + '/answers/' in text]
+        if not boxes:
+            problems.append('box: the saved note\'s answer has no copy box naming ' + folder + '/answers/')
+        elif not refs.get('answer') or not (workspace / refs['answer']).is_file():
+            problems.append('box: the answer file it names does not exist: ' + json.dumps(refs))
         diff = ' '.join(plain_strong(text) for text in said(first, ask(first, '/cli diff ' + editor)))
         if '```diff' not in diff or '+checked' not in diff.casefold():
             problems.append('diff: no diff block with +checked')
+        if boxes:
+            # Agent to agent: the other agent is given only the box's text, and must find the note's word.
+            handoff = first.mark()
+            first.send('/d ' + editor.lower() + ' ' + TOOLS_HANDOFF + boxes[-1])
+            settle(first, session, 5)
+            report['handoff'] = [plain_strong(text)[-200:] for text in said(first, handoff)][-1:]
+            if not any(NOTE_WORD in text and editor + ' says' in plain_strong(text) for text in said(first, handoff)):
+                problems.append('handoff: ' + editor + ' did not find ' + NOTE_WORD + ' through the copy box')
         timed = ' '.join(said(first, ask(first, '/cli timeout 90m')))
         if 'now stop after 90 minutes' not in timed:
             problems.append('timeout: no "now stop after 90 minutes"')

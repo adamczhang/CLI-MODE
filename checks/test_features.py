@@ -45,7 +45,9 @@ class Features(unittest.TestCase):
         self.assertIn('No routing hook has run', json.loads(denied.stdout)['error'])
         for command in ('/cli unknown', '$cli model Flash', '/cli permissions allow'):
             output = self.hook('UserPromptSubmit', prompt=command)
-            expected = 'CLI-MODE: Agent not activated. /CLI to setup' if command == '$cli model Flash' else '/cli to activate.  Say /help to see options'
+            expected = {'$cli model Flash': 'CLI-MODE: Agent not activated. /CLI to setup',
+                        '/cli unknown': 'CLI-MODE has no /cli unknown. Say /help to see options.'}.get(
+                            command, '/cli to activate.  Say /help to see options')
             self.assertIn('Reply with exactly '+json.dumps(expected), output['hookSpecificOutput']['additionalContext'])
         self.assertFalse(json.loads(self.cli('status').stdout)['owned'])
         self.assertTrue(json.loads(self.cli('off').stdout)['shutdownComplete'])

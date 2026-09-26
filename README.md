@@ -72,8 +72,8 @@ working folder, using its own account and model access. Up to four run at once, 
 
 Pick your host and run its block in PowerShell.
 
-**Claude Code:** download `cli-mode-claude-0.3.4.zip` from the
-[v0.3.4 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.4), extract it, and run:
+**Claude Code:** download `cli-mode-claude-0.3.5.zip` from the
+[v0.3.5 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.5), extract it, and run:
 
 ```powershell
 .\install-claude.ps1
@@ -82,7 +82,7 @@ Pick your host and run its block in PowerShell.
 Or install it straight from GitHub:
 
 ```powershell
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.4 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.5 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
@@ -92,7 +92,7 @@ autocomplete; see [Claude Code](#claude-code).
 **Codex:**
 
 ```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.4
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.5
 codex plugin add cli-mode@cli-mode
 ```
 
@@ -100,9 +100,9 @@ codex plugin add cli-mode@cli-mode
 for one host is ready in the other. Conversations and settings stay separate per host.
 
 **Upgrading?** A GitHub install stays on its tag; the [release notes](RELEASE_NOTES.md#upgrading-from-an-earlier-03-release)
-show how to move it to 0.3.4 and keep your settings.
+show how to move it to 0.3.5 and keep your settings.
 
-Release **0.3.4** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
+Release **0.3.5** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
 
 ## Get started
 
@@ -166,6 +166,22 @@ Grok ART saved 3 files in Agent_Working_Folder/ART/: marble/face-1.svg new · ma
 The folder is kept out of git (it holds its own `.gitignore`), so drafts never reach your history; copy what
 you keep into the project. It is reported in folders outside git too. `/cli dir [name]` shows an agent's
 folder as a full path (to open or paste elsewhere) and as its path in the project, with its newest files.
+
+**Passing work between agents.** Every answer ends with a small box listing where the full answer is saved
+(`Agent_Working_Folder/<NAME>/answers/`) and the files the turn created, changed or mentioned. Copy it into
+another agent's `/d`, and that agent reads the exact answer and files itself:
+
+```text
+Codex RESEARCH answer: Agent_Working_Folder/RESEARCH/answers/003-compare-3d-engines.md
+Files: docs/engine-report.md
+```
+
+**Safety nets.** `/cli undo [name]` puts back the files an agent's last turn changed (only if none changed
+since). When two agents working at once edit the same file, the later answer warns you. After every turn that
+changes files, CLI-MODE runs your project's tests (found automatically: `npm test`, `python -m pytest`,
+`cargo test` or `go test ./...`) and the answer says whether they passed; `/cli test <command>` sets another,
+`/cli test off` turns them off. `/cli brief-add <text>` builds a short brief, `Agent_Working_Folder/BRIEF.md`, that every agent reads
+before its task; `/cli brief` shows it and `/cli brief clear` removes it.
 
 **Agents from earlier sessions.** An agent you didn't close keeps its conversation. In a new session in the
 same folder, `/cli attach` lists them and `/cli attach <name or number>` brings one here; its next `/d`

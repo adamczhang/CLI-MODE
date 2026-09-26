@@ -28,12 +28,15 @@ SECTIONS = (
         ('/cli dir [name]', 'where files go'),
         ('/cli queue', 'queued requests'),
         ('/cli cancel [name]', 'stop its turn'),
+        ('/cli undo [name]', 'undo last turn'),
     )),
     ('SETTINGS', (
         ('/cli menu [name]', 'model, effort...'),
         ('/cli timeout ...', 'idle time (1 h)'),
         ('/cli view on|off', 'live window'),
         ('/cli progress ...', 'activity/quiet'),
+        ('/cli test <cmd>', 'auto-run tests'),
+        ('/cli brief ...', 'shared brief'),
     )),
 )
 CLAUDE_SETTINGS = (
