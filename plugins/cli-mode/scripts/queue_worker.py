@@ -674,6 +674,42 @@ class QueueMixin:
                 reply = '\n'.join(lines)
         return dict(message=reply, text=reply)
 
+    NO_USAGE = 'Usage reporting not supported through its CLI'
+
+    def usage_report(self, session=None):
+        """`/cli usage [name]`: each running agent's plan usage, from its own CLI, or that it can't report it.
+
+        Every agent is asked at once (Claude's local /usage alone takes seconds). Nothing is sent to an agent's
+        model: each helper reads what its CLI or account already knows.
+        """
+        import confirmation
+        from concurrent.futures import ThreadPoolExecutor
+        from state import live_agents
+        state = self.store.read()
+        sessions = [session] if session else list(live_agents(state).values())
+        entries = [entry for entry in (agent_entry(state, item) for item in sessions) if entry]
+        if not entries:
+            text = 'No agent is running. /cli starts one; /cli usage then shows what each has used.'
+            return dict(message=text, text=text)
+
+        def ask(entry):
+            return confirmation.lookup(entry.get('backend'), entry.get('settings') or {},
+                                       entry.get('workspace') or self.store.workspace, entry.get('providerSession'))
+        with ThreadPoolExecutor(max_workers=len(entries)) as pool:
+            summaries = list(pool.map(ask, entries))
+        lines = []
+        for entry, summary in zip(entries, summaries):
+            label = agent_label(state, entry['name'])
+            rows = confirmation.window_rows(summary)
+            if rows:
+                lines += [label + ':'] + ['  ' + row for row in rows]
+            elif isinstance(summary.get('reason'), str) and summary['reason']:
+                lines += [label + ':', '  can\'t report its usage: ' + summary['reason']]  # Its lookup failed.
+            else:
+                lines += [label + ':', '  ' + self.NO_USAGE]  # No way to ask its CLI (Grok, Cursor).
+        text = '\n'.join(lines)
+        return dict(message=text, text=text)
+
     def agent_dir(self, session=None):
         """`/cli dir [name]`: where an agent saves its files, as a full path and as the path in the project."""
         state = self.store.read()

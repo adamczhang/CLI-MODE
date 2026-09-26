@@ -648,7 +648,10 @@ def cli_route(verb, choice, state):
     if verb == 'brief-add':
         return ({'route': 'brief', 'action': 'add', 'text': choice} if choice else
                 {'route': 'hint', 'text': 'Use /cli brief-add <text>: one point every agent reads before its task.'})
-    if verb in ('diff', 'dir', 'undo'):
+    if verb == 'usage' and not state['active']:
+        return {'route': 'hint', 'text': 'No agent is running. /cli starts one; /cli usage then shows what each has '
+                'used.'}
+    if verb in ('diff', 'dir', 'undo', 'usage'):
         if not choice:
             return {'route': verb}
         session, name = target_of(choice, state, every=True) if len(choice.split()) == 1 else (None, None)

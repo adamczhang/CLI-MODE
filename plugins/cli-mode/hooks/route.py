@@ -393,6 +393,11 @@ def codex_output(event, store, state, decision, worker, cancellation):
         instruction = ('Run ' + run('dir' + named) + ' and reply with its `text` exactly as given, as plain lines in a '
                        'code block: where the agent saves its files, as a full path and as the path in the project. '
                        'It reads local files only; nothing is sent to any agent.')
+    elif kind == 'usage':
+        instruction = ('Run ' + run('usage' + named) + ' and reply with its `text` exactly as given, as plain lines in '
+                       'a code block: each running agent\'s plan usage from its own CLI, or that it can\'t report it. '
+                       'It reads usage only; no model request is made. It can take up to a minute: give it a timeout '
+                       'of at least 150 seconds and wait rather than polling.')
     elif kind == 'agents':
         instruction = ('Run ' + run('agents' + (' --max ' + str(decision['max']) if decision.get('max') else '')) +
                        ' and reply with its `message` exactly as given, as plain lines in a code block. It reads local '
@@ -547,7 +552,8 @@ def context(kind, state, instruction, core, relay_rules, menu_rules, setup_rules
         rules, fields = help_rules, MENU_STATE
     elif relaying:
         rules, fields = relay_rules, RELAY_STATE
-    elif kind in ('hint', 'off', 'close', 'use', 'agents', 'diff', 'dir', 'undo', 'test', 'brief', 'timeout', 'attach'):
+    elif kind in ('hint', 'off', 'close', 'use', 'agents', 'diff', 'dir', 'usage', 'undo', 'test', 'brief', 'timeout',
+                  'attach'):
         rules, fields = '', RELAY_STATE
     else:
         rules, fields = menu_rules, MENU_STATE
