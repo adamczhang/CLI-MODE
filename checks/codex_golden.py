@@ -319,7 +319,7 @@ def several_agents(s):
 
 
 def agent_tools(s):
-    """One prompt to two agents, a tag as a target, timeouts, a diff without a receipt, and attach."""
+    """One prompt to two agents, a tag as a target, timeouts, a diff without a receipt, dir, and attach."""
     s.activate()
     c = s.control
     first = s.store.read()['owned'][0]['alias']
@@ -330,7 +330,8 @@ def agent_tools(s):
     return turns(s, '/d elon,' + first.lower() + ' review the parser', '/d elon, please check it',
                  '/d agy fix it', '/d hi, can you check', '/d elon,nobody check',
                  '/cli timeout', ('timeout', c.timeout), '/cli timeout 90m', '/cli timeout elon 2h',
-                 '/cli timeout 1', '/cli diff', ('diff', c.diff), '/cli diff elon', '/cli attach',
+                 '/cli timeout 1', '/cli diff', ('diff', c.diff), '/cli diff elon', '/cli dir',
+                 ('dir', c.agent_dir), '/cli dir elon', '/cli attach',
                  ('attach', c.attach), '/cli attach 3')
 
 

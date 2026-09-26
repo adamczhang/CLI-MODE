@@ -326,6 +326,10 @@ def codex_output(event, store, state, decision, worker, cancellation):
         instruction = ('Run ' + run('diff' + named) + ' and reply with its `text` exactly as given: a line saying what '
                        'the agent\'s last turn changed, then the diff as a fenced diff block. It reads local files '
                        'only; nothing is sent to any agent.')
+    elif kind == 'dir':
+        instruction = ('Run ' + run('dir' + named) + ' and reply with its `text` exactly as given, as plain lines in a '
+                       'code block: where the agent saves its files, as a full path and as the path in the project. '
+                       'It reads local files only; nothing is sent to any agent.')
     elif kind == 'agents':
         instruction = ('Run ' + run('agents' + (' --max ' + str(decision['max']) if decision.get('max') else '')) +
                        ' and reply with its `message` exactly as given, as plain lines in a code block. It reads local '
@@ -480,7 +484,7 @@ def context(kind, state, instruction, core, relay_rules, menu_rules, setup_rules
         rules, fields = help_rules, MENU_STATE
     elif relaying:
         rules, fields = relay_rules, RELAY_STATE
-    elif kind in ('hint', 'off', 'close', 'use', 'agents', 'diff', 'timeout', 'attach'):
+    elif kind in ('hint', 'off', 'close', 'use', 'agents', 'diff', 'dir', 'timeout', 'attach'):
         rules, fields = '', RELAY_STATE
     else:
         rules, fields = menu_rules, MENU_STATE

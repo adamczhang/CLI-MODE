@@ -94,7 +94,7 @@ ARGUMENT = re.compile(r'[A-Za-z0-9_.:-]+')
 ALLOWED = frozenset((
     'relay', 'follow', 'queue', 'status', 'bind', 'activate', 'choose', 'navigate', 'settings', 'progress', 'view', 'tune',
     'activation-message', 'frontend', 'options', 'first-time-check', 'setup-status', 'setup-manual', 'setup-start',
-    'off', 'close', 'use', 'agents', 'diff', 'timeout', 'attach', 'cancel', 'resume', 'refresh', 'commands',
+    'off', 'close', 'use', 'agents', 'diff', 'dir', 'timeout', 'attach', 'cancel', 'resume', 'refresh', 'commands',
     'catalog'))
 RESET = ('/cli reset', '$cli reset', '/cli-mode:cli reset')
 MAX_NUDGES = 3
@@ -738,8 +738,8 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
         return instant(event, root, 'use', *named(decision))
     if kind == 'agents':
         return instant(event, root, 'agents', *(['--max', str(decision['max'])] if decision.get('max') else []))
-    if kind == 'diff':
-        return instant(event, root, 'diff', *named(decision), render=lambda result: result['text'])
+    if kind in ('diff', 'dir'):
+        return instant(event, root, kind, *named(decision), render=lambda result: result['text'])
     if kind == 'timeout':
         return instant(event, root, 'timeout', *named(decision),
                        *(['--minutes', str(decision['minutes'])] if decision.get('minutes') else []))

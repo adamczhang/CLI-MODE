@@ -170,6 +170,43 @@ class Turns(unittest.TestCase):
         self.assertEqual(record['changes']['files'], 0)  # Not "marble/face-1.svg removed".
         self.assertTrue((self.project / 'Agent_Working_Folder' / '.gitignore').exists())
 
+    def test_dir_gives_the_full_path_and_the_path_in_the_project(self):
+        text = self.control.agent_dir()['text'].splitlines()
+        self.assertEqual(text[0], self.label + ' saves its files in:')
+        self.assertEqual(text[1], str(self.project / 'Agent_Working_Folder' / self.name))
+        self.assertEqual(text[2], 'In this project: ' + self.folder + '/')
+        self.assertEqual(text[3], 'Nothing saved yet; the folder is made with its next task.')
+        self.backend.work = self.saving_art
+        self.turn()
+        listed = self.control.agent_dir()['text'].splitlines()[3]
+        self.assertTrue(listed.startswith('2 files, newest first: '))
+        self.assertEqual(set(listed.split(': ')[1].split(', ')), {'marble/face-1.svg', 'notes.md'})
+
+    def test_dir_names_an_agent_by_name_tag_or_short_form(self):
+        from state import route
+        state = self.store.read()
+        short = '-' + self.name.split('-')[1]
+        for word in (self.name.lower(), short, 'agy'):
+            self.assertEqual(route('/cli dir ' + word, state), {'route': 'dir', 'session': state['owned'][0]['name'],
+                                                                'name': self.name})
+        self.assertEqual(route('/cli dir', state), {'route': 'dir'})
+        self.assertEqual(route('/cli dir nobody', state)['route'], 'hint')
+
+    def test_claude_code_answers_dir_at_once(self):
+        import importlib.util
+        import os
+        from test_claude_hook import HOOK
+        spec = importlib.util.spec_from_file_location('claude_hook_dir', HOOK)
+        claude = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(claude)
+        self.addCleanup(host.select, host.CODEX)
+        event = dict(session_id=self.store.thread, cwd=str(self.project), hook_event_name='UserPromptSubmit',
+                     prompt='/cli dir')
+        with patch.dict(os.environ, {'CLAUDE_PROJECT_DIR': str(self.project), 'CLI_MODE_CLAUDE_INSTANT': 'block'}):
+            reply = claude.handle(event, self.store.root)
+        self.assertEqual(reply.get('decision'), 'block')  # Shown at once: no Claude turn.
+        self.assertIn(str(self.project / 'Agent_Working_Folder' / self.name), reply['reason'])
+
     def test_codex_shows_saved_files_in_the_final_view(self):
         self.backend.work = self.saving_art
         request = self.turn()

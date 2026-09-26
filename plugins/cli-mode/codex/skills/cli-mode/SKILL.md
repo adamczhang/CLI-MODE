@@ -40,6 +40,7 @@ ordinary text.
 | `/cli close\|stop\|off [name\|all]` | Close one agent (its turn, queue and session; the others keep working), or all of them, which gates routing. With several agents and no name, a chooser asks which. |
 | `/d [names] <task>`, `$d [names] <task>` | Send this task to the current agent, or to the agents named first, commas between (`gro-4k,elon`); each named agent gets its own request. |
 | `/cli diff [name]` | The full diff of an agent's last turn (the answer ends with its change receipt). |
+| `/cli dir [name]` | Where an agent saves its files: the full path of `Agent_Working_Folder/<NAME>/` and its path in the project. |
 | `/cli timeout [name] <time>` | How long an idle agent keeps running (1 hour by default; 5 minutes to 24 hours). |
 | `/cli attach [name\|number]` | List, or bring here, an open agent from an earlier task in this folder. |
 | `/help` (Codex), `/cli help` (Claude Code) | The help card: the same framed menu as the others. `X` closes only help. |

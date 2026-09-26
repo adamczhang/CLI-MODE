@@ -28,7 +28,7 @@ RESERVED = frozenset((
     'all', 'off', 'on', 'use', 'ultra', 'close', 'stop', 'spawn', 'bind', 'menu', 'settings', 'model', 'effort',
     'access', 'permissions', 'cancel', 'queue', 'resume', 'agents', 'list', 'help', 'commands', 'max', 'view',
     'progress', 'display', 'color', 'colour', 'shortcuts', 'reset', 'mode', 'home', 'x', 'diff', 'timeout',
-    'attach'))
+    'attach', 'dir'))
 
 
 def generate(backend, seed, used=()):

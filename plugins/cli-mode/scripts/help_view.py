@@ -13,6 +13,7 @@ COMMANDS = (
     ('/cli list|agents', 'List the running agents. /cli agents max <n> sets how many can run (4).'),
     ('/cli use <name>', 'Make an agent the current one.'),
     ('/cli diff [name]', 'Show what an agent\'s last turn changed, as a diff.'),
+    ('/cli dir [name]', 'Where an agent saves its files: the full folder path and its path in the project.'),
     ('/cli timeout [name] <time>', 'How long an idle agent keeps running (1 hour by default), e.g. 90m or 2h.'),
     ('/cli attach [name]', 'Bring an open agent from an earlier session in this folder here.'),
     ('/cli menu|settings [name]', 'Agent Settings: model, effort, access and progress.'),

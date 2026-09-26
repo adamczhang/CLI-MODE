@@ -164,7 +164,8 @@ Grok ART saved 3 files in Agent_Working_Folder/ART/: marble/face-1.svg new · ma
 ```
 
 The folder is kept out of git (it holds its own `.gitignore`), so drafts never reach your history; copy what
-you keep into the project. It is reported in folders outside git too.
+you keep into the project. It is reported in folders outside git too. `/cli dir [name]` shows an agent's
+folder as a full path (to open or paste elsewhere) and as its path in the project, with its newest files.
 
 **Agents from earlier sessions.** An agent you didn't close keeps its conversation. In a new session in the
 same folder, `/cli attach` lists them and `/cli attach <name or number>` brings one here; its next `/d`

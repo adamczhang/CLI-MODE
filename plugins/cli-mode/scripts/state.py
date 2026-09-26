@@ -564,11 +564,11 @@ def cli_route(verb, choice, state):
         if len(choice.split()) > 1:
             return {'route': 'hint', 'text': 'Use /cli attach, or /cli attach <name or number>.'}
         return dict({'route': 'attach'}, **({'target': choice} if choice else {}))
-    if verb == 'diff':
+    if verb in ('diff', 'dir'):
         if not choice:
-            return {'route': 'diff'}
+            return {'route': verb}
         session, name = target_of(choice, state, every=True) if len(choice.split()) == 1 else (None, None)
-        return {'route': 'diff', 'session': session, 'name': name} if session else name or no_agent(choice)
+        return {'route': verb, 'session': session, 'name': name} if session else name or no_agent(choice)
     if verb == 'use':
         session, name = target_of(choice, state) if len(choice.split()) == 1 else (None, None)
         if session:

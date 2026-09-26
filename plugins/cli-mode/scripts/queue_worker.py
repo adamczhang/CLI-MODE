@@ -559,6 +559,31 @@ class QueueMixin:
         say(end)
         return dict(requestId=request_id, status=status, done=True)
 
+    def agent_dir(self, session=None):
+        """`/cli dir [name]`: where an agent saves its files, as a full path and as the path in the project."""
+        state = self.store.read()
+        session = session or state.get('main')
+        entry = agent_entry(state, session) if session else None
+        if not entry or not entry.get('alias'):
+            text = 'No agent is running. /cli starts one; each agent saves its files in its own folder.'
+            return dict(message=text, text=text)
+        label = agent_label(state, session)
+        folder = agent_folder.path(entry.get('workspace') or self.store.workspace, entry['alias'])
+        lines = [label + ' saves its files in:', str(folder),
+                 'In this project: ' + agent_folder.relative(entry['alias']) + '/']
+        listing = agent_folder.listing(folder)
+        files = sorted((listing or {}).get('files', {}).items(), key=lambda item: item[1][1], reverse=True)
+        if not files:
+            lines.append('Nothing saved yet.' if folder.is_dir() else
+                         'Nothing saved yet; the folder is made with its next task.')
+        else:
+            more = listing.get('truncated')
+            lines.append(('More than ' if more else '') + str(len(files)) + (' file' if len(files) == 1 else ' files') +
+                         ', newest first: ' + ', '.join(path for path, _ in files[:5]) +
+                         (', ...' if len(files) > 5 else ''))
+        text = '\n'.join(lines)
+        return dict(message=text, text=text, path=str(folder), relative=agent_folder.relative(entry['alias']))
+
     def diff(self, session=None):
         """`/cli diff [name]`: what an agent's last turn changed in its folder, as a diff block."""
         state = self.store.read()
