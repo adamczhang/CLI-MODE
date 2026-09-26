@@ -123,6 +123,61 @@ def instruction(name, brief=False):
             'in your answer.')
 
 
+ATTACHMENTS = 'attachments'
+ATTACHMENT_LIMIT = 250 * 1024 * 1024  # Bytes per attached file; a larger one is left out and named in the reply.
+UPLOAD_ID = re.compile(r'^[0-9a-f]{8}-(?=.)')  # Claude Code's upload prefix: `878dde39-image.jpg`.
+
+
+def attach(workspace, name, files):
+    """Copy the files attached to a /d into `Agent_Working_Folder/<NAME>/attachments/`: (copied, skipped).
+
+    `copied` holds their paths relative to the project, the way the task names them. The host keeps its own copy
+    only for a while (Codex's clipboard images are temp files), so the agent gets one it can open whenever it
+    runs. A name already taken gets `-2`, `-3`...; `skipped` holds files that are missing or too large.
+    """
+    import shutil
+    folder = ensure(workspace, name)
+    copied, skipped = [], []
+    if folder is None:
+        return copied, [str(item) for item in files]
+    target = folder / ATTACHMENTS
+    for item in files:
+        source = Path(item)
+        try:
+            if not source.is_file() or source.stat().st_size > ATTACHMENT_LIMIT:
+                skipped.append(source.name)
+                continue
+            target.mkdir(exist_ok=True)
+            base = UPLOAD_ID.sub('', source.name)
+            stem, suffix = os.path.splitext(base)
+            destination, number = target / base, 1
+            while destination.exists():
+                number += 1
+                destination = target / ('%s-%d%s' % (stem, number, suffix))
+            shutil.copyfile(source, destination)
+            copied.append(destination.relative_to(workspace).as_posix())
+        except OSError:
+            skipped.append(source.name)
+    return copied, skipped
+
+
+def attachments_note(paths):
+    """The paragraph naming a task's attached files, added after the working-folder line."""
+    if not paths:
+        return ''
+    return ('\nThe user attached ' + ('this file' if len(paths) == 1 else 'these files') + ' to the task (copies in '
+            'your working folder): ' + ', '.join('`' + path + '`' for path in paths) + '. Open ' +
+            ('it' if len(paths) == 1 else 'them') + ' as needed.')
+
+
+def clear_attachments(workspace, name):
+    """Remove an agent's attached-file copies when it closes; its own files and saved answers stay."""
+    import shutil
+    folder = path(workspace, name)
+    if folder is not None:
+        shutil.rmtree(folder / ATTACHMENTS, ignore_errors=True)
+
+
 def listing(folder):
     """{relative path: (size, modified)} for the files under `folder`, or None when it can't be read.
 
@@ -152,11 +207,13 @@ def listing(folder):
 def compare(name, before, after):
     """What a turn saved in the agent's folder, or None when nothing changed (or it couldn't be read).
 
-    The agent's saved answers (ANSWERS/) are CLI-MODE's own copies, shown in the reference box instead.
+    The agent's saved answers (ANSWERS/) are CLI-MODE's own copies, shown in the reference box instead, and its
+    attached files (ATTACHMENTS/) are the user's.
     """
     if before is None or after is None:
         return None
-    old, new = ({path: value for path, value in listed['files'].items() if not path.startswith(ANSWERS + '/')}
+    own = (ANSWERS + '/', ATTACHMENTS + '/')
+    old, new = ({path: value for path, value in listed['files'].items() if not path.startswith(own)}
                 for listed in (before, after))
     if before['truncated'] or after['truncated']:
         # Past LIMIT a listing is cut off, so a file beyond the cut would read as removed: say only that it changed.

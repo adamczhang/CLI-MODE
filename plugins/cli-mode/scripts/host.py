@@ -100,6 +100,33 @@ def unwrap_prompt(text, value=None):
     return '\n'.join(kept)
 
 
+# Claude Code's desktop app puts each attached file before the typed text, as a mention: @"C:\...\uploads\...".
+MENTION = re.compile(r'\s*@(?:"([^"\r\n]+)"|(\S+))')
+# Codex's desktop app lists attached files (pasted images too) above the typed text, under two headings.
+CODEX_FILES = re.compile(r'\s*# Files mentioned by the user:[ \t]*\r?\n(?P<files>.*?)\r?\n## My request:[ \t]*\r?\n'
+                         r'(?P<request>.*)\Z', re.S)
+CODEX_FILE = re.compile(r'^## .*?: (?P<path>(?:[A-Za-z]:[\\/]|/)[^\r\n]*?)[ \t]*\r?$', re.M)
+
+
+def split_attachments(text):
+    """(typed text, [attached file paths]): the files a desktop app attached to a prompt, taken off its text.
+
+    Claude Code sends each attached file first, as an `@"path"` mention (an image is not in the text at all; the
+    Claude hook finds it in the uploads folder). Codex sends a "# Files mentioned by the user:" list, then
+    "## My request:" and the typed text, whose leading space it writes as `&#x20;`. Text with neither comes back
+    unchanged, with no files.
+    """
+    match = CODEX_FILES.match(text)
+    if match:
+        files = [found['path'] for found in CODEX_FILE.finditer(match['files'])]
+        return re.sub(r'^&#(?:x20|32);', ' ', match['request']), files
+    files, position = [], 0
+    while (found := MENTION.match(text, position)) and os.path.isfile(found[1] or found[2]):
+        files.append(found[1] or found[2])
+        position = found.end()
+    return (text[position:].lstrip(), files) if files else (text, [])
+
+
 def home(value=None):
     """The host's own configuration folder."""
     if claude(value):

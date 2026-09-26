@@ -408,6 +408,10 @@ class AcpxBackend:
         s = owned['settings']
         flags = ['--approve-all'] if s['access'] == 'allow' else [
             '--approve-reads', '--non-interactive-permissions', 'fail']
+        if owned.get('permissionPolicy') and '--file' in args:
+            # What /cli approve allowed, as the bridge sends it (acpx-runtime.mjs): approve-all under the rule.
+            flags = ['--approve-all', '--non-interactive-permissions', 'fail',
+                     '--permission-policy', json.dumps(owned['permissionPolicy'])]
         return self.cli(owned) + ['--cwd', owned['workspace'], '--auth-policy', 'skip',
                 '--ttl', str(self.ttl(owned)), '--timeout', str(timeout), '--format', 'json'] + flags + [
                 owned.get('acpxProfile', self.profile)] + args
@@ -458,7 +462,8 @@ class AcpxBackend:
                     cancelFile=owned.get('cancelFile'), ttl=self.ttl(owned),
                     progressMode=owned.get('progressMode', DEFAULT_PROGRESS_MODE),
                     expectedSession=owned.get('providerSession'),
-                    configCache=owned.get('configCache'))
+                    configCache=owned.get('configCache'),
+                    **({'permissionPolicy': owned['permissionPolicy']} if owned.get('permissionPolicy') else {}))
 
     def collect(self, process, timeout=75):
         try:

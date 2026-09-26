@@ -1,33 +1,34 @@
-# CLI-MODE v0.3.5 — Passing work between agents
+# CLI-MODE v0.3.6 — Approvals in the chat, attachments on /d
 
 CLI-MODE drives six coding agents (Antigravity, Claude Code, Grok Build, Cursor,
 GitHub Copilot and Codex CLI) from inside **Claude Code** or **Codex**, over ACPX.
 
-**A copy box under every answer.** Each agent's full answer is also saved in its
-working folder, and the answer ends with a small box listing that file and the
-files the turn created, changed or mentioned. Copy it into another agent's `/d`
-and that agent reads the exact answer and files itself:
+**Approve an agent's requests from the chat.** At Prompt or Auto-edit access, an
+agent that needs a permission its level does not grant stops and asks you:
 
 ```text
-Codex RESEARCH answer: Agent_Working_Folder/RESEARCH/answers/003-compare-3d-engines.md
-Files: docs/engine-report.md
+Grok GRO-4K asks to run commands: npm install
+Its turn stopped for your answer (Prompt access). /cli approve lets it run commands and carry on,
+/cli approve always lets it run commands from now on, /cli deny tells it no.
 ```
 
-**Safety nets for several agents in one project:**
+- **`/cli approve [name]`** sends the agent on with that kind of request
+  (editing files, running commands, deleting, moving, fetching) allowed for that
+  turn. Anything else it asks for stops the turn and asks again.
+- **`/cli approve [name] always`** keeps that kind allowed while the agent runs.
+- **`/cli deny [name]`** tells the agent no; it carries on without it.
 
-- **`/cli undo [name]`** puts back the files an agent's last turn changed, only
-  if none of them changed since.
-- **Same-file warning:** when two agents working at once edit the same file,
-  the later answer says so.
-- **Tests after every coding turn, on by default:** CLI-MODE finds your
-  project's test command (`npm test`, `python -m pytest`, `cargo test`,
-  `go test ./...`) and each answer that changed files says whether they passed.
-  `/cli test <command>` sets another, `/cli test off` turns them off.
-- **A shared brief:** `/cli brief-add <text>` adds a point every agent reads
-  before its task; `/cli brief` shows it, `/cli brief clear` removes it.
+Before this release those levels simply ended the turn with "approval requests
+stop the turn". Allow access, every agent's default, is unchanged.
 
-Also: `/cli dir` counts saved answers apart from an agent's own files, and an
-unknown word after `/cli` is named instead of a suggestion to activate.
+**Files and images attached to a `/d` reach the agent.** In the Claude Code and
+Codex desktop apps, files and pasted images attached to a `/d` are copied into
+each named agent's folder, `Agent_Working_Folder/<NAME>/attachments/`, and named
+in its task. A `/d` with a file attached is no longer mistaken for a message to
+your host. `/cli dir` lists an agent's attachments; they are removed when the
+agent closes, while its own files and saved answers stay.
+
+Also: the README's host table now lists CLI-MODE's features by what they do.
 
 ## Install
 
@@ -36,11 +37,11 @@ Pick your host and run its block in PowerShell.
 **Codex** (runs in the Codex desktop app):
 
 ```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.5
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.6
 codex plugin add cli-mode@cli-mode
 ```
 
-**Claude Code** (2.1.147 or later): download `cli-mode-claude-0.3.5.zip` from this
+**Claude Code** (2.1.147 or later): download `cli-mode-claude-0.3.6.zip` from this
 release, extract it, and run:
 
 ```powershell
@@ -50,7 +51,7 @@ release, extract it, and run:
 Or install it straight from GitHub, then run `/cli-mode:cli shortcuts` once:
 
 ```powershell
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.5 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.6 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
@@ -66,7 +67,7 @@ it to the new tag instead; your saved CLI-MODE settings are kept.
 
 ```powershell
 codex plugin marketplace remove cli-mode
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.5
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.6
 codex plugin add cli-mode@cli-mode
 ```
 
@@ -83,15 +84,16 @@ the marketplace otherwise deletes CLI-MODE's saved data:
 ```powershell
 claude plugin uninstall cli-mode@cli-mode --keep-data
 claude plugin marketplace remove cli-mode
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.5 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.6 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
 ## Validation and artifacts
 
-The [v0.3.5 validation report](checks/v0.3.5-validation.md) records this
-release's checks: the full offline suite, both install smokes, and a live run on
-Claude Code of the copy box with Grok Build and Codex CLI agents.
+The [v0.3.6 validation report](checks/v0.3.6-validation.md) records this
+release's checks: the full offline suite (approvals through a real ACPX with a
+test agent), both install smokes, and a live run of a Grok Build agent at Prompt
+access that asked, was approved and finished, then read an attached file.
 
 Both archives and their SHA256 checksums are attached to the GitHub Release:
-`cli-mode-codex-0.3.5.zip` (Codex) and `cli-mode-claude-0.3.5.zip` (Claude Code).
+`cli-mode-codex-0.3.6.zip` (Codex) and `cli-mode-claude-0.3.6.zip` (Claude Code).

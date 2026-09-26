@@ -1,6 +1,6 @@
 # CLI-MODE — working notes for Claude
 
-> **Written for CLI-MODE 0.3.5** (tag `v0.3.5`, 2026-09-26).
+> **Written for CLI-MODE 0.3.6** (tag `v0.3.6`, 2026-09-26).
 > If `plugins/cli-mode/.codex-plugin/plugin.json` shows a different version, parts of this file may be
 > out of date. Verify any file, function or rule named here against the code before relying on it; when
 > they disagree, the code wins. Fix this file in the same change. `checks/test_agent_docs.py` fails
@@ -32,6 +32,13 @@ lands in one of three zones below; know which before editing.
   meanwhile are flagged (`overlaps`); `/cli undo` puts a turn back from its snapshots (`changes.undo`), and
   the project brief (`/cli brief`, a BRIEF file in the working folder's root) is named in every task. Each owned entry's `timeout` (minutes) is its ACPX owner TTL
   (`acpx.AcpxBackend.ttl`); `/cli attach` moves an open owned entry from another conversation in the folder.
+- Approvals are stop, ask, continue (ACPX shared sessions can't hold a request open): the bridge reports the
+  agent's ACP permission request, `dispatch.remember_approval` keeps it on the owned entry as `approval`,
+  `state.approval_route` turns `/cli approve|deny` into the agent's next /d, and `dispatch.approval_policy` sends
+  the approved kinds as a per-prompt ACPX `permissionPolicy` (approve-all mode, anything else escalates and the
+  bridge stops the turn). Attachments: `host.split_attachments` takes `@"path"` (Claude) or Codex's "Files
+  mentioned" list off a /d, `hooks/claude.py:with_images` finds pasted images in Claude's uploads folder, and
+  `route.attach_files` copies them into `Agent_Working_Folder/<NAME>/attachments/` (removed on close).
 - `hooks/route.py`: `decide()` and `task_through_settings()` (shared), `codex_output()` and
   `activation_reply()` (Codex only).
 - Menus, text and labels: `frontends.py`, `presentation.py` (`menu_block`, `menu_frame`, `options_menu`,

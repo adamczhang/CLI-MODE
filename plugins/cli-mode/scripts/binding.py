@@ -4,6 +4,7 @@ import os
 import time
 import uuid
 
+import agent_folder
 import frontends
 import installer
 import names
@@ -116,6 +117,8 @@ class BindingMixin:
                 if (record['session'] == owned['name'] and record['status'] in ('submitting', 'uncertain')
                         and not any(op.get('requestId') == request_id for op in state['inflight'].values())):
                     record['status'] = 'canceled'
+        # Its attached-file copies go with it (agent_folder.attach); its own files and saved answers stay.
+        agent_folder.clear_attachments(owned.get('workspace') or self.store.workspace, owned.get('alias'))
         return None
 
     def off(self):

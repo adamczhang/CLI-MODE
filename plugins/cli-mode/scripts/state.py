@@ -511,6 +511,48 @@ def bind_route(choice, state):
     return {'route': 'hint', 'text': error} if error else {'route': 'bind', 'agent': agent, 'name': given[1].upper()}
 
 
+def approval_route(verb, choice, state):
+    """`/cli approve [name] [always]` or `/cli deny [name]`: the answer to a stopped turn's permission question.
+
+    The answer becomes the agent's next /d, a short note that goes on with the task: ACPX can't hold a request
+    open, so the turn stopped (dispatch.remember_approval), and an approval is a rule sent with the next prompt
+    (dispatch.approval_policy). Without a name it answers the only agent waiting for one.
+    """
+    import presentation
+    if not state['active']:
+        return {'route': 'hint', 'text': inactive_hint()}
+    words = choice.split()
+    always = verb == 'approve' and bool(words) and words[-1].casefold() == 'always'
+    words = words[:-1] if always else words
+    if len(words) > 1:
+        return {'route': 'hint', 'text': 'Use /cli approve [name] [always] or /cli deny [name].'}
+    waiting = {alias: session for alias, session in live_agents(state).items()
+               if (agent_entry(state, session) or {}).get('approval')}
+    if words:
+        session, name = target_of(words[0], state)
+        if not session:
+            return name or no_agent(words[0])
+        if session not in waiting.values():
+            return {'route': 'hint', 'text': agent_label(state, session) + ' is not waiting for an approval.'}
+    elif len(waiting) == 1:
+        name, session = next(iter(waiting.items()))
+    elif waiting:
+        return {'route': 'hint', 'text': ' and '.join(agent_label(state, session) for session in waiting.values()) +
+                ' are waiting for an answer: add a name, for example /cli ' + verb + ' ' + next(iter(waiting)) + '.'}
+    else:
+        return {'route': 'hint', 'text': 'No agent is waiting for an approval.'}
+    asked = agent_entry(state, session)['approval']
+    words, what = presentation.approval_words(asked), ' '.join((asked.get('detail') or asked.get('title') or '').split())
+    if verb == 'approve':
+        note = ('Approved: you may ' + words + (' (' + what + ')' if what else '') + (' from now on' if always else '') +
+                '. Do the step you asked about now, then carry on with the task.')
+    else:
+        note = ('Not approved: do not ' + words + (' (' + what + ')' if what else '') + '. Carry on with the task '
+                'without it, or say what you need instead.')
+    return {'route': 'direct', 'session': session, 'name': name,
+            'approval': dict(answer=verb, always=always, rule=presentation.approval_rule(asked), text='/d ' + note)}
+
+
 def cli_route(verb, choice, state):
     """One `/cli <verb> [choice]` control, with `verb` already folded and de-aliased."""
     if not verb:
@@ -533,6 +575,8 @@ def cli_route(verb, choice, state):
         found = bind_route(choice, state)
         if found:
             return found
+    if verb in ('approve', 'deny'):
+        return approval_route(verb, choice, state)
     if verb == 'close':
         if len(choice.split()) <= 1:
             return close_route(state, choice)

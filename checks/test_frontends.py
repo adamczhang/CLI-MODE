@@ -233,10 +233,10 @@ class Frontends(unittest.TestCase):
                 self.assertEqual('*Full access in codex is required*' in text, not access_ready)
                 self.assertEqual(rows[-3].strip('| '), 'X. Exit')
 
-    def test_access_levels_say_that_approval_requests_stop_the_turn(self):
+    def test_access_levels_say_that_you_approve_in_chat(self):
         import adapters
         import confirmation
-        note = '\u2014 approval requests stop the turn'
+        note = '\u2014 you approve in chat'
         for agent in adapters.implemented():
             with self.subTest(agent=agent):
                 data = adapters.module(agent).catalog(self.root) if hasattr(self, 'root') else None

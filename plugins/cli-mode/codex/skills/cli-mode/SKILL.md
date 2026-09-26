@@ -68,10 +68,12 @@ implicitly. `bind`, `choose` (on the final access choice) and `activate` return
 `activation.messageView` with its `reference` line on Codex, or `activation.text`
 on Claude Code: show it as the activation confirmation and never compose one yourself.
 
-Offer only access levels the transport can enforce, allow first. CLI-MODE cannot
-answer an agent's approval request, so every level except allow is labeled
-"approval requests stop the turn". A permission stop arrives as an error in the
-relayed update; post it as is. Never change access or resend the task yourself.
+Offer only access levels the transport can enforce, allow first. Every level
+except allow is labeled "you approve in chat": an agent that needs a permission
+stops, and its question (what it asked for, then `/cli approve`, `/cli approve
+always`, `/cli deny`) arrives as an error in the relayed update; post it as is.
+The user answers with those controls, which the hook turns into the agent's next
+request. Never answer for the user, change access or resend the task yourself.
 
 ## Routing
 
