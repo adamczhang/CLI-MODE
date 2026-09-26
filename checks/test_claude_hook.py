@@ -866,7 +866,9 @@ class Colour(ClaudeHook):
         rule = box[1][1:-1]
         band = ['+' + row[1:-1] + '+' for row in box[2:4]]  # "+ CLI-MODE ... +", "+ Help ... +": green.
         # Borders take ".", "|" and "'" corners: a "+" would colour them too.
-        self.assertIn('\n'.join(['```diff', '.' + rule + '.', *band, '|' + rule + '|', *box[5:-2],
+        headings = ['+' + row[1:-1] + '+' if row[2:-2].strip() in ('AGENTS', 'SEND WORK', 'RESULTS', 'SETTINGS')
+                    else row for row in box[5:-2]]  # The help card's section headings are green too.
+        self.assertIn('\n'.join(['```diff', '.' + rule + '.', *band, '|' + rule + '|', *headings,
                                  "'" + rule + "'", '```']), card)
         with patch.dict(os.environ, {'CLI_MODE_CLAUDE_INSTANT': 'block'}):
             notice = self.prompt('/cli help')['reason']  # A hook notice is plain text: no colour.

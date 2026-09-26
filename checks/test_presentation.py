@@ -46,7 +46,7 @@ class Presentation(unittest.TestCase):
                     self.assert_block(menu)
                     self.assertIn('Model: Gemini 3.1 Pro' if confirmed else 'New User Detected.', menu)
             self.assert_block(help_view.render(), exit='X. Close help')
-            for command in ('/cli bind|spawn <agent> [name]', '/cli progress <mode>', '/help'):
+            for command in ('/cli spawn <agent>', '/cli progress ...', '/help (this page)'):
                 self.assertIn(command, help_view.render())
 
     def test_headers_have_a_full_width_divider_before_body(self):

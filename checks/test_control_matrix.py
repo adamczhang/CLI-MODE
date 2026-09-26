@@ -237,14 +237,16 @@ class HelpText(unittest.TestCase):
             record = next(i for i in frontends.backends() if i['id'] == backend)
             self.assertIn(record['tag'] + ' (', self.help.text())  # Help names each agent by its tag.
         self.assertIn('/cli <agent>', commands)
-        self.assertIn('/cli bind|spawn <agent> [name]', commands)
+        self.assertIn('/cli spawn <agent>', commands)
 
     def test_help_lists_every_shared_control(self):
         commands = self.help.render()
-        for control in ('/cli', '/cli <agent>', '/cli bind|spawn <agent> [name]', '/d [names] <PROMPT>', '/cli diff [name]', '/cli timeout [name] <time>', '/cli attach [name]',
-                        '/cli list|agents', '/cli use <name>', '/cli menu|settings [name]', '/cli progress <mode>',
-                        '/cli queue', '/cli resume', '/cli cancel [name]', '/cli close|stop [name|all]', '/cli off',
-                        '/help'):
+        # The compact card names each control once, by its main command (aliases such as bind, agents, stop
+        # and off are left to the README).
+        for control in ('/cli ', '/cli <agent>', '/cli spawn <agent>', '/d <task>', '/d <name> <task>',
+                        '/d <a>,<b> <task>', '/cli diff [name]', '/cli dir [name]', '/cli timeout ...',
+                        '/cli attach', '/cli list', '/cli use <name>', '/cli menu [name]', '/cli progress ...',
+                        '/cli queue', '/cli resume', '/cli cancel [name]', '/cli close [name]', '/help'):
             self.assertIn(control, commands)
 
     def test_help_is_one_commands_table(self):

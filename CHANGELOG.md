@@ -8,6 +8,9 @@
 - The folder holds a `.gitignore` of `*`, so agent files stay out of git and out of the change receipt; the project's own `.gitignore` is untouched.
 - **`/cli dir [name]`** shows where an agent saves its files: the full folder path (to open or paste elsewhere), its path in the project, and its newest files. It takes a name, a tag or the short form (`-7K`); without one, the current agent.
 
+### Help (both hosts)
+- **A compact help card.** `/cli help` shows one short line per command, grouped under AGENTS, SEND WORK, RESULTS and SETTINGS (green headings), with the rarer commands and the placeholders (`<agent>`, `<name>`) at the end: about 45 lines instead of 95 on Claude Code, and nothing wraps in the 40-column card. The README still explains every command in full.
+
 ### Claude Code
 - **Agents that finish at the same time no longer lose an answer.** When several agents' turns ended together, Claude ran one relay per agent in a single turn and posted only the last one's answer. The wake-up now relays every agent that has finished but not been posted with one command, so their answers arrive together, oldest first. An agent that finishes during that turn gets its own relay, and each relay now asks for the turn's last message to carry every relay's output, so none is folded out of view or dropped.
 - A wake-up that carries several task notifications, Claude's own among them, still finds CLI-MODE's follow.

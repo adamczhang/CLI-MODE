@@ -198,7 +198,12 @@ def chat_menu(text, color=False):
         return text
     rule = lines[1][1:-1]
     band = ['+' + row[1:-1] + '+' for row in lines[2:4]]
-    return '\n'.join(['```diff', '.' + rule + '.', *band, '|' + rule + '|', *lines[5:-2], "'" + rule + "'", '```'])
+    # Section headings (the help card's AGENTS, SEND WORK...) are green too.
+    body = ['+' + row[1:-1] + '+' if SECTION.fullmatch(row[2:-2].strip()) else row for row in lines[5:-2]]
+    return '\n'.join(['```diff', '.' + rule + '.', *band, '|' + rule + '|', *body, "'" + rule + "'", '```'])
+
+
+SECTION = re.compile(r'[A-Z]{3,}(?: [A-Z]{2,})*')
 
 
 def menu_frame(text, width=MENU_WIDTH):

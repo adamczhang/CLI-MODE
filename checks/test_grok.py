@@ -58,7 +58,7 @@ class Controls(unittest.TestCase):
         import help_view
         commands = help_view.text()
         self.assertIn('gro (Grok Build)', commands)
-        self.assertIn('/cli bind|spawn <agent> [name]', commands)
+        self.assertIn('/cli spawn <agent>', commands)
 
 
 class Catalog(unittest.TestCase):
