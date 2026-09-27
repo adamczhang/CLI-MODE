@@ -481,8 +481,23 @@ class BindingMixin:
             # ACPX may need to replace an empty provider session on its first
             # prompt. Do this only before user work, then pin the resulting
             # provider identity for all controls and later turns.
-            self.control(owned, ['sessions', 'ensure', '--name', name], generation, pending)
-            self.readiness(dict(owned, bootstrapPrompt=True), generation, pending)
+            # Reserved, the session's record is written without starting the agent; the readiness prompt below
+            # starts it once and creates the session. `sessions ensure` would start it here as well.
+            reserve = getattr(self.backend, 'reserve_without_start', False)
+            self.control(owned, ['sessions', 'reserve' if reserve else 'ensure', '--name', name], generation, pending)
+            try:
+                self.readiness(dict(owned, bootstrapPrompt=True), generation, pending)
+            except RuntimeError as first:
+                if not reserve:
+                    raise
+                # Maybe an agent that no longer turns the reserved record into a session: once more the classic
+                # way, which starts the agent to create it. If that fails too, the first failure is reported.
+                try:
+                    self.backend.close(owned)
+                    self.control(owned, ['sessions', 'ensure', '--name', name], generation, pending)
+                    self.readiness(dict(owned, bootstrapPrompt=True), generation, pending)
+                except RuntimeError:
+                    raise first
             answered = True
             initial = self.backend.metadata(owned)
             owned['providerSession'] = self.adapter.provider_identity(initial)

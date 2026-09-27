@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+Found while recording a demo of 0.3.9 in Claude Code's terminal.
+
+### Starting an agent (both hosts)
+- **Each new agent's CLI starts once, not twice.** ACPX's `sessions ensure` started the agent only to create its session and then stopped it, and the readiness prompt's owner started it again. CLI-MODE now writes the new session's record through its bridge (with ACPX 0.18.0's own record functions) and the readiness prompt's owner starts the agent once and creates the session there. Antigravity, whose server unpacks itself on every start, now starts in about 30 s instead of about 55 s. If that first prompt fails, the agent is started the old way once.
+
+### Relays (Claude Code)
+- **A canceled turn is shown at once.** Its relay carried the follow-up queued after it, first, and waited for it: `/cli cancel` stopped the turn in 2 s but "Turn canceled." appeared 6 minutes later, when the follow-up finished. A relay now carries only requests sent before it.
+
+### /cli usage (both hosts)
+- **Antigravity and Claude report their usage again.** `/cli usage` passes each helper the agent's conversation, which their helpers refused, so they said "its usage helper failed" while the activation card read the same usage fine.
+
+### Menus
+- **The activation card's help field reads Help: `/cli help`** in Claude Code (it read "Question", like a question left over from an earlier session).
+- **Closing an agent's settings before choosing access says the new model and effort were not applied** (both hosts). A model change applies with the access choice; closing earlier said only "Settings closed."
+
 ## 0.3.9 — One brief for every conversation, undo for every agent — 2026-09-26
 
 Found by a code review of 0.3.8 and a full live validation of its fixes on both hosts

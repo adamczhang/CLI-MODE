@@ -9,6 +9,7 @@
  */
 import { readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -36,6 +37,21 @@ async function runtimeModule(install) {
     modules.set(install.package, import(pathToFileURL(requirePinned.resolve('acpx/runtime')).href));
   }
   return modules.get(install.package);
+}
+
+/** ACPX 0.18.0's own session-record functions. They are internal (not in its exports map), so they are taken
+ * from the pinned build's files and checked by name: any other build fails here, and the caller uses
+ * `sessions ensure` instead. */
+async function recordFunctions(install) {
+  await runtimeModule(install);  // Checks the pinned version first.
+  const dist = join(install.package, 'dist');
+  const [owner, ipc] = await Promise.all(['queue-owner-runtime-Cr0dWJuL.js', 'ipc-BJrvfNXr.js'].map(
+    file => import(pathToFileURL(join(dist, file)).href)));
+  const functions = {createInitialSessionRecord: owner.R, writeSessionRecord: ipc.L};
+  for (const [name, fn] of Object.entries(functions)) {
+    if (typeof fn !== 'function' || fn.name !== name) throw new Error('ACPX ' + name + ' was not found.');
+  }
+  return functions;
 }
 
 async function stamp(path) {
@@ -210,6 +226,22 @@ async function main(input, cancellation, checkCancellation, progress) {
         await runtime.close({handle, reason: 'CLI-MODE stop'});
       }
       write({status: (await locate()) ? 'open' : 'no-session'});
+      return;
+    }
+    if (input.action === 'reserve') {
+      // `acpx sessions ensure` without starting the agent. Ensure starts it only to create the session and then
+      // stops it, and the first prompt's owner starts it again: two starts per new agent (Antigravity: ~25 s each).
+      // This writes the session record ACPX would, with a placeholder ACP session ID. The first prompt (the
+      // readiness prompt, through ACPX's CLI) starts the agent once, is told the placeholder does not exist, and
+      // creates the real session there (ACPX's fallback for a session with no messages; probed for all six
+      // agents, 2026-09-27). The caller falls back to `sessions ensure` if that first prompt fails.
+      if (handle) { write({reserved: false, existing: true}); return; }
+      const {createInitialSessionRecord, writeSessionRecord} = await recordFunctions(input.install);
+      const session = runtime.sessionOptions({agent: input.profile, cwd: input.workspace, sessionKey: input.session});
+      const id = randomUUID();
+      await writeSessionRecord(createInitialSessionRecord({recordId: id, sessionId: id, agentCommand:
+        session.agentCommand, agentArgv: session.agentArgv, cwd: session.cwd, name: session.name}));
+      write({reserved: true, recordId: id});
       return;
     }
     if (!handle || (input.recordId && handle.acpxRecordId !== input.recordId)) {

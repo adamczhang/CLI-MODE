@@ -232,6 +232,71 @@ class Tests(unittest.TestCase):
                 self.assertTrue(active['owned'][0]['providerSession'])
                 self.assertTrue(controller.off()['shutdownComplete'])
 
+    def test_a_session_is_reserved_through_the_bridge_and_ensured_through_acpx(self):
+        # `sessions ensure` starts the agent only to create the session, then stops it; the first prompt starts it
+        # again (Antigravity: ~25 s each). `sessions reserve` has the bridge write the record instead.
+        import acpx
+        backend = acpx.AcpxBackend()
+        backend.profile = 'grok-build'
+        owned = dict(name='cli-mode-s1', workspace=str(self.workspace), settings={'access': 'allow'},
+                     acpxRuntime={'node': 'node.exe', 'package': 'acpx'})
+        with patch.object(acpx, 'bridge_request', return_value='bridge') as bridge, \
+                patch.object(acpx.AcpxBackend, 'spawn', return_value='spawned') as spawn, \
+                patch.object(backend, 'prepare'):
+            self.assertEqual(backend.start(owned, ['sessions', 'reserve', '--name', 'cli-mode-s1']), 'bridge')
+            self.assertEqual(bridge.call_args.args[1]['action'], 'reserve')
+            self.assertEqual(bridge.call_args.args[1]['session'], 'cli-mode-s1')
+            spawn.assert_not_called()
+            ensure = ['sessions', 'ensure', '--name', 'cli-mode-s1']
+            self.assertEqual(backend.start(owned, ensure), 'spawned')  # Unchanged: ACPX's own command.
+            self.assertEqual(spawn.call_args.args[0][-3:], ensure[1:])
+
+    def test_a_reserved_session_falls_back_to_a_real_ensure_once(self):
+        class ReservingBackend(FakeBackend):
+            bootstrap_with_cli_readiness = True
+
+            def __init__(self, reserves=True):
+                super().__init__()
+                self.reserve_without_start = reserves
+
+            def start(self, owned, args, timeout=60):
+                process = super().start(owned, args, timeout)  # Records the call and makes the fake's session.
+                if args[:2] in (['sessions', 'reserve'], ['sessions', 'ensure']):
+                    self.calls[-1] = args + (['reserved' if args[1] == 'reserve' else 'started'])
+                    return Process({'reserved': True} if args[1] == 'reserve' else {})
+                return process
+        refused, down = RuntimeError('placeholder refused'), RuntimeError('still down')
+        cases = {'reserved, then ready': (True, [None]), 'reserve fails, the classic way works': (True, [refused, None]),
+                 'both fail: the first error': (True, [refused, down]), 'classic ensure fails: no retry': (False, [down])}
+        for index, (case, (reserves, outcomes)) in enumerate(cases.items()):
+            with self.subTest(case):
+                backend = ReservingBackend(reserves)
+                controller = Controller(Store('reserve-%d' % index, self.workspace, self.root / ('reserve-%d' % index)),
+                                        backend, agent='grok-build')
+                controller.frontend('grok-build')
+                defaults = controller.adapter.DEFAULTS
+                probes, results = [], iter(outcomes)
+
+                def readiness(owned, *args, **kwargs):
+                    probes.append([call for call in backend.calls if call[:1] == ['sessions']][-1][-1])  # After which.
+                    outcome = next(results)
+                    if outcome:
+                        raise outcome
+                with patch.object(controller, 'readiness', side_effect=readiness):
+                    activate = lambda: controller.activate(defaults['model'], defaults['access'],  # noqa: E731
+                                                           effort=defaults.get('effort'), agent='grok-build')
+                    if outcomes[-1]:
+                        with self.assertRaisesRegex(RuntimeError, str(outcomes[0])):
+                            activate()
+                    else:
+                        self.assertTrue(activate()['active'])
+                ensures = [call[-1] for call in backend.calls if call[:1] == ['sessions']]
+                retried = reserves and outcomes[0] is not None
+                self.assertEqual(ensures, ['reserved', 'started'] if retried else ['reserved' if reserves else 'started'])
+                self.assertEqual(probes, ensures)  # One readiness prompt after each.
+                if retried:
+                    self.assertTrue(backend.closed)  # The placeholder is closed before the classic ensure.
+
     def event(self, event='UserPromptSubmit', **values):
         return dict(session_id='thread-1', cwd=str(self.workspace), hook_event_name=event, **values)
 

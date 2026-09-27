@@ -1,7 +1,7 @@
 // Offline ACP provider: never authenticates, networks, or executes user tools.
 import {createInterface} from 'node:readline';
 import {randomUUID} from 'node:crypto';
-import {existsSync, readFileSync, writeFileSync} from 'node:fs';
+import {appendFileSync, existsSync, readFileSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 
 const statePath = join(process.cwd(), 'fixture-state.json');
@@ -27,6 +27,7 @@ createInterface({input: process.stdin}).on('line', line => {
   const {id, method, params = {}} = request;
   if (!method) { pending.get(id)?.(request); pending.delete(id); return; }
   if (method === 'initialize') {
+    appendFileSync(join(process.cwd(), 'fixture-starts.log'), 'start\n');  // One line per agent start.
     reply(id, {protocolVersion: 1, agentCapabilities: {loadSession: true}, authMethods: [],
       agentInfo: {name: 'cli-mode-offline-fixture', version: '1'}});
   } else if (method === 'session/new') {
