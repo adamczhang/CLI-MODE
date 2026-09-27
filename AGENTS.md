@@ -67,8 +67,8 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   it in the conversation state and, for `direct`, captures the exact text as a request and ensures the worker
   runs.
 - **DIRECT and AUTO** (Claude Code only; `scripts/auto_mode.py`, packaged `CLAUDE_ONLY`): `routingMode` is
-  `direct` or `auto`. `/cli mode` opens the Mode page. In AUTO the user talks to Claude only: `/d` and the
-  commands that change which agent does what are refused, the user's AUTO agent (and backup) start when AUTO
+  `direct` or `auto`. `/cli mode` opens the Mode page. In AUTO the user talks to Claude, `/d` asks Claude
+  itself (no handoff that turn), the commands that change which agent does what are refused, AUTO agents are named `Codex-01`, the user's AUTO agent (and backup) start when AUTO
   turns on and wait, and Claude hands work over itself: a task file in the working folder's task folder
   (`auto_mode.tasks_dir`),
   `controller.py handoff --task <id>` (a request captured with `routingMode: auto` and `handoff`), then its

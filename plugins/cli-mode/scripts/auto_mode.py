@@ -147,15 +147,28 @@ def roster_line(root, state, config):
     return ', '.join(parts)
 
 
+def auto_name(agent, taken):
+    """An AUTO agent's name: its kind and the lowest number free among the running agents, `Codex-01`, `Codex-02`.
+    Plain and clear in Claude's reports, and room for more agents of one kind."""
+    base = adapters.module(agent).LABEL
+    used = {str(name).casefold() for name in taken if name}
+    for number in range(1, 100):
+        name = base + '-' + str(number).zfill(2)
+        if name.casefold() not in used:
+            return name
+    raise RuntimeError('No free AUTO name for ' + base + '.')
+
+
 def adopted_line(root, state, purpose, session):
     """One line for the activation card: what the agent that just started is now."""
     label = agent_label(state, session)
-    if purpose == 'auto-on':
-        return ('AUTO is on: Claude hands work to ' + roster_line(root, state, load(root)) + '. /d is off; '
-                '/cli mode direct switches back.')
-    what = 'backup agent' if purpose == 'auto-backup' else 'AUTO agent'
-    return (label + ' is now your ' + what + (': it waits for work.' if routing_mode(state) == 'auto' else
-                                              '. /cli mode auto hands it work.'))
+    if routing_mode(state) != 'auto':  # A backup chosen while no AUTO agent runs here.
+        return (label + ' is now your backup agent. It works for Claude once AUTO is on with an AUTO agent '
+                '(/cli mode auto).')
+    if purpose == 'auto-backup':
+        return label + ' is now your backup agent: it waits for work.'
+    return ('AUTO is on: Claude hands work to ' + roster_line(root, state, load(root)) + '. /d asks Claude itself, with no handoff; '
+            '/cli mode direct switches back.')
 
 
 def adopt(state, purpose, session, agent, settings, root):
@@ -169,7 +182,9 @@ def adopt(state, purpose, session, agent, settings, root):
     previous = roster.get(role)
     roster[role] = session
     state['auto'] = roster
-    if purpose == 'auto-on':
+    # Choosing an AUTO agent means AUTO: it turns on, and a backup chosen while an AUTO agent runs here turns it on too.
+    lead = agent_entry(state, roster.get('agent')) if roster.get('agent') else None
+    if role == 'agent' or (lead and lead.get('ready')):
         state['routingMode'] = 'auto'
     return previous if previous != session else None
 
@@ -235,9 +250,10 @@ def ledger_lines(state, relay_command=None, limit=LEDGER_SHOWN):
     return lines + (['(and ' + str(more) + ' older)'] if more > 0 else [])
 
 
-def context(root, state, workspace, handoff_command, relay_command):
+def context(root, state, workspace, handoff_command, relay_command, style=lambda text: text):
     """What Claude is told on every AUTO turn (lever A), from P0's tested wording (2026-09-27: 19 of 20 prompts
-    routed as intended). `handoff_command` is the exact handoff command with `<id>` for the task id."""
+    routed as intended). `handoff_command` is the exact handoff command with `<id>` for the task id; `style` marks
+    CLI-MODE's attribution lines as DIRECT's are (green bold, or plain bold with /cli color off)."""
     config = load(root)
     roster = state.get('auto') or {}
     lead = roster.get('agent')
@@ -250,7 +266,6 @@ def context(root, state, workspace, handoff_command, relay_command):
     backup_text = ('; backup ' + agent_label(state, backup) + ' (`--agent backup`), only for when the AUTO agent fails '
                    'or is out of usage, and for read-only work while it writes') if backup and agent_entry(
                        state, backup) else ''
-    short = (agent_entry(state, lead).get('alias') or name)
     return (
         'CLI-MODE AUTO is on. The user turned it on: that is their explicit request that you hand coding work to '
         'their CLI agent. You lead; their AUTO agent, ' + name + (' (' + detail[1] + ')' if len(detail) > 1 else '') +
@@ -262,14 +277,16 @@ def context(root, state, workspace, handoff_command, relay_command):
         'constraints and let the agent explore. Do not guess either: name what you have not checked as something for '
         'the agent to find out, not as a fact or a suspect. One writer: while a writing handoff runs, do not edit the '
         'project yourself.\n'
-        'To hand off: (1) post one line, "Passing to ' + short + ': <what>"; (2) write the task with the Write tool to '
+        'To hand off: (1) post one line that opens with this attribution, exactly as written, then says in plain words '
+        'what you pass on:\n' + style('Passing to ' + name + ':') + '\n(2) write the task with the Write tool to '
         + tasks_dir(workspace).as_posix() + '/<id>.md, where <id> is a short new name such as t1, using this '
         'template:\n' + TEMPLATE + '\n(3) run `' + handoff_command + '` (add `--read-only` for reviews and research); '
         'it prints the follow command, which you run next, as is (CLI-MODE makes it a background task); (4) end your '
-        'turn with a short status for the user. The agent\'s finish wakes you: then read its result with the relay '
+        'turn with a short status for the user that opens with this attribution, exactly as written:\n' +
+        style(name + ' is working.') + '\nThe agent\'s finish wakes you: then read its result with the relay '
         'command CLI-MODE gives you, check it (the change receipt, the test result, the agent\'s report), and tell the '
         'user in your own words what was done and anything unresolved. Never poll or wait for it.\n'
-        '/d is off in AUTO; the user switches back with /cli mode direct.\n'
+        'The user switches back to driving the agents with /cli mode direct.\n'
         'AUTO ledger:\n' + '\n'.join('- ' + line for line in ledger_lines(state, relay_command)))
 
 
@@ -348,7 +365,7 @@ class AutoMixin:
                 state.update(main=target['name'], settings=target['settings'], backend=target['backend'])
         line = roster_line(self.store.root, state, config)
         opening = 'AUTO is already on' if was == 'auto' and not started else 'AUTO is on'
-        return dict(state, message=opening + ': Claude hands work to ' + line + '. /d is off; /cli mode direct '
+        return dict(state, message=opening + ': Claude hands work to ' + line + '. /d asks Claude itself, with no handoff; /cli mode direct '
                     'switches back.')
 
     def start_role(self, role, choice):
@@ -383,14 +400,18 @@ class AutoMixin:
                     '". /cli mode ' + role + ' ' + agent + ' opens its page to choose.'}
         choice = {'agent': agent, 'model': matches[0], 'access': settings['access'],
                   'effort': settings.get('effortValue') if matches[0] == settings['model'] else None}
-        if self.auto_is_on():
-            self.start_role(role, choice)  # adopt() saves it and replaces the old one.
-            return self.start_auto()
         config = load(self.store.root)
         config[role] = choice
         save(self.store.root, config)
-        return {'message': 'Your ' + what + ' is now ' + describe(self.store.root, choice) + '. It starts when AUTO '
-                'is on: /cli mode auto.'}
+        if role == 'backup' and not config['agent']:
+            return {'message': 'Your backup agent is now ' + describe(self.store.root, choice) + '. Choose an AUTO '
+                    'agent too (/cli mode agent); AUTO then starts both.'}
+        state = self.store.read()
+        current = agent_entry(state, (state.get('auto') or {}).get(role))
+        running = (current.get('backend'), (current.get('settings') or {}).get('model')) if current else None
+        if current and current.get('ready') and running != (choice['agent'], choice['model']):
+            self.start_role(role, choice)  # Another agent or model: it replaces the running one (adopt, retire).
+        return self.start_auto()  # Choosing an AUTO agent means AUTO: start what is not running, and turn it on.
 
     def auto_is_on(self):
         return routing_mode(self.store.read()) == 'auto'

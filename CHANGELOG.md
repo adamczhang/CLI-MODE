@@ -17,7 +17,9 @@
   and their agent's writes are refused. Claude does not edit the project while an agent does.
 - **Delegation strength** Normal, Strong (default) or Max: how much Claude may edit itself before a change goes
   to the agent, and whether its own coding subagents are sent to the agent instead.
-- In AUTO, `/d` and the commands that change which agent does what are refused; the safety and read-only
+- In AUTO, `/d` asks Claude itself: nothing from that turn goes to an agent. A plain message lets Claude decide.
+  AUTO agents are named after their kind and numbered: Codex-01, Codex-02, Grok-01. The commands that change which
+  agent does what are refused; the safety and read-only
   controls stay yours (`cancel`, `undo`, `diff`, `list` with a ledger of the handoffs, `usage`, `access`, `off`).
   An agent's permission question comes to you, and your `/cli approve` or `/cli deny` goes on with Claude's task.
 - An AUTO backup's activation card shows the backup, not the AUTO agent.

@@ -294,14 +294,14 @@ PREFIXES = ('/', '$')
 # Claude Code also names a plugin's commands by plugin: /cli-mode:cli, /cli-mode:d.
 NAMESPACE = '/cli-mode:'
 # DIRECT: a prompt reaches an agent only through /d (Passthrough was removed). AUTO (Claude Code only): the user
-# talks to Claude, which hands work to the user's AUTO agent; /d is off. Codex has no AUTO.
+# talks to Claude, which hands work to the user's AUTO agent; /d there asks Claude itself, with no handoff. Codex has
+# no AUTO.
 ROUTING_MODES = ('direct', 'auto')
 MODE_REMOVED = ('Prompts reach the agent only through /d <prompt>; every other message stays with {host}. '
                 'Passthrough mode was removed.')
 MODE_PAGES = ('mode', 'auto-settings', 'auto-strength')  # The Mode page and its sub-pages (pending phases).
 STRENGTHS = ('normal', 'strong', 'max')  # How strongly Claude hands work off in AUTO.
-AUTO_D = ('AUTO is on: tell Claude what you want, and it hands the work to your AUTO agent. /d is off in AUTO; '
-          '/cli mode direct lets you drive the agents yourself.')
+AUTO_D = ('Add a question after /d: in AUTO, /d asks Claude itself, and nothing goes to an agent. Nothing was sent.')
 AUTO_OWNED = ('AUTO is on, so Claude and CLI-MODE run the agents. Ask Claude, change the AUTO agent with /cli mode, '
               'or switch back with /cli mode direct.')
 MODE_USAGE = ('Use /cli mode, /cli mode auto|direct, /cli mode agent [<agent> [<model>]], /cli mode backup '
@@ -402,7 +402,14 @@ def agent_label(state, session=None, record=None):
         label = adapters.module(kind).LABEL
     except ValueError:
         label = 'Agent'
-    return label + (' ' + name if name else '')
+    return label_name(label, name)
+
+
+def label_name(label, name):
+    """`Codex COD-7K`; an AUTO agent's name (Claude Code) already says its kind, so it stands alone: `Codex-01`."""
+    if not name:
+        return label
+    return name if name.casefold().startswith(label.casefold() + '-') else label + ' ' + name
 
 
 # Agents that run commands (and write files) straight through ACPX without asking first, so an approval can't be
@@ -878,5 +885,7 @@ def route(message, state):
     # Only an explicit /d or $d reaches an agent; everything else is the host's.
     payload = direct_payload(message)
     if payload is not None:
-        return {'route': 'hint', 'text': AUTO_D} if auto_on(state) else direct_route(payload, state)
+        if auto_on(state):  # AUTO: /d is the user asking Claude itself, with no handoff (hooks/claude.py enforces it).
+            return {'route': 'auto-host'} if payload.strip() else {'route': 'hint', 'text': AUTO_D}
+        return direct_route(payload, state)
     return {'route': 'host'}

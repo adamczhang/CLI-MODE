@@ -41,6 +41,11 @@ from claude_live_relay import DEV, MARKER, claude_data
 
 QUESTION = 'In one sentence: what does app/parser.py do?'
 TASK = 'Read README.md in this folder and reply with the project codename only.'
+# P10's task: a real piece of work (code and tests), the same for Claude alone and for AUTO.
+COMPARE_TASK = ('In this project: fix the failing parser test (the tests are right), then add parse_pairs(text) to '
+                'app/parser.py, returning a dict of key=value words (values may be quoted), and parse_flags(text), '
+                'returning (words, flags) where flags are the words starting with --. Add tests for both to '
+                'tests/test_parser.py. All tests must pass. Do not commit.')
 BUG = ('The parser drops the last word of its input, and tests/test_parser.py fails because of it. Please get it '
        'fixed; the tests are right.')
 
@@ -76,10 +81,10 @@ def project(buggy=False):
 
 
 class Run:
-    def __init__(self, agent, backup, model, buggy=False):
+    def __init__(self, agent, backup, model, buggy=False, extra=()):
         self.agent, self.backup = agent, backup
         self.workspace = project(buggy)
-        self.host = Session(self.workspace, model)
+        self.host = Session(self.workspace, model, extra)
         self.session, self.steps, self.problems = None, [], []
         sys.path.insert(0, str(DEV / 'scripts'))
         from presentation import plain_strong
@@ -145,8 +150,8 @@ class Run:
         self.check('AUTO agent current', roster.get('agent') == state.get('main'), json.dumps(roster))
         import auto_mode
         self.check('choice saved', (auto_mode.load(claude_data())['agent'] or {}).get('agent') == self.agent)
-        self.step('/d refused', '/d ' + TASK, ('AUTO is on: tell Claude what you want',))
-        self.check('/d refused', not self.state().get('requests'), 'a request was captured')
+        self.step('/d without a task', '/d', ('Add a task after /d',))
+        self.check('/d without a task', not self.state().get('requests'), 'a request was captured')
         self.step('spawn refused', '/cli spawn ' + self.backup, ('AUTO is on, so Claude and CLI-MODE run the agents',))
         _, answer = self.step('ordinary question', QUESTION, tools=True)
         self.check('ordinary question', 'word' in answer.lower() or 'quot' in answer.lower(),
@@ -240,6 +245,105 @@ class Run:
         self.check('report', texts and len(texts[-1]) > 40, 'no report after the wake-up')
         self.step('off', '/cli off', ('CLI-MODE is off.',))
 
+    def claude_use(self, since):
+        """Claude's own token use in this session's results after event `since` (P10: host usage, not the agent's)."""
+        with self.host.lock:
+            results = [event for event in self.host.events[since:] if event.get('type') == 'result']
+        total = dict(input=0, output=0, cacheWrite=0, cacheRead=0, turns=0)
+        for event in results:
+            usage = event.get('usage') or {}
+            total['input'] += usage.get('input_tokens') or 0
+            total['output'] += usage.get('output_tokens') or 0
+            total['cacheWrite'] += usage.get('cache_creation_input_tokens') or 0
+            total['cacheRead'] += usage.get('cache_read_input_tokens') or 0
+            total['turns'] += event.get('num_turns') or 0
+        with self.host.lock:
+            before = [event.get('total_cost_usd') or 0 for event in self.host.events[:since]
+                      if event.get('type') == 'result']
+        costs = [event.get('total_cost_usd') or 0 for event in results]
+        # A relative measure only (an API list-price equivalent, not a charge). Whether each result's figure is the
+        # session's running total or its own turn's, the raw values are kept to tell.
+        total['listCostPerResult'] = costs
+        total['listCostDelta'] = round((costs[-1] if costs else 0) - (before[-1] if before else 0), 4)
+        return total
+
+    def wait_read(self, count, timeout=1500):
+        """Until an AUTO result has been read (relay --for-host) and the turn that read it has ended."""
+        def read():
+            return any(record.get('routingMode') == 'auto' and record.get('hostRead')
+                       for record in (self.state().get('requests') or {}).values())
+        if not self.host.wait(None, timeout, done=read):
+            raise RuntimeError('the handoff result was never read')
+        if not self.host.wait(None, 300, done=lambda: len(self.host.results()) >= count + 2):
+            raise RuntimeError('the wake-up turn never ended')
+        time.sleep(3)
+
+    def interrupt_main(self):
+        """P7: a handoff's result still comes to Claude after /cli mode direct; /cli off stops a running handoff."""
+        import auto_mode
+        auto_mode.save(claude_data(), {'agent': None, 'backup': None, 'strength': 'strong'})
+        self.use_defaults()
+        self.step('auto on', '/cli mode auto', ('AUTO is on',), timeout=400)
+        count = len(self.host.results())
+        self.host.send(BUG)
+        if not self.host.wait(count + 1, 600):
+            raise RuntimeError('the bug report: no result')
+        working = [key for key, record in (self.state().get('requests') or {}).items()
+                   if record.get('routingMode') == 'auto']
+        self.check('handed off', bool(working), 'no handoff was captured')
+        self.step('ledger while working', '/cli list', ('AUTO handoffs:',), tools=False)
+        self.step('direct mid-handoff', '/cli mode direct', ('DIRECT is on',))
+        self.wait_read(count + 2)  # Results so far: the task turn, /cli list and /cli mode direct.
+        with self.host.lock:
+            commands = [str((block.get('input') or {}).get('command') or '') for event in self.host.events
+                        if event.get('type') == 'assistant' for block in (event.get('message') or {}).get('content') or []
+                        if block.get('type') == 'tool_use']
+        self.check('read in DIRECT', any(' --for-host' in command for command in commands), 'no relay --for-host')
+        self.check('no verbatim relay', not any(' relay --request ' in command and '--for-host' not in command
+                                                for command in commands), 'a user relay ran for the handoff')
+        self.step('auto again', '/cli mode auto', ('AUTO is on',))
+        count = len(self.host.results())
+        self.host.send('Add a --reverse option to the parser module: a function parse_reversed(text) returning the '
+                       'words in reverse order, with tests. Hand it to the agent.')
+        if not self.host.wait(count + 1, 600):
+            raise RuntimeError('the second task: no result')
+        self.step('emergency off', '/cli off', ('CLI-MODE is off',))
+        state = self.state()
+        self.check('off stops everything', not state.get('active') and not state.get('owned') and
+                   not any(record.get('status') in ('captured', 'submitting')
+                           for record in (state.get('requests') or {}).values()),
+                   json.dumps(dict(active=state.get('active'), owned=len(state.get('owned') or []))))
+
+    def compare_main(self, task):
+        """P10: one task done by Claude alone (DIRECT, no agent) and handed off in AUTO, in separate projects.
+        Returns Claude's own use for each; the agent's work is on its own plan."""
+        mark = self.host.mark()
+        count = len(self.host.results())
+        self.host.send(task)
+        if not self.host.wait(count + 1, 1200):
+            raise RuntimeError('Claude alone: no result')
+        alone = self.claude_use(mark)
+        tests = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider'], cwd=self.workspace,
+                               capture_output=True, text=True, timeout=120)
+        return alone, tests.returncode == 0
+
+    def compare_auto(self, task):
+        """P10's AUTO side: the same task, handed off; Claude's use counts the task turn and the wake-up turn."""
+        import auto_mode
+        auto_mode.save(claude_data(), {'agent': None, 'backup': None, 'strength': 'strong'})
+        self.use_defaults()
+        self.step('auto on', '/cli mode auto', ('AUTO is on',), timeout=400)
+        mark, count = self.host.mark(), len(self.host.results())
+        self.host.send(task)
+        if not self.host.wait(count + 1, 600):
+            raise RuntimeError('AUTO: no result')
+        self.wait_read(count)
+        use = self.claude_use(mark)
+        tests = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider'], cwd=self.workspace,
+                               capture_output=True, text=True, timeout=120)
+        self.step('off', '/cli off', ('CLI-MODE is off',))
+        return use, tests.returncode == 0
+
     def use_defaults(self):
         """Fill the saved AUTO choice with the agent's own defaults (as the picker's "Yes" would)."""
         sys.path.insert(0, str(DEV / 'scripts'))
@@ -292,6 +396,8 @@ def main():
     parser.add_argument('--model')
     parser.add_argument('--keep', action='store_true')
     parser.add_argument('--handoff', action='store_true', help='The end-to-end handoff scenario instead.')
+    parser.add_argument('--interrupt', action='store_true', help='P7: a mode switch and /cli off during handoffs.')
+    parser.add_argument('--compare', choices=['alone', 'auto'], help='P10: one side of Claude alone versus AUTO.')
     args = parser.parse_args()
     if 'claude' in (args.agent, args.backup):
         raise SystemExit('Use agents other than Claude Code: it shares the sign-in this session uses.')
@@ -303,11 +409,21 @@ def main():
     aside = saved.with_suffix('.before-live-check')
     if saved.exists():
         saved.replace(aside)  # A first run: no AUTO agent chosen yet.
-    run = Run(args.agent, args.backup, args.model, buggy=args.handoff)
+    # P10: both sides may edit files and run commands without asking, so they differ only in who does the work.
+    extra = ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'PowerShell'] if args.compare else []
+    run = Run(args.agent, args.backup, args.model, buggy=args.handoff or args.interrupt or bool(args.compare),
+              extra=extra)
     report = dict(agent=args.agent, backup=args.backup, workspace=str(run.workspace))
     started = time.monotonic()
     try:
-        run.handoff_main() if args.handoff else run.main()
+        if args.compare:
+            use, passed = (run.compare_main if args.compare == 'alone' else run.compare_auto)(COMPARE_TASK)
+            report.update(claudeUse=use, testsPass=passed)
+            run.check('tests pass', passed, 'the task left failing tests')
+        elif args.interrupt:
+            run.interrupt_main()
+        else:
+            run.handoff_main() if args.handoff else run.main()
     except (RuntimeError, ValueError, KeyError, StopIteration) as exc:
         run.problems.append('stopped: ' + str(exc))
     finally:

@@ -620,7 +620,10 @@ class BindingMixin:
             if not reuse:
                 if any(item['name'] == owned['name'] for item in state['owned']):
                     owned['name'] += '-' + str(len(state['owned']))  # Each agent's session name is its own.
-                if not name:
+                if not name and purpose:
+                    import auto_mode  # An AUTO agent (Claude Code): `Codex-01`, the lowest number free.
+                    name = auto_mode.auto_name(target, [item.get('alias') for item in state['owned']])
+                elif not name:
                     taken = list(state.get('usedNames') or []) + [item.get('alias') for item in state['owned']]
                     name = names.generate(target, owned['name'], [alias for alias in taken if alias])
                     state['usedNames'] = (state.get('usedNames') or []) + [name]  # Never given out again.
@@ -674,6 +677,11 @@ class BindingMixin:
                     state['turnRoute']['route'] = 'control-result'
             latest = self.store.read()
             retired = self.retire(replaced) if replaced and routing_mode(latest) == 'auto' else None
+            if purpose in ('auto-on', 'auto-agent') and routing_mode(self.store.read()) == 'auto':
+                try:
+                    self.start_auto()  # AUTO's agents all start when it turns on: the backup too, if there is one.
+                except (RuntimeError, ValueError):
+                    pass  # A backup that fails to start leaves AUTO on with its AUTO agent.
             if purpose:
                 import auto_mode
                 # Said under the activation card (controller.with_auto_line): what the new agent is now.

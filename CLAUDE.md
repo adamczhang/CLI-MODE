@@ -79,8 +79,9 @@ lands in one of three zones below; know which before editing.
   DIRECT and AUTO modes. `/cli mode` opens the Mode page (pending phases `state.MODE_PAGES`). The user's AUTO agent,
   optional backup and delegation strength are saved for every conversation (`auto_mode.config_path`). `/cli mode auto`
   starts those agents in the prompt hook, as bind does (an activation whose `pending.purpose` makes `adopt()` save
-  it and put it in the conversation's `auto` roster), and they wait for work. In AUTO (`state.auto_on`), `/d` and
-  `state.AUTO_OWNED_VERBS` are refused, `/cli` is the Mode page, the brief's host note is skipped, and `off` ends
+  it and put it in the conversation's `auto` roster), and they wait for work. In AUTO (`state.auto_on`), `/d` becomes `auto-host` (Claude answers
+  itself: the hook refuses `handoff` that turn and lifts the strength limits), `state.AUTO_OWNED_VERBS` are refused, AUTO agents are named `Codex-01`
+  (`auto_mode.auto_name`, shown alone by `state.label_name`), `/cli` is the Mode page, the brief's host note is skipped, and `off` ends
   AUTO (`binding.disable`). Handoffs: Claude writes a task file (`auto_mode.tasks_dir`; `hooks/claude.py:
   task_file_approval`), runs `controller.py handoff --task <id>` (captured like a /d with `routingMode: auto` and
   `handoff`), then the printed `follow`. The follow's end wakes Claude (`notification_reply` → `auto_wake`, the Stop

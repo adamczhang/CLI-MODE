@@ -53,8 +53,9 @@ class AutoRouting(unittest.TestCase):
 
     def test_auto_turns_d_off_and_keeps_orchestration_with_claude(self):
         auto = self.state('auto')
-        self.assertEqual(route('/d fix the parser', auto), {'route': 'hint', 'text': AUTO_D})
-        self.assertEqual(route('$d fix it', auto)['text'], AUTO_D)
+        self.assertEqual(route('/d what does the parser do?', auto), {'route': 'auto-host'})  # Claude itself.
+        self.assertEqual(route('$d fix it', auto), {'route': 'auto-host'})
+        self.assertEqual(route('/d   ', auto), {'route': 'hint', 'text': AUTO_D})
         for prompt in ('/cli spawn cod', '/cli bind agy', '/cli use AGY-7K', '/cli model fast', '/cli effort high',
                        '/cli menu', '/cli timeout 90', '/cli attach', '/cli brief', '/cli brief-add hi', '/cli cod',
                        '/cli close AGY-7K'):
@@ -184,7 +185,7 @@ class ModeHook(ClaudeHook):
         self.assertEqual(state['routingMode'], 'auto')
         self.assertEqual(state['auto']['agent'], state['main'])
         self.assertEqual(self.config()['agent']['agent'], 'agy')
-        self.assertEqual(self.reply('/d fix it'), AUTO_D)
+        self.assertEqual(self.store().read()['requests'] if 'requests' in self.store().read() else {}, {})
 
     def start_auto(self):
         auto_mode.save(self.data, {'agent': agy_choice(), 'backup': None, 'strength': 'strong'})
@@ -196,7 +197,7 @@ class ModeHook(ClaudeHook):
         self.assertTrue(state['active'])
         self.assertEqual(state['routingMode'], 'auto')
         self.assertIn('AUTO is on: Claude hands work to ' + self.name(), reply)
-        self.assertIn('/d is off', reply)
+        self.assertIn('/d asks Claude itself', reply)
         self.assertIsNone(state['pending'])
         brief = (self.project / 'Agent_Working_Folder' / 'BRIEF.md')
         if brief.is_file():  # Briefs are off in AUTO: no host-note entry waits for Claude.
@@ -258,15 +259,43 @@ class ModeHook(ClaudeHook):
         backup = state['auto']['backup']
         from state import agent_label
         self.assertEqual(state['main'], lead)  # The AUTO agent stays current.
-        self.assertIn('**Agent:** Antigravity ' + next(o['alias'] for o in state['owned'] if o['name'] == backup), card)
+        self.assertIn('**Agent:** Antigravity-02 |', card)  # An AUTO name stands alone: it says the agent.
         self.assertIn(agent_label(state, backup) + ' is now your backup agent: it waits for work.', card)
 
-    def test_a_typed_agent_and_model_is_saved_in_direct_and_starts_nothing(self):
-        reply = self.reply('/cli mode agent agy gemini-3.8-flash-high')
-        self.assertIn('It starts when AUTO is on', reply)
-        self.assertEqual(self.config()['agent']['model'], 'gemini-3.8-flash-high')
-        self.assertFalse(self.store().read()['active'])
+    def test_choosing_an_auto_agent_turns_auto_on(self):
+        # Live, 2026-09-27: an AUTO agent chosen from AUTO settings started in DIRECT, and AUTO needed another command.
+        auto_mode.save(self.data, {'agent': None, 'backup': agy_choice(), 'strength': 'strong'})
+        self.reply('/cli mode agent')
+        pending = self.store().read()['pending']
+        self.assertEqual(pending['purpose'], 'auto-agent')
+        self.reply(str([choice['value'] for choice in pending['choices']].index('agy') + 1))
+        card = self.reply('1')
+        self.assertIn('AUTO is on: Claude hands work to ' + self.name(), card)
+        state = self.store().read()
+        self.assertEqual(state['routingMode'], 'auto')
+        self.assertEqual(len(state['owned']), 2)  # The backup started too: AUTO's agents all wait for work.
+        self.assertEqual(state['main'], state['auto']['agent'])
+
+    def test_auto_agents_are_named_after_their_kind_and_numbered(self):
+        auto_mode.save(self.data, {'agent': agy_choice(), 'backup': agy_choice(), 'strength': 'strong'})
+        self.reply('/cli mode auto')
+        state = self.store().read()
+        from state import agent_label
+        names = {role: agent_label(state, session) for role, session in state['auto'].items()}
+        self.assertEqual(names, {'agent': 'Antigravity-01', 'backup': 'Antigravity-02'})
+        self.reply('/cli off')
+        self.reply('/cli bind agy')  # DIRECT keeps its generated names.
+        self.assertRegex(self.name(), r'^Antigravity AGY-[A-Z0-9]{2}$')
+        self.assertEqual(auto_mode.auto_name('codex', ['Codex-01', 'codex-03']), 'Codex-02')
+
+    def test_a_typed_agent_and_model_turns_auto_on(self):
         self.assertIn('models match', self.reply('/cli mode agent agy no-such-model'))
+        reply = self.reply('/cli mode agent agy gemini-3.8-flash-high')
+        self.assertIn('AUTO is on: Claude hands work to', reply)
+        self.assertEqual(self.config()['agent']['model'], 'gemini-3.8-flash-high')
+        state = self.store().read()
+        self.assertTrue(state['active'])
+        self.assertEqual(state['routingMode'], 'auto')
 
 
 class CodexHasNoAuto(unittest.TestCase):

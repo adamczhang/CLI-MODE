@@ -496,6 +496,8 @@ def auto_tool_refusal(event, root, tool, state):
         return None
     import auto_mode
     if tool == 'Agent':
+        if (state.get('turnRoute') or {}).get('route') == 'auto-host':
+            return None  # The user asked Claude itself (/d): its own subagents are its business.
         kind = (event.get('tool_input') or {}).get('subagent_type') or 'general-purpose'
         if auto_mode.load(data_root(root))['strength'] in ('strong', 'max') and kind not in auto_mode.KEPT_SUBAGENTS:
             return deny('CLI-MODE AUTO: coding work goes to the AUTO agent, not a Claude subagent. Put it in a task file '
@@ -542,6 +544,8 @@ def strength_refusal(event, root):
     if busy:
         return deny('CLI-MODE AUTO: ' + agent_label(state, busy[0]) + ' is changing this project right now (one writer '
                     'at a time). Make this edit after its result, or put it in a task for the agent.')
+    if (state.get('turnRoute') or {}).get('route') == 'auto-host':
+        return None  # The user asked Claude itself (/d): no delegation strength this turn.
     strength = auto_mode.load(data_root(root))['strength']
     if strength == 'max':
         return deny('CLI-MODE AUTO (Max): project changes go to the AUTO agent. Put this in a task file and hand it '
@@ -574,7 +578,15 @@ def auto_context(event, root, state):
     import auto_mode
     return auto_mode.context(data_root(root), state, workspace(event),
                              command(event, root, 'handoff', '--task') + ' <id>',
-                             lambda request: command(event, root, 'relay', '--request', request, '--for-host'))
+                             lambda request: command(event, root, 'relay', '--request', request, '--for-host'),
+                             attribution)
+
+
+def attribution(text):
+    """An AUTO attribution line, marked as DIRECT's "Passing to" line is: green bold (plain bold with /cli color off),
+    with a zero-width space after it so a line that ends a still-streaming block renders at once."""
+    import presentation
+    return presentation.strong(text, COLOR) + ('​' if COLOR else '')
 
 
 def approve(event, text, root):
@@ -598,6 +610,9 @@ def approve(event, text, root):
             or any("'" in token for token in tokens)
             or ' '.join(quote(token) for token in tokens) != text):
         return None
+    if rest[0] == 'handoff' and ((auto_state(event, root) or {}).get('turnRoute') or {}).get('route') == 'auto-host':
+        return deny('CLI-MODE AUTO: the user asked you directly (/d), so nothing from this turn goes to an agent. '
+                    'Answer or do it yourself.')
     if rest[0] in AUTO_OWNED_COMMANDS:
         refused = auto_owned(event, root)
         if refused:
@@ -761,7 +776,8 @@ def auto_wake(event, root, request, label):
         'result is for you, not the user: run `' + command(event, root, 'relay', '--request', request, '--for-host') +
         '` once (Bash or PowerShell, timeout ' + str(RELAY_TIMEOUT_MS) + ' ms) and read what it prints. Then check the '
         'work against the task: the change receipt, the test result and the agent\'s report (open a changed file or '
-        'run a check only where something needs confirming). Tell the user in your own words what was done, whether '
+        'run a check only where something needs confirming). Open your report with this attribution, exactly as '
+        'written:\n' + attribution(label + ' finished.') + '\nThen tell the user in your own words what was done, whether '
         'it held up, and anything unresolved or waiting on them; do not post the result as is. If it needs more work, '
         'hand a follow-up task to the agent the same way.' + COMPLETE))
 
@@ -1066,6 +1082,11 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
     kind = decision['route']
     adapter = label_of(state, decision)
     pending = state.get('pending') or {}
+    if kind == 'auto-host':  # AUTO: /d is the user asking Claude itself; nothing of this turn goes to an agent.
+        return context(event, 'CLI-MODE AUTO is on, but this message starts with /d: the user is asking you, not the '
+                       'agent. Answer it or do it yourself, and do not hand it off (the handoff command is refused this '
+                       'turn, and your own edits are not limited by the delegation strength; while an agent is changing '
+                       'the project, still leave the project files alone). The /d is not part of the request.')
     if kind == 'host' and state.get('active') and state.get('routingMode') == 'auto':
         return context(event, auto_context(event, root, state))  # Claude's own turn in AUTO: the rule and ledger.
     if kind in ('host', 'restore'):

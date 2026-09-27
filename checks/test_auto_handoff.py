@@ -93,6 +93,8 @@ class Handoffs(AutoBase):
         relay = self.command('relay', '--request', request, '--for-host')
         self.assertIn('`' + relay + '`', wake)
         self.assertIn('not the user', wake)
+        import presentation
+        self.assertIn(presentation.strong(self.name() + ' finished.', True), wake)
         self.assertEqual(self.store().read()['autoWake'], request)
         self.assertIn('you have not read its result', self.context(self.stop_hook()))  # The turn is held.
         text = self.ctl('relay', '--request', request, '--for-host')['text']
@@ -248,6 +250,9 @@ class Levers(AutoBase):
                      auto_mode.tasks_dir(self.project).as_posix() + '/<id>.md', 'Do not guess', 'No handoffs yet.'):
             self.assertIn(part, text)
         self.assertLess(len(text), 10000)  # Claude Code's cap for a hook's added context.
+        import presentation  # Attribution lines as DIRECT's "Passing to" line: green bold, or plain bold with color off.
+        self.assertIn(presentation.strong('Passing to ' + self.name() + ':', True), text)
+        self.assertIn(presentation.strong(self.name() + ' is working.', True), text)
         self.write_task()
         request = self.ctl('handoff', '--task', 't1')['requestId']
         self.drain(self.store().read()['auto']['agent'])
@@ -255,6 +260,21 @@ class Levers(AutoBase):
         self.assertIn('NOT READ YET: `' + self.command('relay', '--request', request, '--for-host') + '`', ledger)
         self.ctl('relay', '--request', request, '--for-host')
         self.assertIn('add a docstring to parse().: finished, read.', self.context(self.prompt('thanks')))
+
+    def test_d_in_auto_asks_claude_itself_and_nothing_goes_to_an_agent(self):
+        self.auto()
+        text = self.context(self.prompt('/d what does the parser do with quotes?'))
+        self.assertIn('the user is asking you, not the agent', text)
+        self.assertNotIn('To hand off', text)  # No delegation rule this turn.
+        self.assertFalse(self.store().read().get('requests'))
+        self.write_task()
+        refused = self.pre('Bash', command=self.command('handoff', '--task', 't1'), description='x')
+        self.assertEqual(refused['permissionDecision'], 'deny')  # Enforced, not just asked.
+        self.assertEqual(self.edit(self.project / 'src' / 'a.py', lines=200), {})  # No strength limit this turn.
+        self.assertEqual(self.pre('Agent', subagent_type='general-purpose', prompt='x'), {})
+        self.prompt('now improve it')  # An ordinary turn again: the handoff is Claude's to choose.
+        self.assertEqual(self.pre('Bash', command=self.command('handoff', '--task', 't1'),
+                                  description='x')['permissionDecision'], 'allow')
 
     def test_strong_lets_claude_make_small_fixes_only(self):
         self.auto()

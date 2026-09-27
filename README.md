@@ -104,9 +104,11 @@ against it. Development toward the first release focuses on Claude Code.
 
 What to know about AUTO:
 
-- **`/d` is off**, and so are the commands that change which agent does what (`/cli spawn`, `use`, `model`,
-  `effort`, `menu`, `timeout`, `attach`, `brief`); `/cli` opens the Mode page. **`/cli mode direct`** switches
-  back: your agents keep running and `/d` reaches them again.
+- **`/d <question>` asks Claude itself:** nothing from that turn goes to an agent (CLI-MODE refuses a handoff
+  then), and Claude may edit freely that turn. A plain message lets Claude decide what to hand off.
+- The commands that change which agent does what are Claude's and CLI-MODE's in AUTO (`/cli spawn`, `use`,
+  `model`, `effort`, `menu`, `timeout`, `attach`, `brief`); `/cli` opens the Mode page. **`/cli mode direct`**
+  switches back: your agents keep running and `/d` reaches them directly again.
 - **You keep the safety controls:** `/cli cancel`, `/cli undo`, `/cli diff`, `/cli list` (with a ledger of the
   handoffs), `/cli usage`, `/cli view`, `/cli access`, and `/cli off`, which closes every agent and ends AUTO.
 - **The agent's questions come to you.** If it stops to ask permission, Claude tells you what it asks; answer
@@ -119,6 +121,7 @@ What to know about AUTO:
   Claude's own edit tools; it is not a sandbox.
 - **Settings:** `/cli mode agent [<agent> [<model>]]` changes the AUTO agent; `/cli mode backup <agent>|none`
   sets a backup, used when the AUTO agent fails or is out of usage, and for read-only work while it writes.
+  Choosing an AUTO agent, from the Mode page or by command, always turns AUTO on and starts it (and the backup).
 - **For developers:** each task Claude writes is kept in `Agent_Working_Folder/.cli-mode/tasks/` (Goal,
   Context, Do not, Done when, Report); agents never commit or push; each result carries the change receipt and
   the test result. The agent reads its own instruction files (`AGENTS.md`, `CLAUDE.md`) for your conventions,
