@@ -42,12 +42,15 @@ STRENGTH_RULES = {
 }
 TEMPLATE = ('Goal: what to achieve, in one or two lines\n'
             'Context: files, decisions and constraints the task needs\n'
-            'Files: the only files or folders it may change (other agents may be changing the rest)\n'
+            'Files: the only files or folders it may change (other agents may be changing the rest), or none when it '
+            'writes only in its own working folder\n'
             'Do not: anything else to avoid; never commit or push\n'
             'Done when: the check that proves it (tests, a command, behaviour)\n'
             'Report: what changed, what you ran, anything unresolved')
 # One writer per file: a writing task claims the files and folders its Files line names, and no two running tasks
-# (nor Claude's own edits) may change the same file. A task without that line, and any other request, claims them all.
+# (nor Claude's own edits) may change the same file. A task without that line, and any other request, claims them all;
+# `Files: none` claims no project file (work that writes only in the agent's working folder). Its result then names
+# any edit of its own outside that claim (relay_view.host_text's OUTSIDE ITS CLAIM, a CHECK: look).
 WHOLE = '*'
 EVERYTHING = frozenset(('*', '.', 'all', 'any', 'everything', 'project', 'repo', 'repository'))
 AUTO_TIMEOUT = 120  # Minutes an idle AUTO agent keeps running (its ACPX owner TTL); /cli off closes it sooner.
@@ -250,22 +253,46 @@ def file_key(word, workspace=None):
 
 
 def task_files(text, workspace=None):
-    """The claims of a writing task's Files line: [WHOLE] without one, or when it names no path (prose, `none`)."""
+    """The claims of a writing task's Files line: [WHOLE] without one, or when it names no path (prose); [] (no project
+    file) when it says `none` (or `nothing`, `no files`), or names only the agents' working folder, never the
+    project's (its own notes, scripts and outputs go there)."""
     line = next((row.split(':', 1)[1] for row in text.splitlines() if re.match(r'\s*files\s*:', row, re.I)), None)
     if line is None:
         return [WHOLE]
     words = re.sub(r'\([^)]*\)', ' ', line).replace(',', ' ').replace(';', ' ').split()
+    plain = ' '.join(word.strip('`"\'.:!').casefold() for word in words)
+    nothing = bool(re.match(r'(none|nothing|no (project )?files?)\b', plain))
     keys = []
     for word in words:
-        if (not re.search(r'[/.*\\]', word) and word.casefold() not in EVERYTHING
+        everything = word.casefold() in EVERYTHING and not nothing  # `no project files` names no project.
+        if (not re.search(r'[/.*\\]', word) and not everything
                 and not (workspace and exists(Path(workspace) / word))):
             continue  # Not a path: `and`, `the`, `new`; a file such as `Makefile` counts when it is there.
         key = file_key(word.rstrip('.:'), workspace)
         if key == WHOLE:
             return [WHOLE]
-        if key and key not in keys:
+        if key and working_folder(key):
+            nothing = True  # The working folder: no project file.
+        elif key and key not in keys:
             keys.append(key)
-    return keys or [WHOLE]
+    return keys or ([] if nothing else [WHOLE])
+
+
+def working_folder(key):
+    """True for a claim key inside the agents' working folder (Agent_Working_Folder/…): never a project file."""
+    root = agent_folder.ROOT.casefold()
+    return key == root or key.startswith(root + '/')
+
+
+def outside_claim(paths, claim, workspace=None):
+    """The files among `paths` (an agent's own edits) that its writing task's `claim` does not cover: a project file
+    it was not given. The working folder is always the agent's own; files outside the project are not counted."""
+    found = []
+    for path in paths or []:
+        key = file_key(path, workspace)
+        if key and key != WHOLE and not working_folder(key) and not any(overlaps(key, mine) for mine in claim):
+            found.append(path)
+    return found
 
 
 def exists(path):
@@ -287,7 +314,8 @@ def claims(state, exclude=None):
     for key, record in (state.get('requests') or {}).items():
         handoff = record.get('handoff') or {}
         if record.get('status') in WORKING and record.get('session') != exclude and not handoff.get('readOnly'):
-            found.append((record.get('session'), key, list(handoff.get('files') or [WHOLE])))
+            files = handoff.get('files')  # [] (Files: none) claims no project file; missing claims them all.
+            found.append((record.get('session'), key, [WHOLE] if files is None else list(files)))
     return found
 
 
@@ -389,9 +417,11 @@ def agents_line(state):
                                    if record.get('session') == session and record.get('status') in WORKING),
                                   key=lambda item: item[1].get('capturedAt') or 0):
             handoff = record.get('handoff') or {}
-            files = handoff.get('files') or [WHOLE]
+            files = handoff.get('files')
+            files = [WHOLE] if files is None else files
             work.append((handoff.get('task') or 'a /d task') + ' (' + (
                 'read-only' if handoff.get('readOnly') else 'may change any file' if files == [WHOLE] else
+                'its working folder only' if not files else
                 'changing ' + ' '.join(files[:4]) + (' …' if len(files) > 4 else '')) + ')')
         parts.append(agent_label(state, session) + (' (' + role + ')' if role else '') + ': ' +
                      (' then '.join(work) if work else 'idle'))
@@ -444,8 +474,9 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         'constraints and let the agent explore. Do not guess either: name what you have not checked as something for '
         'the agent to find out, not as a fact or a suspect.\n'
         'One writer per file: a writing task\'s Files line names the only files or folders it may change (without one, '
-        'it claims the whole project), and CLI-MODE refuses a handoff, or an edit of yours, that would change a file '
-        'another running task may change. Work on other files can run in parallel: hand it to an idle agent '
+        'it claims the whole project; `none` claims no project file, for work that writes only in its working folder), '
+        'and CLI-MODE refuses a handoff, or an edit of yours, that would change a file another running task may '
+        'change; a result names any edit outside its claim. Work on other files can run in parallel: hand it to an idle agent '
         '(`--agent <name>`), or start another ' + kind + ' like ' + name + ' for it with `--agent new` (15-40 s; at '
         'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn.\n'
         'To hand off, all in one message: (1) a line that opens with this attribution, exactly as written but with the '
@@ -704,7 +735,7 @@ class AutoMixin:
                 raise RuntimeError(conflict_text(latest, found, files) + ' Nothing was handed off.')
             self.store.capture(latest, request, text, session=session)
             latest['requests'][request]['handoff'] = dict(task=task, readOnly=bool(read_only),
-                                                          **({'files': files} if files else {}))
+                                                          **({'files': files} if files is not None else {}))
             labels = latest.setdefault('followLabels', {})  # The follow's pane row: `<Agent NAME> · <goal>`.
             labels.pop(request, None)
             labels[request] = label
@@ -803,11 +834,20 @@ class AutoMixin:
                    ((view['receipt'] or {}).get('changes') or {}).get('paths') or []]
         expected = [path for path, key in changed if path.casefold() not in mine and key and key != WHOLE
                     and any(overlaps(key, claim) for claim in near)]
+        claim = None if handoff.get('readOnly') else handoff.get('files')
+        outside = []
+        if claim is not None and WHOLE not in claim:  # Its Files line named what it may change: did it keep to it?
+            if own is not None:
+                theirs = own
+            else:  # Its edits name no files: the receipt's changes that no work running alongside explains.
+                other = alongside(latest, request_id)
+                theirs = [path for path, key in changed if key and not any(overlaps(key, item) for item in other)]
+            outside = outside_claim(theirs, claim, self.store.workspace)
         text = relay_view.host_text(
             request_id, label, status, public, view['receipt'], read_only=handoff.get('readOnly'),
             task=task_file(self.store.workspace, task).as_posix() if task and TASK_ID.fullmatch(task) else None,
             stopped=stopped, access=(agent_entry(latest, record.get('session')) or {}).get('settings'),
-            touched=own, answer_max=answer_max or relay_view.HOST_ANSWER_MAX, alongside=expected)
+            touched=own, answer_max=answer_max or relay_view.HOST_ANSWER_MAX, alongside=expected, outside=outside)
         with self.store.edit() as latest:
             saved = (latest.get('requests') or {}).get(request_id)
             if saved:

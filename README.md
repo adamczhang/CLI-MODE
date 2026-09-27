@@ -125,7 +125,9 @@ What to know about AUTO:
 - **The agent's questions come to you.** If it stops to ask permission, Claude tells you what it asks; answer
   with `/cli approve` or `/cli deny`, and it goes on with Claude's task.
 - **Several agents, one writer per file.** Each task Claude writes names the files it may change, and no two
-  running tasks, nor Claude itself, change the same file; a task that names none claims the whole project. So
+  running tasks, nor Claude itself, change the same file; a task without a Files line claims the whole project,
+  and `Files: none` (work that writes only in the agent's own working folder, such as a simulation) claims no
+  project file. If an agent edits a project file its task didn't name, Claude's copy of the result says so. So
   work on separate files runs in parallel, and Claude can start more agents like your AUTO agent for it
   (`Codex-02`, `Codex-03`, up to the agent limit). Reviews and research run alongside as read-only handoffs,
   which refuse writes. Change receipts and overlap warnings work as in DIRECT, and an undo (ask Claude) puts back

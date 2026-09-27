@@ -552,6 +552,10 @@ class Run:
                 measure['atOnce'] = any(a[0] != b[0] and a[1] < b[2] and b[1] < a[2]
                                         for a, b in itertools.combinations(spans, 2))
                 self.check(name + ': two agents at once', measure['atOnce'], json.dumps(agents))
+            if name == 'complex: simulation':  # It writes only in the agent's working folder: `Files: none`.
+                self.check(name + ': claims no project file', made and all(
+                    auto_mode.WHOLE not in ((record.get('handoff') or {}).get('files') or [auto_mode.WHOLE])
+                    for record in made), json.dumps(measure['files']))
             if kind == 'review':
                 self.check(name + ': read-only', made and all((record.get('handoff') or {}).get('readOnly')
                                                               for record in made), json.dumps(measure['readOnly']))

@@ -207,6 +207,66 @@ class Handoffs(AutoBase):
         self.assertEqual(text.split('\n')[1], 'CHECK: look: files it did not edit changed while it worked.')
         self.assertNotIn('app/two.py changed while it worked', text)
 
+    def test_files_none_claims_no_project_file(self):
+        """Work that writes only in the agent's working folder (the live matrix's simulation claimed the whole project
+        and would have held every parallel writer back) says `Files: none` and blocks nobody."""
+        state = self.auto(backup=True)
+        config = auto_mode.load(self.data)
+        auto_mode.save(self.data, dict(config, strength='normal'))  # Claude's own edit below: no size limit.
+        self.write_task('t1', 'Goal: simulate the fuel costs.\nFiles: none (it writes only in its working folder)')
+        first = self.ctl('handoff', '--task', 't1')['requestId']  # Not drained: still running.
+        self.assertEqual(self.store().read()['requests'][first]['handoff']['files'], [])  # Kept, not dropped.
+        self.write_task('t2', 'Goal: fix a.\nFiles: app/a.py')
+        second = self.ctl('handoff', '--task', 't2', '--agent', 'backup')  # A writer alongside: not refused.
+        self.assertEqual(self.store().read()['requests'][second['requestId']]['session'], state['auto']['backup'])
+        edit = dict(old_string='x', new_string='y')
+        self.assertEqual(self.pre('Edit', file_path=str(self.project / 'app' / 'b.py'), **edit), {})
+        self.assertIn(self.name() + ' (AUTO agent): t1 (its working folder only)',
+                      auto_mode.agents_line(self.store().read()))
+        self.assertEqual(auto_mode.claims(self.store().read(), exclude=state['auto']['backup'])[0][2], [])
+
+    def test_edits_outside_a_tasks_claim_are_named(self):
+        """Its Files line is what a task may change; an edit of its own beyond it is named, and the verdict asks for a
+        look. The working folder is the agent's own and never counts."""
+        for name in ('app/one.py', 'app/extra.py'):
+            (self.project / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.project / name).write_text('original\n', encoding='utf-8')
+        for words in (['init', '-q'], ['add', '-A'], ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm',
+                                                      'base']):
+            subprocess.run(['git'] + words, cwd=self.project, check=True, capture_output=True)
+        state = self.auto()
+        notes = self.project / 'Agent_Working_Folder' / 'notes.md'
+        original = self.backend.start
+
+        def start(owned, args, timeout=60):
+            process = original(owned, args, timeout)
+            if '--file' not in args:
+                return process
+            edited = [self.project / 'app/one.py', self.project / 'app/extra.py', notes]
+            for path in edited:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('changed by this agent\n', encoding='utf-8')
+            return runtime_process([dict(type='touched', toolCallId='call-1', kind='edit',
+                                         locations=[dict(path=str(path)) for path in edited]),
+                                    dict(type='message', text='Done.'), runtime_result()])
+        self.backend.start = start
+        self.write_task('t1', 'Goal: fix one.\nFiles: app/one.py')
+        mine = self.ctl('handoff', '--task', 't1')['requestId']
+        self.drain(state['auto']['agent'])
+        text = self.ctl('relay', '--request', mine, '--for-host')['text']
+        self.assertIn('OUTSIDE ITS CLAIM: app/extra.py: its own edits, though its Files line did not name them', text)
+        self.assertEqual(text.split('\n')[1], 'CHECK: look: it edited files outside its Files claim.')
+        self.assertNotIn('notes.md', text.split('OUTSIDE ITS CLAIM:')[1].split('\n')[0])  # Its working folder.
+        self.write_task('t2', 'Goal: simulate.\nFiles: none')  # No project file: any project edit is outside.
+        second = self.ctl('handoff', '--task', 't2')['requestId']
+        self.drain(state['auto']['agent'])
+        text = self.ctl('relay', '--request', second, '--for-host')['text']
+        self.assertIn('OUTSIDE ITS CLAIM: app/one.py, app/extra.py:', text)
+        self.write_task('t3', 'Goal: fix it all.')  # No Files line: the whole project is its claim.
+        third = self.ctl('handoff', '--task', 't3')['requestId']
+        self.drain(state['auto']['agent'])
+        self.assertNotIn('OUTSIDE ITS CLAIM', self.ctl('relay', '--request', third, '--for-host')['text'])
+
     def test_a_new_agent_that_does_not_start_says_so_when_it_wakes_claude(self):
         self.auto()
         self.write_task('t2', 'Goal: fix the command line.\nFiles: app/cli.py')
@@ -337,8 +397,12 @@ class Handoffs(AutoBase):
     def test_the_files_line_says_what_a_task_claims(self):
         (self.project / 'Makefile').write_text('all:\n', encoding='utf-8')
         cases = {
-            'Goal: x': ['*'], 'Files: none': ['*'], 'Files: the parser module': ['*'], 'Files: everything': ['*'],
+            'Goal: x': ['*'], 'Files: the parser module': ['*'], 'Files: everything': ['*'],
             'Files: ../outside.py': ['*'],
+            # No project file: work that writes only in the agent's working folder.
+            'Files: none': [], 'Files: none (it writes only in its working folder)': [], 'Files: nothing': [],
+            'Files: no project files': [], 'Files: Agent_Working_Folder/Codex-01/sim': [],
+            'Files: none, except tests/': ['tests'],
             'Files: app/parser.py, tests/ (new tests)': ['app/parser.py', 'tests'],
             'files: `src/*.py`; README.md.': ['src', 'readme.md'],
             'Files: ./app/../lib/x.py and Makefile': ['lib/x.py', 'makefile'],
@@ -419,6 +483,9 @@ class Handoffs(AutoBase):
                                               'reported errors; another agent edited the same files; a read-only task '
                                               'changed files.')
         self.assertNotIn('NOT ITS OWN EDITS', text)  # Not known which were its own: nothing said.
+        outside = relay_view.host_text('r1', 'A', 'completed', batch, receipt, outside=['c.py'])
+        self.assertIn('OUTSIDE ITS CLAIM: c.py: its own edits', outside)
+        self.assertIn('it edited files outside its Files claim', outside.split('\n')[1])
         # Several writers: the receipt holds the others' files too, named apart from its own tools' edits.
         own = relay_view.host_text('r1', 'A', 'completed', [], receipt, touched=['A.py'])
         self.assertIn('NOT ITS OWN EDITS: b.py changed while it worked, but not by its own edit tools', own)

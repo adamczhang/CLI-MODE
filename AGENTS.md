@@ -80,8 +80,9 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   never join a user's relay. Claude gets the AUTO rule once (`auto_mode.rule`), then only what changed
   (`auto_mode.status`), and
   the PreToolUse hook refuses Claude's larger project edits and coding subagents by delegation strength. One
-  writer per file: a task's Files line is its claim (`auto_mode.task_files`, `conflict`), and a handoff or an edit
-  of Claude's that would change a claimed file is refused; `handoff --agent new` starts an extra agent like the
+  writer per file: a task's Files line is its claim (`auto_mode.task_files`, `conflict`; `Files: none` claims no
+  project file), and a handoff or an edit of Claude's that would change a claimed file is refused, while a result
+  names the agent's own edits outside its claim (`auto_mode.outside_claim`); `handoff --agent new` starts an extra agent like the
   AUTO agent for work in parallel (`start_extra`). Codex keeps DIRECT only (it has no wake-up), so the
   Codex golden record does not change.
 - **Codex reply path** (Codex only): `route.codex_output()` returns additionalContext telling the model
