@@ -165,6 +165,7 @@ async function main(input, cancellation, checkCancellation, progress) {
   let sawStart = false, observationGap = false, repairedCursor = false, escalated = false;
   const directCalls = new Map();  // An agent's terminal or file-write requests to ACPX, by JSON-RPC id.
   const directKinds = new Set();  // The kinds of those this turn, each reported once.
+  const askedKinds = new Set();  // The kinds the agent asked permission for this turn ('*': one with no kind).
   let workedSinceText = false, segment = 0;  // Tool calls since the last text, and paragraphs they have split.
   try {
     const locate = () => runtime.findSession({sessionKey: input.session, agent: input.profile, cwd: input.workspace});
@@ -225,8 +226,13 @@ async function main(input, cancellation, checkCancellation, progress) {
             if (event.type === 'turn_started') sawStart = true;
             if (event.type === 'message') {
               if (!sawStart) { observationGap = true; continue; }
+              const asked = event.message.method === 'session/request_permission' ? permissionRequest(event.message)
+                : undefined;
+              if (asked) askedKinds.add(asked.kind ?? '*');
               const call = directCall(event.message);
-              if (call && !directKinds.has(call.kind)) {
+              // Asking first, then running the command through ACPX's terminal is ACP's usual way: only a call
+              // of a kind not asked for this turn is one made without asking.
+              if (call && !askedKinds.has(call.kind) && !askedKinds.has('*') && !directKinds.has(call.kind)) {
                 // The agent acts without asking first: approving it can't be limited to one kind (dispatch keeps it).
                 directKinds.add(call.kind);
                 write({type: 'direct', kind: call.kind});

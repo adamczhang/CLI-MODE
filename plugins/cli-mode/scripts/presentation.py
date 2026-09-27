@@ -78,37 +78,54 @@ def host_note_step(note):
     if not isinstance(note, dict) or not note.get('placeholder'):
         return None
     return ('First, for the agents to read: in the project file `' + note['file'] + '`, replace the line `' +
-            note['placeholder'] + '` (under `' + note['heading'] + '`) with ' + HOST_NOTE_WORDS + ' Use the Edit '
-            'tool on that one line (no headings in the note), and change nothing else in the file.')
+            note['placeholder'] + '` (under `' + note['heading'] + '`) with ' + HOST_NOTE_WORDS + ' Read that file, '
+            'then use the Edit tool on that one line (no headings in the note), and change nothing else in the file.')
 
 
 def approval_rule(asked):
-    """The ACPX rule `/cli approve` adds for a request: its kind (edit, execute...), else its exact title.
+    """The ACPX rule `/cli approve` adds for a request: its kind (edit, execute...), else `other`.
 
     A kind, because an agent retrying a refused step often words it differently (in a live probe, a write titled
-    with a full path came back titled with a relative one), so an exact title would stop it again.
+    with a full path came back titled with a relative one; Claude retried `git tag x` as `git tag x; git tag
+    --list x`), so an exact title would stop it again. A request of no kind CLI-MODE knows is ACPX's `other`
+    (ACPX gives a request without a kind that one too), so its approval is every tool of no named kind, for that
+    turn only (lasting() keeps it out of "always"), and its question says so.
     """
-    return asked.get('kind') if asked.get('kind') in KIND_WORDS else asked.get('title')
+    return asked.get('kind') if asked.get('kind') in KIND_WORDS else 'other'
 
 
 def approval_words(asked):
     return KIND_WORDS.get(asked.get('kind'), 'use this tool')
 
 
+def lasting(asked):
+    """Whether `/cli approve always` can keep this request's rule for later turns: only a kind can.
+
+    A request of no kind CLI-MODE knows is approved by its exact title (approval_rule), and an agent titles each
+    call anew (Claude's commands on Windows come as kind `other`, titled with a description of that one call), so
+    such a rule would never match again.
+    """
+    return asked.get('kind') in KIND_WORDS
+
+
 def permission_stop(label, access_name, asked=None, direct=False):
     """The question a stopped turn asks. `direct`: the agent runs commands and writes files without asking first,
     so an approved turn can't be limited to one kind for it, and the question says so."""
-    if not asked or not approval_rule(asked):
+    what = ' '.join(((asked or {}).get('detail') or (asked or {}).get('title') or '').split())
+    if not asked or not (what or asked.get('kind') in KIND_WORDS):
         return (label + ' asked for a permission that CLI-MODE could not read, so the turn stopped there under ' +
                 access_name + ' access. Use /cli access and choose allow to let it continue, or ask for work that '
                 'needs no approval.')
     words = approval_words(asked)
-    head = (label + ' asks to ' + words + ': ' + ' '.join((asked.get('detail') or asked.get('title')).split()) +
-            '\nIts turn stopped for your answer (' + access_name + ' access). ')
+    head = (label + ' asks to ' + words + (': ' + what if what else '') + '\nIts turn stopped for your answer (' + access_name + ' access). ')
     if direct:
         return head + ('/cli approve lets it carry on, and for that one turn it can also run commands and edit files '
                        'without asking (it does not ask first). /cli deny tells it no. To let it act freely, '
                        '/cli access allow.')
+    if not lasting(asked):
+        return head + ('It does not say what kind of tool this is, so /cli approve lets it carry on with this and, '
+                       'for that one turn, any other tool of no named kind; /cli deny tells it no. It can\'t be '
+                       'approved always: to let it act freely, /cli access allow.')
     return head + ('/cli approve lets it ' + words + ' and carry on, /cli approve always lets it ' + words +
                    ' from now on, /cli deny tells it no.')
 

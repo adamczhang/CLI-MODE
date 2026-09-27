@@ -33,7 +33,10 @@ lands in one of three zones below; know which before editing.
   the project brief (`/cli brief`, a BRIEF file in the working folder's root) is named in every task. The brief
   has three sections (`agent_folder.read_brief`/`write_brief`): your points, the host's dated notes (a new agent's
   activation returns `hostNote` and the host fills it in, `presentation.HOST_NOTE_RULE`) and the running agents
-  (`state.team_lines`, rewritten before each task, after each turn and on close). Each owned entry's `timeout` (minutes) is its ACPX owner TTL
+  (`state.team_lines`, rewritten before each task, after each turn and on close). Every change edits only its own
+  lines under a lock (`agent_folder._edit`), so text written by hand stays; each conversation keeps its agent list
+  in the working folder's hidden `.cli-mode` folder, and the brief lists every conversation's agents
+  (`agent_folder.write_team`). Each owned entry's `timeout` (minutes) is its ACPX owner TTL
   (`acpx.AcpxBackend.ttl`); `/cli attach` moves an open owned entry from another conversation in the folder.
 - Approvals are stop, ask, continue (ACPX shared sessions can't hold a request open): the bridge reports the
   agent's ACP permission request, `dispatch.remember_approval` keeps it on the owned entry as `approval`,
@@ -98,7 +101,7 @@ files) and `dist/cli-mode-claude-<v>.zip` (without the `CODEX_ONLY` files).
 | `test_host.py`, `test_claude_hook.py` | Claude routing, relay, colour, menus, the Stop guard, the fast path | a Codex or shared change breaks Claude behaviour |
 | `test_package_reproducibility.py` | identical zips from LF and CRLF checkouts | packaging depends on line endings |
 | `checks/claude_install_smoke.py`, `checks/codex_install_smoke.py` | real installs in a throwaway `CLAUDE_CONFIG_DIR` or `CODEX_HOME` (no cost) | a manifest, hook registration or installer breaks |
-| `checks/claude_user_validation.py` (35 turns), `claude_stop_guard_live.py`, `live_parity_probe.py` | the installed plugin, live | real-world behaviour regresses. **These spend the user's quota: ask first** |
+| `checks/claude_user_validation.py` (35 turns), `claude_stop_guard_live.py`, `live_parity_probe.py`, `checks/codex_release_validation.py`, `checks/shared_brief_live.py` (one project from both hosts at once) | the installed plugin, live | real-world behaviour regresses. **These spend the user's quota: ask first** |
 
 **Rules by zone:**
 - **Claude-only change:** the Codex golden record must stay byte-identical. If it moves, the change leaked

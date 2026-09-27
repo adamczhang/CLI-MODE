@@ -49,8 +49,11 @@ def rate_limits(timeout=40):
 
     def reply(ident):
         while True:
-            message = json.loads(lines.get(timeout=timeout))
-            if message.get('id') == ident and 'method' not in message:
+            try:
+                message = json.loads(lines.get(timeout=timeout))
+            except ValueError:
+                continue  # Not JSON-RPC (a notice the CLI printed): the answer is still to come.
+            if isinstance(message, dict) and message.get('id') == ident and 'method' not in message:
                 if 'error' in message:
                     raise RuntimeError('Codex: ' + json.dumps(message['error'])[:200])
                 return message.get('result') or {}

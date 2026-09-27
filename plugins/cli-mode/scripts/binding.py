@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from state import (Store, TIMEOUT_RANGE, agent_entry, agent_label, agent_limit, default_timeout, last_used, live_agents,
-                   save_default_timeout, team_lines, ACTS_WITHOUT_ASKING)
+                   save_default_timeout, team_of, ACTS_WITHOUT_ASKING)
 
 
 def duration(minutes):
@@ -120,7 +120,7 @@ class BindingMixin:
         # Its attached-file copies go with it (agent_folder.attach); its own files and saved answers stay.
         workspace = owned.get('workspace') or self.store.workspace
         agent_folder.clear_attachments(workspace, owned.get('alias'))
-        agent_folder.write_team(workspace, team_lines(self.store.read()))  # The brief no longer lists it.
+        agent_folder.write_team(workspace, self.store.key, *team_of(self.store.read()))  # The brief no longer lists it.
         return None
 
     def off(self):
@@ -649,7 +649,7 @@ class BindingMixin:
             # A new agent: the brief lists it now, and gets an entry for the host's note on what the conversation
             # has been working on, which the host writes as it shows this activation (hostNote).
             workspace = owned.get('workspace') or self.store.workspace
-            agent_folder.write_team(workspace, team_lines(latest))
+            agent_folder.write_team(workspace, self.store.key, *team_of(latest))
             note = agent_folder.add_host_note(workspace, time.strftime('%Y-%m-%d %H:%M'),
                                               agent_label(latest, owned['name']))
             return dict(latest, activated=owned['name'], **({'hostNote': note} if note else {}))

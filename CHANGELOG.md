@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+Found by a code review of 0.3.8.
+
+### Project brief (both hosts)
+- **Text written by hand stays.** The list of running agents is kept current before every task, and each update rewrote the whole brief, dropping anything that was not one of CLI-MODE's own lines: a paragraph of your own, a section of your own, or (after a `##` line in a host's note) the later host notes. Each change now edits only its own lines.
+- **Every conversation's agents are listed.** The brief belongs to the project, but each conversation (Claude Code's or Codex's) listed only its own agents, so two conversations in one folder removed each other's. Each now keeps its list in `Agent_Working_Folder/.cli-mode/`, and the brief shows them all; a list its conversation stopped updating is dropped once its agents would have exited.
+- **No write is lost between CLI-MODE's own processes.** Agents working at once update the brief under one lock.
+- **No unwritten host note with the instant display.** With `/cli display instant` there is no turn in which the host could write its note, so the waiting entry is taken out again (Claude Code).
+
+### Approvals (both hosts)
+- **Agents that ask first are no longer marked as acting without asking.** Running an approved command through ACPX's terminal (ACP's usual way) marked the agent, so its later questions used the wording for agents that don't ask, and `/cli approve always` was refused. Only a command or file write of a kind the agent didn't ask for in that turn marks it now.
+- **An approved turn for an agent that acts without asking allows what its question said.** The question says that for that one turn it can run commands and edit files, but when Grok did ask (to write a file after an approved command) the turn stopped again. Commands and file edits it asks about in that turn are now approved too.
+- **Approving a request of no kind CLI-MODE knows now works when the agent retries it.** Claude's commands come as kind `other`, titled with a description of each call, and were approved by that exact title; Claude retried `git tag x` as `git tag x; git tag --list x` and was stopped again. `/cli approve` now allows, for that one turn, any tool of no named kind, and its question says so. "Approve always" is no longer offered for such a request (it would cover every unnamed tool for good): `/cli approve always` says why and points to `/cli access allow`.
+
+### /cli usage (both hosts)
+- Copilot: an answer from GitHub in an unexpected shape reports why it can't be read, not "its usage helper failed". Codex CLI: a line from `codex app-server` that isn't JSON-RPC is skipped rather than ending the lookup.
+
 ## 0.3.8 — Honest approvals and /cli usage — 2026-09-26
 
 Found by a full live validation of 0.3.7 on the Codex host (`checks/codex-validation-plan.md`).

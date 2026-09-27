@@ -369,6 +369,20 @@ class SharedRuntime(unittest.TestCase):
         finally:
             self.assertTrue(control.off()['shutdownComplete'])
 
+    def test_a_command_run_after_asking_does_not_mark_the_agent(self):
+        control = Controller(Store('runtime-asked', self.workspace, self.root / 'asked'), self.backend)
+        try:
+            control.frontend()
+            control.activate('gemini-3.8-flash-high', 'prompt')
+            with control.store.edit() as state:
+                state['owned'][0]['approveAlways'] = ['execute']  # The command it asks for is approved.
+            events = []
+            control.send('/d asked-command', output=events.append)
+            self.assertEqual([e['text'] for e in events if e['type'] == 'message'], ['The command ran.'])
+            self.assertFalse(control.store.read()['owned'][0].get('actsWithoutAsking'))
+        finally:
+            self.assertTrue(control.off()['shutdownComplete'])
+
     def test_an_approved_kind_is_allowed_by_acpx_on_the_next_prompt(self):
         control = Controller(Store('runtime-approve', self.workspace, self.root / 'approve'), self.backend)
         try:

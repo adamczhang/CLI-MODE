@@ -93,10 +93,28 @@ class Words(unittest.TestCase):
         for answer in ('/cli approve lets it run commands', '/cli approve always', '/cli deny'):
             self.assertIn(answer, text)
 
-    def test_a_kind_is_approved_and_an_odd_tool_by_its_title(self):
+    def test_a_kind_is_approved_and_an_odd_tool_as_acpxs_other(self):
         self.assertEqual(presentation.approval_rule({'kind': 'edit', 'title': 'Write a.txt'}), 'edit')
-        self.assertEqual(presentation.approval_rule({'kind': 'other', 'title': 'Use browser'}), 'Use browser')
+        # Not its exact title: the agent words a retry anew (Claude: `git tag x` came back `git tag x; git tag -l x`).
+        self.assertEqual(presentation.approval_rule({'kind': 'other', 'title': 'Use browser'}), 'other')
+        self.assertEqual(presentation.approval_rule({'title': 'Use browser'}), 'other')
         self.assertIn('use this tool: Use browser', presentation.permission_stop('X', 'Prompt', {'title': 'Use browser'}))
+
+    def test_a_request_of_no_known_kind_says_what_approving_allows(self):
+        # Claude's commands on Windows: kind `other`, titled with a description of that one call.
+        asked = {'kind': 'other', 'title': 'List local branches', 'detail': 'git branch'}
+        text = presentation.permission_stop('Claude CLA-ED', 'Prompt', asked)
+        self.assertTrue(text.startswith('Claude CLA-ED asks to use this tool: git branch\n'))
+        self.assertIn('for that one turn, any other tool of no named kind', text)
+        self.assertNotIn('approve always', text)
+        self.assertIn('can\'t be approved always', text)
+        self.assertIn('could not read', presentation.permission_stop('X', 'Prompt', {'kind': 'other'}))
+
+    def test_an_agent_that_acts_without_asking_is_approved_what_its_question_said(self):
+        target = {'settings': {'access': 'prompt'}, 'actsWithoutAsking': True}
+        self.assertEqual(approval_policy({'approve': ['execute']}, target)['autoApprove'],
+                         ['execute', 'edit', 'read', 'search'])
+        self.assertIsNone(approval_policy(None, target))  # Nothing approved: nothing added.
 
     def test_an_agent_that_acts_without_asking_is_told_honestly(self):
         text = presentation.permission_stop('Grok GRO-4K', 'Prompt', {'kind': 'execute', 'detail': 'git status'},
@@ -184,6 +202,16 @@ class Flow(unittest.TestCase):
         self.assertEqual(state['turnRoute']['route'], 'hint')
         self.assertIn('runs commands and edits files without asking first', state['turnRoute']['text'])
         self.assertIn('approval', state['owned'][0])  # Still waiting: /cli approve answers it for one turn.
+        self.prompt('/cli approve')
+        self.assertEqual(self.store.read()['turnRoute']['route'], 'direct')
+
+    def test_always_is_refused_for_a_request_of_no_known_kind(self):
+        self.ask('other', 'List local branches')  # Its rule would be this one title, which never comes again.
+        self.prompt('/cli approve always')
+        state = self.store.read()
+        self.assertEqual(state['turnRoute']['route'], 'hint')
+        self.assertIn('does not say what kind of tool it is', state['turnRoute']['text'])
+        self.assertNotIn('approveAlways', state['owned'][0])
         self.prompt('/cli approve')
         self.assertEqual(self.store.read()['turnRoute']['route'], 'direct')
 
@@ -369,6 +397,99 @@ class Helpers(unittest.TestCase):
             copilot.main()
         self.assertIn('different account', printed.call_args[0][0])
 
+    def test_copilot_reports_an_answer_it_cant_read_as_unavailable(self):
+        copilot = self.load('copilot')
+        answer = {'quota_snapshots': {'chat': {'entitlement': 300, 'remaining': None, 'percent_remaining': None}}}
+        with patch.object(copilot, 'copilot_login', return_value='someone'), \
+                patch.object(copilot, 'gh', side_effect=[{'login': 'someone'}, answer]), \
+                patch('sys.argv', ['usage-summary.py']), patch('builtins.print') as printed:
+            copilot.main()  # A null count: no traceback, the shared unavailable summary.
+        summary = json.loads(printed.call_args[0][0])
+        self.assertEqual(summary['status'], 'unavailable')
+        self.assertIn('not in a form', summary['reason'])
+
+    def test_codex_skips_lines_that_are_not_json_rpc(self):
+        import io
+        codex = self.load('codex')
+        lines = ['Codex app-server starting\n', json.dumps({'id': 1, 'result': {}}) + '\n',
+                 json.dumps({'id': 2, 'result': {'rateLimits': {'planType': 'plus'}}}) + '\n']
+
+        class Process:
+            stdin, stdout = io.StringIO(), iter(lines)
+
+            def wait(self, timeout=None):
+                return 0
+        with patch.object(codex.shutil, 'which', return_value='codex'), \
+                patch.object(codex.subprocess, 'Popen', return_value=Process()):
+            self.assertEqual(codex.rate_limits(timeout=5), {'rateLimits': {'planType': 'plus'}})
+
+
+class BriefEdits(unittest.TestCase):
+    """The brief is edited in place: each change touches its own lines, and every conversation's agents show."""
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.project = Path(temp.name)
+        self.path = agent_folder.brief_path(self.project)
+
+    def team(self, conversation, *names, hold=3600):
+        lines = ['- Grok ' + name + ': folder `Agent_Working_Folder/' + name + '/`, idle.' for name in names]
+        agent_folder.write_team(self.project, conversation, lines, hold)
+
+    def test_your_own_text_stays(self):
+        agent_folder.add_brief(self.project, 'Use tabs.')
+        self.path.write_text(self.path.read_text(encoding='utf-8') + '\nWe ship on Fridays.\n\n## Conventions\n\n'
+                             '# Not a list\nKeep it small.\n', encoding='utf-8')
+        self.team('one', 'ART')
+        agent_folder.add_brief(self.project, 'Tests in tests/.')
+        agent_folder.add_host_note(self.project, '2026-09-26 10:00', 'Grok ART')
+        self.team('one', 'ART', 'BOB')
+        text = self.path.read_text(encoding='utf-8')
+        for kept in ('We ship on Fridays.', '## Conventions', '# Not a list', 'Keep it small.'):
+            self.assertIn(kept, text)
+        self.assertEqual(agent_folder.read_brief(self.project)[0], ['Use tabs.', 'Tests in tests/.'])
+        self.assertEqual(len(agent_folder.read_brief(self.project)[2]), 2)
+
+    def test_a_heading_inside_a_host_note_loses_no_later_note(self):
+        first = agent_folder.add_host_note(self.project, '2026-09-26 10:00', 'Grok ART')
+        self.path.write_text(self.path.read_text(encoding='utf-8').replace(
+            first['placeholder'], '## Summary\nParser rewrite.'), encoding='utf-8')  # A Codex host's note.
+        self.team('one', 'ART')
+        agent_folder.add_host_note(self.project, '2026-09-26 11:00', 'Grok BOB')
+        self.team('one', 'ART', 'BOB')
+        text = self.path.read_text(encoding='utf-8')
+        for kept in (first['heading'], 'Parser rewrite.', '### 2026-09-26 11:00, when Grok BOB started'):
+            self.assertIn(kept, text)
+
+    def test_every_conversation_in_the_folder_is_listed(self):
+        self.team('claude', 'ART')
+        self.team('codex', 'BOB')  # Another conversation in the same project, on either host.
+        self.assertEqual(len(agent_folder.read_brief(self.project)[2]), 2)
+        self.team('claude')  # Its last agent closed: only the other conversation's agent is left.
+        team = agent_folder.read_brief(self.project)[2]
+        self.assertEqual(len(team), 1)
+        self.assertIn('Agent_Working_Folder/BOB/', team[0])
+
+    def test_a_list_not_kept_up_is_dropped(self):
+        self.team('gone', 'ART', hold=-1)  # Its conversation stopped updating it longer ago than its agents stay up.
+        self.team('here', 'BOB')
+        team = agent_folder.read_brief(self.project)[2]
+        self.assertEqual(len(team), 1)
+        self.assertIn('Agent_Working_Folder/BOB/', team[0])
+
+    def test_writers_at_once_lose_nothing(self):
+        import threading
+
+        def add(prefix):
+            for index in range(15):
+                agent_folder.add_brief(self.project, prefix + str(index))
+        threads = [threading.Thread(target=add, args=(prefix,)) for prefix in 'ab']
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(len(agent_folder.read_brief(self.project)[0]), 30)
+
 
 @unittest.skipUnless(HOOK.is_file(), 'The Claude Code hook is not in the Codex package')
 class HostNote(unittest.TestCase):
@@ -387,11 +508,19 @@ class HostNote(unittest.TestCase):
         self.assertIn('Nothing yet, this conversation has just started.', text)
         self.assertLess(text.index('replace the line'), text.index('CARD'))
         self.assertNotIn(claude.COMPLETE, text)  # This turn uses one tool: the file edit.
+        self.assertIn('Then post its reply below as this turn\'s last message, shown exactly as given', text)
 
     def test_an_instant_reply_has_no_turn_to_write_it_in(self):
-        with patch.object(claude, 'STYLE', 'block'):
-            reply = claude.show_result(self.event(), dict(text='CARD', hostNote=self.NOTE))
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        project = Path(temp.name)
+        agent_folder.add_brief(project, 'Use tabs.')
+        note = agent_folder.add_host_note(project, '2026-09-26 10:00', 'Grok GRO-4K')
+        with patch.object(claude, 'STYLE', 'block'), patch.dict(os.environ, {'CLAUDE_PROJECT_DIR': str(project)}):
+            reply = claude.show_result(self.event(), dict(text='CARD', hostNote=note))
         self.assertEqual(reply['reason'], 'CARD')
+        # Its waiting entry is taken out again, rather than left for agents to read forever.
+        self.assertEqual(agent_folder.read_brief(project)[:2], (['Use tabs.'], []))
 
     def test_only_the_notes_own_edit_is_approved(self):
         temp = tempfile.TemporaryDirectory()

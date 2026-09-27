@@ -67,6 +67,22 @@ createInterface({input: process.stdin}).on('line', line => {
         params: {sessionId: params.sessionId, command: 'git', args: ['status']}});
       return;
     }
+    if (text === 'asked-command') {
+      // ACP's usual way: ask first, then run the approved command through the client's terminal.
+      pending.set('asked-fixture', () => {
+        pending.set('asked-terminal', response => {
+          message(request, response.error ? 'The command was refused.' : 'The command ran.');
+          finish(request);
+        });
+        send({id: 'asked-terminal', method: 'terminal/create',
+          params: {sessionId: params.sessionId, command: 'git', args: ['--version']}});
+      });
+      send({id: 'asked-fixture', method: 'session/request_permission', params: {
+        sessionId: params.sessionId, toolCall: {toolCallId: 'run', title: 'git --version', kind: 'execute',
+          status: 'pending', rawInput: {command: 'git --version'}},
+        options: [{optionId: 'allow', name: 'Allow', kind: 'allow_once'}, {optionId: 'deny', name: 'Deny', kind: 'reject_once'}]}});
+      return;
+    }
     if (text === 'split-message') {
       // One message ID around a tool call, as Grok Build sends it: two paragraphs, not one run-on line.
       const chunk = words => update(request, {sessionUpdate: 'agent_message_chunk', messageId: 'one-message',

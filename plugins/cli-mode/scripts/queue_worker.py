@@ -15,7 +15,7 @@ import changes
 import host
 import menu_view
 import relay_view
-from state import agent_entry, agent_label, passing_line, team_lines
+from state import agent_entry, agent_label, passing_line, team_of
 
 
 def request_label(state, request_id):
@@ -916,7 +916,7 @@ class QueueMixin:
                 self._note_touched(state, request_id, workspace)
                 state['inflight'].pop(op, None)
             self._keep_answer(request_id, workspace, name, text)
-            agent_folder.write_team(workspace, team_lines(self.store.read()))  # Idle now, with its answer.
+            agent_folder.write_team(workspace, self.store.key, *team_of(self.store.read()))  # Idle now, with its answer.
             return dict(requestId=request_id, **result)
         except BaseException as exc:
             done = receipt() if not isinstance(exc, KeyboardInterrupt) else None
@@ -946,7 +946,7 @@ class QueueMixin:
                     state['inflight'].pop(op, None)
             if not isinstance(exc, KeyboardInterrupt) and status != 'rejected':
                 self._keep_answer(request_id, workspace, name, text)  # A failed turn may still have answered.
-                agent_folder.write_team(workspace, team_lines(self.store.read()))
+                agent_folder.write_team(workspace, self.store.key, *team_of(self.store.read()))
             raise
         finally:
             path.unlink(missing_ok=True)

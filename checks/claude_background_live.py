@@ -163,8 +163,14 @@ def newest_name(session, workspace):
 
 def brief_edit(tool):
     """The host writing its note: a file edit of the project brief (and the read Claude Code requires first)."""
-    return tool['name'] in ('Read', 'Edit', 'MultiEdit', 'Write') and (tool.get('path') or '').replace(
+    return tool['name'] in ('Read', 'Grep', 'Edit', 'MultiEdit', 'Write') and (tool.get('path') or '').replace(
         '\\', '/').endswith('Agent_Working_Folder/BRIEF.md')
+
+
+def brief_block(block):
+    """brief_edit() for a tool_use block of a session's events."""
+    tool_input = block.get('input') or {}
+    return brief_edit(dict(name=block.get('name'), path=tool_input.get('file_path') or tool_input.get('path')))
 
 
 def host_note(workspace):
@@ -183,7 +189,7 @@ def summary(events):
     result = next((event for event in reversed(events) if event.get('type') == 'result'), {})
     return dict(
         tools=[dict(name=block.get('name'), command=(block.get('input') or {}).get('command'),
-                    path=(block.get('input') or {}).get('file_path'))
+                    path=(block.get('input') or {}).get('file_path') or (block.get('input') or {}).get('path'))
                for block in blocks if block.get('type') == 'tool_use'],
         tasks=[dict(subtype=event.get('subtype'), description=event.get('description'), status=event.get('status'),
                     backgrounded=event.get('is_backgrounded'))
@@ -398,7 +404,8 @@ def run_pair(agents, model, keep):
     texts += [plain_strong(event.get('result') or '') for event in events if event.get('type') == 'result']
     started = [event for event in events if event.get('type') == 'system' and event.get('subtype') == 'task_started']
     tools = [block for event in events if event.get('type') == 'assistant'
-             for block in (event.get('message') or {}).get('content') or [] if block.get('type') == 'tool_use']
+             for block in (event.get('message') or {}).get('content') or [] if block.get('type') == 'tool_use'
+             and not brief_block(block)]  # The host writing its note as an agent starts.
     for tool in tools:
         command = (tool.get('input') or {}).get('command') or ''
         if tool.get('name') not in ('Bash', 'PowerShell') or 'controller.py' not in command:
@@ -643,7 +650,7 @@ def run_tools(agents, model, keep):
         for event in events:
             for block in (event.get('message') or {}).get('content') or [] if event.get('type') == 'assistant' else []:
                 command = (block.get('input') or {}).get('command') or ''
-                if block.get('type') == 'tool_use' and not (
+                if block.get('type') == 'tool_use' and not brief_block(block) and not (
                         block.get('name') in ('Bash', 'PowerShell') and 'controller.py' in command
                         and (' follow --request ' in command or ' relay --request ' in command)):
                     problems.append('session %d used %s %s' % (index, block.get('name'), command[-100:]))
