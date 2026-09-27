@@ -16,7 +16,7 @@ from progress import DEFAULT_PROGRESS_MODE, PROGRESS_MODES, progress_mode
 
 
 REGISTRY = names.REGISTRY
-DEFAULT_ROUTING_MODE = 'direct'
+DEFAULT_ROUTING_MODE = 'direct'  # Codex's only mode; Claude Code starts in AUTO (default_routing_mode).
 MAX_QUEUED_REQUESTS = 32
 DEFAULT_AGENT_LIMIT = 4
 MAX_AGENT_LIMIT = 8
@@ -123,7 +123,7 @@ class Store:
         if not self.path.exists():
             return dict(schema=1, thread=self.thread, workspace=self.workspace,
                         active=False, pending=None, generation=0, backend=None,
-                        settings=None, main=None, owned=[], inflight={}, routingMode=DEFAULT_ROUTING_MODE,
+                        settings=None, main=None, owned=[], inflight={}, routingMode=default_routing_mode(),
                         progressMode=DEFAULT_PROGRESS_MODE, helpMenu=None)
         # Windows can briefly deny a reader while another process atomically
         # replaces this file. Retry that transient sharing conflict; a lasting
@@ -140,7 +140,12 @@ class Store:
         value = json.loads(raw)
         if value.get('schema') != 1 or value.get('thread') != self.thread:
             raise ValueError('Unsupported or mismatched CLI-MODE state; do not dispatch.')
-        value.setdefault('routingMode', DEFAULT_ROUTING_MODE)
+        value.setdefault('routingMode', default_routing_mode())
+        if (host.claude() and value['routingMode'] == 'direct' and not value.get('directChosen')
+                and not value.get('active') and not value.get('pending')):
+            # AUTO is Claude Code's default: a conversation that is off starts in it, unless DIRECT was chosen in it
+            # (/cli mode direct). One saved in DIRECT by an earlier version, when DIRECT was the default, too.
+            value['routingMode'] = 'auto'
         if value['routingMode'] == 'passthrough':
             # Passthrough was removed: a prompt reaches the agent only through /d. A saved Passthrough
             # conversation opens in Direct mode; a request it captured still sends as captured.
@@ -293,9 +298,24 @@ INACTIVE_HINT = '/cli to activate.  Say /help to see options'
 PREFIXES = ('/', '$')
 # Claude Code also names a plugin's commands by plugin: /cli-mode:cli, /cli-mode:d.
 NAMESPACE = '/cli-mode:'
-ROUTING_MODES = ('direct',)  # A prompt reaches the agent only through /d (Passthrough was removed).
+# DIRECT: a prompt reaches an agent only through /d (Passthrough was removed). AUTO (Claude Code only): the user
+# talks to Claude, which hands work to the user's AUTO agent; /d there asks Claude itself, with no handoff. Codex has
+# no AUTO.
+ROUTING_MODES = ('direct', 'auto')
 MODE_REMOVED = ('Prompts reach the agent only through /d <prompt>; every other message stays with {host}. '
                 'Passthrough mode was removed.')
+MODE_PAGES = ('mode', 'auto-settings', 'auto-strength')  # The Mode page and its sub-pages (pending phases).
+STRENGTHS = ('normal', 'strong', 'max')  # How strongly Claude hands work off in AUTO.
+AUTO_D = ('Add a question after /d: in AUTO, /d asks Claude itself, and nothing goes to an agent. Nothing was sent.')
+AUTO_OWNED = ('In AUTO, Claude and CLI-MODE run the agents. Ask Claude, change the AUTO agent with /cli mode, '
+              'or switch to DIRECT with /cli mode direct.')
+MODE_USAGE = ('Use /cli mode, /cli mode auto|direct, /cli mode agent [<agent> [<model>]], /cli mode backup '
+              '[<agent>|none], or /cli mode strength normal|strong|max.')
+# Controls that change which agent does what, or act on one agent's piece of the work (its last turn, queue,
+# folder, relay or tests): the user's in DIRECT, Claude's and CLI-MODE's in AUTO. Claude still runs them in AUTO
+# (hooks/claude.py ALLOWED); the user asks Claude ("undo that", "show me the diff").
+AUTO_OWNED_VERBS = frozenset(('bind', 'use', 'model', 'effort', 'menu', 'timeout', 'attach', 'brief', 'brief-add',
+                              'undo', 'diff', 'queue', 'resume', 'dir', 'test', 'progress'))
 
 
 def inactive_hint():
@@ -307,6 +327,11 @@ def help_hint():
     return 'Say /cli help to see options.' if host.claude() else 'Say /help to see options.'
 
 
+def default_routing_mode():
+    """AUTO on Claude Code; DIRECT on Codex, which has no AUTO."""
+    return 'auto' if host.claude() else DEFAULT_ROUTING_MODE
+
+
 def routing_mode(state):
     mode = state.get('routingMode', DEFAULT_ROUTING_MODE)
     if mode == 'passthrough':
@@ -314,6 +339,11 @@ def routing_mode(state):
     if mode not in ROUTING_MODES:
         raise ValueError('Unsupported CLI-MODE routing mode; inspect state before dispatch.')
     return mode
+
+
+def auto_on(state):
+    """True while this Claude Code conversation is in AUTO mode."""
+    return host.claude() and routing_mode(state) == 'auto'
 
 
 def agent_entry(state, session=None):
@@ -385,7 +415,14 @@ def agent_label(state, session=None, record=None):
         label = adapters.module(kind).LABEL
     except ValueError:
         label = 'Agent'
-    return label + (' ' + name if name else '')
+    return label_name(label, name)
+
+
+def label_name(label, name):
+    """`Codex COD-7K`; an AUTO agent's name (Claude Code) already says its kind, so it stands alone: `Codex-01`."""
+    if not name:
+        return label
+    return name if name.casefold().startswith(label.casefold() + '-') else label + ' ' + name
 
 
 # Agents that run commands (and write files) straight through ACPX without asking first, so an approval can't be
@@ -607,9 +644,20 @@ def approval_route(verb, choice, state):
 def cli_route(verb, choice, state):
     """One `/cli <verb> [choice]` control, with `verb` already folded and de-aliased."""
     if not verb:
-        return {'route': 'home'}
+        # In AUTO, /cli opens the agent list while CLI-MODE is off (the saved AUTO agent first), and the Mode page
+        # once its agents run. An agent started from that list or from /cli <agent> is the AUTO agent.
+        return {'route': 'mode-page'} if auto_on(state) and state.get('active') else {'route': 'home'}
+    if verb == 'mode' and host.claude():
+        return mode_route(choice)
+    if auto_on(state):
+        if verb in AUTO_OWNED_VERBS or (verb in ('close', 'cancel') and choice and choice.casefold() != 'all'):
+            return {'route': 'hint', 'text': AUTO_OWNED}
+        if verb == 'close':
+            return {'route': 'off'}  # In AUTO, closing means every agent: they are one team.
+        if verb == 'cancel' and state['active']:
+            return {'route': 'cancel-all'}  # The one brake: every agent's running turn (hooks/claude.py).
     if verb == 'help' and not choice:
-        return {'route': 'help', 'text': help_view.render()}
+        return {'route': 'help', 'text': help_view.render(auto=auto_on(state))}
     if verb == 'display' and host.claude():
         # How Claude Code shows CLI-MODE's own replies: instant notices or chat messages.
         return {'route': 'display', 'choice': choice.casefold()}
@@ -712,6 +760,42 @@ def cli_route(verb, choice, state):
     return {'route': 'hint', 'text': inactive_hint() if not state['active'] else help_hint()}
 
 
+def mode_route(choice):
+    """`/cli mode [auto|direct|agent ...|backup ...|strength ...]` on Claude Code."""
+    words = choice.split()
+    if not words:
+        return {'route': 'mode-page'}
+    first = words[0].casefold()
+    if first in ROUTING_MODES and len(words) == 1:
+        return {'route': 'mode-set', 'mode': first}
+    if first in ('agent', 'backup'):
+        rest = words[1:]
+        if first == 'backup' and len(rest) == 1 and rest[0].casefold() in ('none', 'off', 'remove'):
+            return {'route': 'mode-backup-clear'}
+        if not rest:
+            return {'route': 'mode-agent', 'role': first}
+        agent = resolve_backend(rest[0])
+        if not agent:
+            return {'route': 'hint', 'text': 'CLI-MODE has no agent called ' + rest[0] + '. Use a tag or full name: '
+                    'agy, cla, cod, gro, cop or cur.'}
+        return {'route': 'mode-agent', 'role': first, 'agent': agent, 'text': ' '.join(rest[1:])}
+    if first == 'strength':
+        if len(words) == 2 and words[1].casefold() in STRENGTHS:
+            return {'route': 'mode-strength', 'strength': words[1].casefold()}
+        return {'route': 'hint', 'text': 'Use /cli mode strength normal, strong or max.'}
+    return {'route': 'hint', 'text': MODE_USAGE}
+
+
+def mode_page_reply(message):
+    """A reply to the open Mode page: a number, B or X; anything else closes the page and routes as usual."""
+    reply = message.strip().casefold()
+    if reply.isdigit():
+        return {'route': 'mode-choose', 'number': int(reply)}
+    if reply in ('b', 'x'):
+        return {'route': 'mode-back' if reply == 'b' else 'mode-dismiss'}
+    return {'route': 'mode-invalid'}
+
+
 def direct_targets(payload, state):
     """The agents a /d payload starts by naming: ([(session, name)...], words used, problem hint or None).
 
@@ -776,8 +860,10 @@ def route(message, state):
         reply = close_menu_reply(message, state)
         if reply:
             return reply
+    if host.claude() and (state.get('pending') or {}).get('phase') in MODE_PAGES and not is_command(command_word, 'cli'):
+        return mode_page_reply(message)
     if is_command(command_word, 'help') and not rest:
-        return {'route': 'help', 'text': help_view.render()}
+        return {'route': 'help', 'text': help_view.render(auto=auto_on(state))}
     if command_word == 'x' and not rest and (state.get('helpMenu') or state.get('turnRoute', {}).get('route') == 'help'):
         return {'route': 'help-dismiss'}
     if command_word == 'x' and not rest and ((state.get('pending') or {}).get('phase') == 'settings' or (state.get('pending') or {}).get('tuning')):
@@ -798,6 +884,8 @@ def route(message, state):
         pending = state['pending']
         if pending.get('choices') and pending.get('phase') in ('agent', 'model', 'effort', 'access') and message.strip().isdigit():
             return {'route': 'choose', 'number': int(message.strip())}
+        if host.claude() and pending.get('phase') == 'agent' and message.strip().casefold() == 'm':
+            return {'route': 'mode-page'}  # The agent list's "M. Mode" row.
         if pending.get('phase') == 'settings' and pending.get('stage') == 'menu':
             choice = message.strip().casefold()
             phase = {'1':'model', 'model':'model', '2':'effort', 'effort':'effort',
@@ -813,5 +901,7 @@ def route(message, state):
     # Only an explicit /d or $d reaches an agent; everything else is the host's.
     payload = direct_payload(message)
     if payload is not None:
+        if auto_on(state) and state.get('active'):  # AUTO: /d asks Claude itself, no handoff (hooks/claude.py enforces it).
+            return {'route': 'auto-host'} if payload.strip() else {'route': 'hint', 'text': AUTO_D}
         return direct_route(payload, state)
     return {'route': 'host'}

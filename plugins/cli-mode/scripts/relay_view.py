@@ -318,6 +318,99 @@ def final_markdown(label, batch, history, footer=None, show_work=True, color=Fal
     return '\n\n'.join(parts)
 
 
+HOST_ANSWER_MAX = 6000  # Characters of the agent's answer Claude reads in AUTO; the whole answer stays in its file.
+HOST_ENDS = {'completed': 'finished', 'canceled': 'was canceled', 'superseded': 'was canceled',
+             'rejected': 'was not sent', 'uncertain': 'could not be confirmed (check /cli queue)'}
+
+
+def check_line(status, receipt, batch, read_only=False, stopped=None, others=()):
+    """The result's verdict, worked out by CLI-MODE so Claude doesn't have to (lever L4): `CHECK: ok`, or
+    `CHECK: look: <what>` naming only what needs a look. Every input is already in the settled request."""
+    reasons = []
+    if status != 'completed':
+        reasons.append('it ' + HOST_ENDS.get(status, status))
+    tests = receipt.get('tests')
+    if isinstance(tests, dict) and tests.get('passed') is False:
+        reasons.append('tests failed')
+    if stopped:
+        reasons.append('it stopped to ask permission')
+    if any(event.get('type') == 'error' for event in batch):
+        reasons.append('its turn reported errors')
+    if others:
+        reasons.append('files it did not edit changed while it worked')
+    if receipt.get('overlaps'):
+        reasons.append('another agent edited the same files')
+    if read_only and ((receipt.get('changes') or {}).get('files') or 0):
+        reasons.append('a read-only task changed files')
+    if status == 'completed' and not messages(batch).strip():
+        reasons.append('it gave no answer')
+    return 'CHECK: ok' if not reasons else 'CHECK: look: ' + '; '.join(reasons) + '.'
+
+
+def host_text(request, label, status, batch, receipt, read_only=False, task=None, stopped=None, access=None,
+              touched=None, answer_max=HOST_ANSWER_MAX):
+    """An AUTO handoff's result as Claude reads it (relay --for-host, or the wake-up itself): plain lines, then the
+    agent's answer.
+
+    Claude checks it and tells the user in its own words, so there is no Markdown styling and nothing to post as is.
+    The receipt covers the whole folder, so while several agents write it holds their files too: with `touched` (the
+    files the agent's own edit tools changed), the rest are named apart. The CHECK line says what, if anything,
+    needs a look; `answer_max` cuts the answer when several results share one wake-up.
+    """
+    from agent_folder import counts
+    from test_gate import line, overlap_line
+    receipt = receipt or {}
+    changes = receipt.get('changes')
+    own = {path.casefold() for path in touched} if touched is not None else None
+    others = [item['path'] for item in (changes or {}).get('paths') or [] if own is not None
+              and item['path'].casefold() not in own]
+    lines = ['HANDOFF ' + request + ': ' + label + ' ' + HOST_ENDS.get(status, status) +
+             (' (read-only)' if read_only else '') + '.',
+             check_line(status, receipt, batch, read_only, stopped, others)]
+    if task:
+        lines.append('TASK: ' + task)
+    if changes:
+        count = changes.get('files') or 0
+        paths = [item['path'] for item in (changes.get('paths') or [])[:RECEIPT_PATHS]]
+        lines.append('CHANGES: ' + ('none' if not count else str(count) + (' file' if count == 1 else ' files') +
+                                    ', +' + str(changes.get('added', 0)) + ' -' + str(changes.get('removed', 0)) +
+                                    ': ' + ', '.join(paths) + (' and ' + str(count - len(paths)) + ' more'
+                                                               if count > len(paths) else '')))
+        if others:
+            lines.append('NOT ITS OWN EDITS: ' + ', '.join(others[:RECEIPT_PATHS]) + (
+                ' and ' + str(len(others) - RECEIPT_PATHS) + ' more' if len(others) > RECEIPT_PATHS else '') +
+                ' changed while it worked, but not by its own edit tools (another task, or a command it ran).')
+    else:
+        lines.append('CHANGES: not measured (not a git repository).')
+    saved = receipt.get('saved')
+    if saved:
+        lines.append('SAVED: ' + counts(saved) + ' in ' + saved['folder'] + '/' + (
+            '' if saved.get('partial') else ': ' + ', '.join(item['path'] for item in (saved.get('paths') or [])
+                                                            [:RECEIPT_PATHS])))
+    tests = line(receipt.get('tests'))
+    lines.append('TESTS: ' + (tests or 'no test command ran (set one with the controller\'s `test --command=<command>`; '
+                                       'in AUTO it is yours to set).'))
+    lines += ['OVERLAP: ' + text for text in overlap_line(receipt.get('overlaps'))]
+    if stopped:
+        from presentation import access_display, permission_stop
+        name = access_display((access or {}).get('access', 'prompt'), (access or {}).get('accessName'))
+        lines.append('STOPPED: ' + ' '.join(permission_stop(label, name, stopped).split()) + ' Tell the user in one '
+                     'line what it asks; only they answer it (/cli approve or /cli deny).')
+    lines += ['ERROR: ' + ' '.join(event['message'].split()) for event in batch
+              if event.get('type') == 'error' and event.get('message')]
+    answer = messages(batch).strip()
+    whole = (receipt.get('refs') or {}).get('answer')
+    if not answer:
+        lines.append('ANSWER: none.')
+    elif len(answer) > answer_max:
+        lines += ['ANSWER (its first ' + str(answer_max) + ' characters' + ('; the whole answer is in ' + whole
+                                                                          if whole else '') + '):',
+                  answer[:answer_max]]
+    else:
+        lines += ['ANSWER' + (' (also saved in ' + whole + ')' if whole else '') + ':', answer]
+    return '\n'.join(lines)
+
+
 def render(label, history, destination, footer=None, show_work=True, workspace=None, receipt=None, saved=None,
            refs=None, tests=None, overlaps=None):
     """The turn's one inline view: final words, artifacts, errors and nested work.

@@ -66,6 +66,24 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   help, setup replies; any other text is the host's (Passthrough mode was removed). `route.decide()` records
   it in the conversation state and, for `direct`, captures the exact text as a request and ensures the worker
   runs.
+- **DIRECT and AUTO** (Claude Code only; `scripts/auto_mode.py`, packaged `CLAUDE_ONLY`): `routingMode` is
+  `direct` or `auto`; AUTO is Claude Code's default (`state.default_routing_mode`; a conversation that is off
+  opens in AUTO unless DIRECT was chosen in it, `directChosen`). `/cli mode` opens the Mode page. While off,
+  `/cli` opens the agent list with the saved AUTO agent as 1 (`menus.frontend`), and any agent started in AUTO is
+  the AUTO agent (`binding.activate`). In AUTO the user talks to Claude, `/d` asks Claude
+  itself (no handoff that turn), the commands that change which agent does what are refused, AUTO agents are named `Codex-01`, the user's AUTO agent (and backup) start when AUTO
+  turns on and wait (`auto_mode.AUTO_TIMEOUT` idle), and Claude hands work over itself: a task file in the working folder's task folder
+  (`auto_mode.tasks_dir`),
+  one short `controller.py handoff --task <id>` call, which the approval hook hands over itself (a request
+  captured with `routingMode: auto` and `handoff`) and turns into the agent's background `follow`. The follow's
+  end wakes Claude with the result already read and a `CHECK:` verdict (`relay_view.host_text`); AUTO requests
+  never join a user's relay. Claude gets the AUTO rule once (`auto_mode.rule`), then only what changed
+  (`auto_mode.status`), and
+  the PreToolUse hook refuses Claude's larger project edits and coding subagents by delegation strength. One
+  writer per file: a task's Files line is its claim (`auto_mode.task_files`, `conflict`), and a handoff or an edit
+  of Claude's that would change a claimed file is refused; `handoff --agent new` starts an extra agent like the
+  AUTO agent for work in parallel (`start_extra`). Codex keeps DIRECT only (it has no wake-up), so the
+  Codex golden record does not change.
 - **Codex reply path** (Codex only): `route.codex_output()` returns additionalContext telling the model
   which controller commands to run. Menus and results come back as inline HTML views (`menuView` or
   `messageView` with a `reference` line; `menu_view.py`, `relay_view.render`). A relay loops

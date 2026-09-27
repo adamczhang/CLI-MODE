@@ -34,7 +34,7 @@ CLAUDE_COMMANDS = {'cli.md', 'd.md'}
 # Files only one host uses, as paths relative to the plugin folder. Claude Code needs no skill: the hook
 # gives Claude the whole procedure each turn, and SKILL.md would put an always-on skill in every session.
 # The rest of codex/skills/cli-mode ships to both: the runtime reads its agent registry (references/backends.json).
-CLAUDE_ONLY = ('claude/', 'hooks/claude.py', 'scripts/claude_shortcuts.py')
+CLAUDE_ONLY = ('claude/', 'hooks/claude.py', 'scripts/claude_shortcuts.py', 'scripts/auto_mode.py')
 CODEX_ONLY = ('hooks/hooks.json', 'codex/skills/cli-mode/agents/openai.yaml', 'codex/skills/cli-mode/SKILL.md')
 PUBLISHER = {'name': 'CLI-MODE Project'}
 HOMEPAGE = 'https://github.com/adamczhang/CLI-MODE'

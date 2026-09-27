@@ -10,12 +10,17 @@ import installer
 import names
 import native_agy
 import native_commands
-from operations import operation_running, pending_work
+from operations import ProbeCanceled, operation_running, pending_work
 import json
 from pathlib import Path
 
 from state import (Store, TIMEOUT_RANGE, agent_entry, agent_label, agent_limit, default_timeout, last_used, live_agents,
-                   save_default_timeout, team_of, ACTS_WITHOUT_ASKING)
+                   routing_mode, save_default_timeout, team_of, ACTS_WITHOUT_ASKING)
+
+
+def auto_timeout():
+    import auto_mode  # Claude Code only (packaged there alone); an AUTO purpose never comes up on Codex.
+    return auto_mode.AUTO_TIMEOUT
 
 
 def duration(minutes):
@@ -93,6 +98,8 @@ class BindingMixin:
             if installer_run:
                 state['stoppedInstallerRun'] = installer_run  # For off(): the routing hook disables first.
             state.update(active=False, pending=None, main=None, modeMenu=False, helpMenu=None)
+            # AUTO's agents close; the mode stays, so the next /cli starts them again (Claude Code).
+            state.pop('auto', None)
             state['generation'] += 1
         return state
 
@@ -232,6 +239,9 @@ class BindingMixin:
                 state['agentLimit'] = limit
         state = self.store.read()
         message = frontends.agents_text(state, self.agent_activity(state))
+        if routing_mode(state) == 'auto':  # Claude Code's AUTO: what Claude handed to which agent.
+            import auto_mode
+            message += '\n\nAUTO handoffs:\n' + '\n'.join('- ' + line for line in auto_mode.ledger_lines(state, limit=10))
         if limit is not None:
             message = 'Up to ' + str(limit) + ' agents can run at once.\n' + message
         return dict(state, message=message)
@@ -488,8 +498,8 @@ class BindingMixin:
             try:
                 self.readiness(dict(owned, bootstrapPrompt=True), generation, pending)
             except RuntimeError as first:
-                if not reserve:
-                    raise
+                if not reserve or isinstance(first, ProbeCanceled):
+                    raise  # A canceled probe ends activation; it says nothing about the reserved record.
                 # Maybe an agent that no longer turns the reserved record into a session: once more the classic
                 # way, which starts the agent to create it. If that fails too, the first failure is reported.
                 try:
@@ -599,6 +609,9 @@ class BindingMixin:
                                             for item in state['owned']):
                 raise RuntimeError('An agent named ' + name + ' is already running.')
             activation_id = state['pending']['id']
+            purpose = state['pending'].get('purpose')  # An AUTO agent being chosen or started (auto_mode.PURPOSES).
+            if not purpose and routing_mode(state) == 'auto' and not session:
+                purpose = 'auto-on'  # In AUTO (Claude Code), a new agent the user starts is the AUTO agent.
             origin_route = deepcopy(state.get('turnRoute'))
             completed_control = state['pending'].get('tuning') or (origin_route or {}).get('route') == 'bind'
             state['pending']['stage'] = 'verifying'
@@ -612,12 +625,16 @@ class BindingMixin:
             if not reuse:
                 if any(item['name'] == owned['name'] for item in state['owned']):
                     owned['name'] += '-' + str(len(state['owned']))  # Each agent's session name is its own.
-                if not name:
+                if not name and purpose:
+                    import auto_mode  # An AUTO agent (Claude Code): `Codex-01`, the lowest number free.
+                    name = auto_mode.auto_name(target, [item.get('alias') for item in state['owned']])
+                elif not name:
                     taken = list(state.get('usedNames') or []) + [item.get('alias') for item in state['owned']]
                     name = names.generate(target, owned['name'], [alias for alias in taken if alias])
                     state['usedNames'] = (state.get('usedNames') or []) + [name]  # Never given out again.
                 owned['alias'] = name
-                owned['timeout'] = default_timeout(self.store.root)  # Minutes idle before its process exits.
+                # Minutes idle before its process exits; an AUTO agent's are AUTO's own (two hours).
+                owned['timeout'] = auto_timeout() if purpose else default_timeout(self.store.root)
                 if target in ACTS_WITHOUT_ASKING:
                     owned['actsWithoutAsking'] = True  # Approvals can't be limited to one kind for it.
             if not reuse and getattr(self.backend, 'profile', None):
@@ -651,20 +668,40 @@ class BindingMixin:
                         if owned.get('transport') == 'native':
                             item['nativeModel'] = owned['nativeModel']
                 state.update(active=True, pending=None)
-                if not reuse or owned['name'] == state['main'] or not state['main']:
+                if ((not reuse or owned['name'] == state['main'] or not state['main'])
+                        and not (purpose in ('auto-backup', 'auto-extra') and state['main'])):
                     # A new agent becomes the current one; changing another agent's settings leaves it be.
+                    # A backup or extra AUTO agent never does: the AUTO agent stays current.
                     state.update(main=owned['name'], settings=settings, backend=target)
+                replaced = None
+                if purpose:
+                    import auto_mode
+                    replaced = auto_mode.adopt(state, purpose, owned['name'], target, settings, self.store.root)
                 # A new user prompt owns its own route, even if its command is identical.
                 if (completed_control and origin_route and state.get('turnRoute') == origin_route
                         and origin_route['route'] in ('bind', 'tune', 'setup')):
                     state['turnRoute']['route'] = 'control-result'
             latest = self.store.read()
+            retired = self.retire(replaced) if replaced and routing_mode(latest) == 'auto' else None
+            if purpose in ('auto-on', 'auto-agent') and routing_mode(self.store.read()) == 'auto':
+                try:
+                    self.start_auto()  # AUTO's agents all start when it turns on: the backup too, if there is one.
+                except (RuntimeError, ValueError):
+                    pass  # A backup that fails to start leaves AUTO on with its AUTO agent.
+            if purpose:
+                import auto_mode
+                # Said under the activation card (controller.with_auto_line): what the new agent is now.
+                line = auto_mode.adopted_line(self.store.root, self.store.read(), purpose, owned['name'])
+                latest = dict(self.store.read(), autoLine=line + (' ' + retired if retired else ''))
             if reuse:
                 return dict(latest, activated=owned['name'])
             # A new agent: the brief lists it now, and gets an entry for the host's note on what the conversation
-            # has been working on, which the host writes as it shows this activation (hostNote).
+            # has been working on, which the host writes as it shows this activation (hostNote). Not in AUTO,
+            # where each task Claude writes is its agent's brief.
             workspace = owned.get('workspace') or self.store.workspace
             agent_folder.write_team(workspace, self.store.key, *team_of(latest))
+            if purpose or routing_mode(latest) == 'auto':
+                return dict(latest, activated=owned['name'])
             note = agent_folder.add_host_note(workspace, time.strftime('%Y-%m-%d %H:%M'),
                                               agent_label(latest, owned['name']))
             return dict(latest, activated=owned['name'], **({'hostNote': note} if note else {}))

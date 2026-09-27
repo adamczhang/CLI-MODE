@@ -2,10 +2,53 @@
 
 ## Unreleased
 
-Found while recording a demo of 0.3.9 in Claude Code's terminal.
+### AUTO mode (Claude Code)
+- **Two modes: AUTO, the default on Claude Code, and DIRECT.** In AUTO you talk to Claude only, and Claude
+  hands the work to your AUTO agent: it writes the task, the agent works in the background, and Claude reads the
+  result, checks it and tells you how it went. Small edits and quick questions Claude keeps. DIRECT is `/d` as
+  before; `/cli mode` opens a Mode page that switches between them, and DIRECT chosen in a conversation stays
+  there, `/cli off` included. A conversation an earlier version saved in DIRECT opens in AUTO once it is off.
+  Codex keeps DIRECT only.
+- **Your AUTO agent** and its model are chosen once, the usual way, and remembered for every conversation. `/cli`
+  then offers it as 1, and any other agent started from that list, or with `/cli <agent>`, becomes the AUTO
+  agent; `/cli mode agent`, `/cli mode backup` and the AUTO settings page change them too. Starting AUTO starts
+  the AUTO agent (and backup) at once, and they wait for work: two hours idle, or until `/cli off`.
+- **Handoffs:** each task is a file in `Agent_Working_Folder/.cli-mode/tasks/` (Goal, Context, Files, Do not,
+  Done when, Report). The agent's work is a background-tasks row; its finish wakes Claude with the change receipt,
+  the test result, overlaps and the agent's report. A handoff's result never shows up in a `/d` answer.
+- **Light delegation: AUTO spends little of Claude's usage.** Measured on the first builds, a handoff took Claude
+  5-9 model calls, and each call re-reads the whole conversation. Now:
+  - handing over is one tool call: CLI-MODE hands the task over from its approval hook and turns that same call into
+    the agent's background row, and a refusal (a claimed file, no task file) comes back at once;
+  - the result arrives with the wake-up, already read: no relay command to run;
+  - the result opens with CLI-MODE's own verdict, `CHECK: ok` or `CHECK: look: …` (tests failed, it stopped to ask,
+    errors, files it didn't edit changed, another agent edited the same files, a read-only task changed files, no
+    answer), so Claude looks only at what it names;
+  - Claude is given AUTO's rules once, again only when they change, after a compaction or every 30 turns, and
+    otherwise only what changed (the agents, work still running or unread), or nothing;
+  - results that finish together share one wake-up; a new agent (`--agent new`) starts inside the background row,
+    and one that fails to start says why when it wakes Claude.
+- **Several agents, one writer per file.** A task's Files line names the files and folders it may change (none
+  named: the whole project). CLI-MODE refuses a handoff, or an edit of Claude's, that would change a file another
+  running task may change; a task for a busy agent waits its turn there. Work on other files runs in parallel:
+  `handoff --agent new` starts another agent like the AUTO agent (`Codex-02`), up to the agent limit, and it
+  closes with the others. Reviews and research go read-only, and their agent's writes are refused. Claude's copy
+  of a result names the files changed meanwhile that were not the agent's own edits.
+- **Delegation strength** Normal, Strong (default) or Max: how much Claude may edit itself before a change goes
+  to the agent, and whether its own coding subagents are sent to the agent instead.
+- In AUTO, `/d` asks Claude itself: nothing from that turn goes to an agent. A plain message lets Claude decide.
+  AUTO agents are named after their kind and numbered: Codex-01, Codex-02, Grok-01. The commands that change which
+  agent does what are refused, and so are the ones that act on one agent's piece of the work (`undo`, `diff`,
+  `queue`, `resume`, `dir`, `test`, `progress`, `cancel <name>`): ask Claude, which still runs them. The safety
+  controls stay yours: `cancel` (every agent's running turn), `list` with a ledger of the handoffs, `usage`,
+  `access`, `view`, `off`, and `/cli help` shows only these.
+  An agent's permission question comes to you, and your `/cli approve` or `/cli deny` goes on with Claude's task.
+- An AUTO backup's activation card shows the backup, not the AUTO agent.
+
+Found while recording a demo of 0.3.9 in Claude Code's terminal:
 
 ### Starting an agent (both hosts)
-- **Each new agent's CLI starts once, not twice.** ACPX's `sessions ensure` started the agent only to create its session and then stopped it, and the readiness prompt's owner started it again. CLI-MODE now writes the new session's record through its bridge (with ACPX 0.18.0's own record functions) and the readiness prompt's owner starts the agent once and creates the session there. Antigravity, whose server unpacks itself on every start, now starts in about 30 s instead of about 55 s. If that first prompt fails, the agent is started the old way once.
+- **Each new agent's CLI starts once, not twice.** ACPX's `sessions ensure` started the agent only to create its session and then stopped it, and the readiness prompt's owner started it again. CLI-MODE now writes the new session's record through its bridge (with ACPX 0.18.0's own record functions) and the readiness prompt's owner starts the agent once and creates the session there. Antigravity, whose server unpacks itself on every start, now starts in about 30 s instead of about 55 s. If that first prompt fails, the agent is started the old way once. A start that is canceled ends there, also in its first seconds: ACPX drops a cancel that comes before the readiness prompt has reached the agent, so CLI-MODE sends it again until that prompt ends.
 
 ### Relays (Claude Code)
 - **A canceled turn is shown at once.** Its relay carried the follow-up queued after it, first, and waited for it: `/cli cancel` stopped the turn in 2 s but "Turn canceled." appeared 6 minutes later, when the follow-up finished. A relay now carries only requests sent before it.

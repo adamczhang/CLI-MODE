@@ -77,6 +77,10 @@ def answered(state, request_ids, approval):
     for request_id in request_ids:
         record = state['requests'][request_id]
         entry = agent_entry(state, record['session']) or {}
+        stopped = (state['requests'].get((entry.get('approval') or {}).get('requestId')) or {})
+        if record.get('routingMode') == 'auto' and stopped.get('handoff'):
+            # Claude Code's AUTO: the answer goes on with Claude's handoff, so its result goes to Claude too.
+            record['handoff'] = dict(stopped['handoff'], continues=entry['approval']['requestId'])
         entry.pop('approval', None)
         if approval and approval['answer'] == 'approve' and approval.get('rule'):
             record['approve'] = [approval['rule']]
@@ -165,8 +169,9 @@ def decide(event, root=None, workspace=None, capture=None):
                 state['turnRoute']['text'] = decision['text']
             if decision.get('session'):
                 state['turnRoute']['session'] = decision['session']  # The agent a named control is for.
-            if decision['route'] == 'tune':
-                state['turnRoute']['phase'] = decision['phase']
+            if decision['route'] in ('tune', 'mode-agent'):
+                if decision['route'] == 'tune':
+                    state['turnRoute']['phase'] = decision['phase']
                 # The typed setting (not task prose), matched by the controller.
                 state['turnRoute']['choice'] = (decision.get('text') or '')[:80]
             if decision['route'] in ('mode', 'progress', 'view'):

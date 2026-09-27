@@ -72,7 +72,8 @@ class Build(unittest.TestCase):
             self.assertNotIn(codex_only, names)  # Claude never loads Codex's hooks, even by mistake.
         shared = {name for name in CODEX_FILES if not builder.only(name, builder.CODEX_ONLY)}
         self.assertEqual({name[len('plugins/cli-mode/'):] for name in names if name.startswith('plugins/')},
-                         shared | {'hooks/claude.py', 'scripts/claude_shortcuts.py', 'claude/hooks.json', 'claude/commands/cli.md',
+                         shared | {'hooks/claude.py', 'scripts/claude_shortcuts.py', 'scripts/auto_mode.py',
+                                   'claude/hooks.json', 'claude/commands/cli.md',
                                    'claude/commands/d.md',
                                    '.claude-plugin/plugin.json'})
         # Without Codex's hooks file, the zip is a standard plugin: its plugin.json names it (the desktop app

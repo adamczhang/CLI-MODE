@@ -11,7 +11,7 @@ import agent_folder
 import native_agy
 import native_commands
 import viewer
-from operations import emit, menu_holds, pending_work
+from operations import ProbeCanceled, emit, menu_holds, pending_work
 from presentation import PERMISSION_CODES, permission_stop
 from progress import progress_mode, public_progress, public_touched
 from state import agent_entry, agent_label, routing_mode, direct_payload, team_of
@@ -39,11 +39,16 @@ def approval_policy(record, target):
     that prompt only. `/cli approve always` keeps a kind on the agent (`approveAlways`) for every later turn.
     Reads pass as they always do and anything else escalates: the bridge then stops the turn and asks again
     (acpx-runtime.mjs runs such a turn at approve-all, which ACPX's own write and terminal checks need).
-    At Allow access everything is approved already.
+    At Allow access everything is approved already. A read-only AUTO handoff (Claude Code) is the exception: reads,
+    and whatever the user approved for it, pass, and everything else is refused rather than asked about, so the
+    agent carries on reading.
     """
-    if (target.get('settings') or {}).get('access') == 'allow':
+    read_only = bool(((record or {}).get('handoff') or {}).get('readOnly'))
+    if (target.get('settings') or {}).get('access') == 'allow' and not read_only:
         return None
     kinds = list(dict.fromkeys(list((record or {}).get('approve') or []) + list(target.get('approveAlways') or [])))
+    if read_only:
+        return {'autoApprove': kinds + READS, 'defaultAction': 'deny'}
     if kinds and target.get('actsWithoutAsking'):
         # Its commands and file writes pass anyway at approve-all, as its question said; so do the ones it asks
         # about in that turn (Grok asks now and then), rather than stopping it again.
@@ -77,6 +82,7 @@ class DispatchMixin:
         completed = False
         not_dispatched = False
         spawn_attempted = False
+        cancel_sent = False  # A bootstrap probe's cancel went to its owner.
         provider_outcome = None
         observed_session = None
         try:
@@ -154,22 +160,27 @@ class DispatchMixin:
                             stop = event['stopReason']
                         had_message |= event['type'] in ('message', 'artifact')
                         errored |= event['type'] == 'error'
-                cancel_sent = False
+                cancel_due = 0  # When the bootstrap probe's cancel is sent (again).
                 while finished < 2:
                     if owned.get('transport') == 'native' and native_agy.marker(owned, '.cancel').exists():
                         process.terminate()
                         raise RuntimeError('Native CLI turn canceled. Background provider tasks, if any, require provider verification.')
-                    if owned.get('bootstrapPrompt') and not cancel_sent and self.store.cancel_path(op).exists():
+                    if (owned.get('bootstrapPrompt') and time.monotonic() >= cancel_due
+                            and self.store.cancel_path(op).exists()):
                         # The bridge polls its cancel file; the ACPX CLI used for the
                         # first readiness probe does not. Cancel through the owner
                         # (nothing but this probe can be running before activation),
                         # then keep draining so settlement is still observed.
-                        cancel_sent = True
+                        # ACPX drops a cancel that comes before the CLI has started the owner and handed it the
+                        # probe, as a warm bridge's can (in milliseconds; the ACPX CLI's own cancel took long
+                        # enough to start that it came after), so it is sent again each second until the probe ends.
+                        if not cancel_sent:
+                            until = min(until, time.monotonic() + 15)
+                        cancel_sent, cancel_due = True, time.monotonic() + 1
                         try:
                             self.backend.collect(self.backend.start(owned, ['cancel', '-s', owned['name']]))
                         except RuntimeError:
                             pass  # An already settled probe has nothing left to cancel.
-                        until = min(until, time.monotonic() + 15)
                     if time.monotonic() > until:
                         raise RuntimeError('Prompt timed out; inspect status/files before retrying. Work may continue.')
                     try:
@@ -305,6 +316,10 @@ class DispatchMixin:
             if known_command and not had_message:
                 result['noPublicOutput'] = True
             return result
+        except RuntimeError as error:
+            if cancel_sent and not isinstance(error, ProbeCanceled):
+                raise ProbeCanceled(str(error)) from error  # Same message; activation stops here.
+            raise
         finally:
             if not spawn_attempted:
                 not_dispatched = completed = True
@@ -346,6 +361,8 @@ class DispatchMixin:
             raise RuntimeError('Mode is off or a menu is pending; no task was sent.')
         policy = record['routingMode'] if request_id is not None else routing_mode(state)
         direct = policy == 'direct'
+        if policy == 'auto' and direct_payload(text) is not None:
+            text = direct_payload(text)  # An approval's answer in AUTO is captured as a /d, as in DIRECT.
         if direct:
             payload = direct_payload(text)
             if payload is not None and record.get('named'):
@@ -356,6 +373,7 @@ class DispatchMixin:
         # Host controls were parsed before stripping the Direct prefix. An
         # explicitly targeted /help now belongs to the provider, not CLI-MODE.
         provider_command = (native_commands.name_of(text) is not None if direct
+                            else False if policy == 'auto'  # Claude's task: always a task, with its folder.
                             else self.adapter.command_request(text))
         if any(item['role'] != 'main' for item in state['owned']):
             raise RuntimeError('Legacy or invalid session ownership. Run off before activating again.')
@@ -367,7 +385,9 @@ class DispatchMixin:
         if working_folder and not provider_command and agent_folder.ensure(workspace, owned.get('alias')) is not None:
             # The brief's list of running agents, current as this task leaves (one closed since is gone).
             agent_folder.write_team(workspace, self.store.key, *team_of(state))
-            text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file(),
+            # In AUTO the task Claude wrote is the agent's brief: the project brief is not named.
+            text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file()
+                                             and (record or {}).get('routingMode') != 'auto',
                                              label=agent_label(state, session))
             text += agent_folder.attachments_note(record.get('attachments'))
         if hasattr(self.backend, 'validate_prompt'):

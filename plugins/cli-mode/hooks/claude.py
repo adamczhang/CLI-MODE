@@ -1,8 +1,8 @@
 """Claude Code hook: route prompts, approve CLI-MODE's own commands, keep relays going.
 
 Claude Code runs this file for SessionStart, UserPromptSubmit, PreToolUse (the
-Agent and scheduling tools, and shell commands that start with `python`) and
-Stop. The shared route.decide() records what each prompt is, exactly as for
+Agent and scheduling tools, shell commands that start with `python`, and file
+edits) and Stop. The shared route.decide() records what each prompt is, exactly as for
 Codex. This file decides how Claude Code shows it:
 
 - Local controls (menus, help, queue, stop) and activation answer in the hook,
@@ -13,6 +13,9 @@ Codex. This file decides how Claude Code shows it:
 - CLI-MODE's own controller commands for this session are approved; nothing
   else is.
 - A relay that Claude ends early is resumed from its saved cursor.
+- AUTO: each of Claude's own turns carries the rule and ledger; its task files
+  are approved, and its larger edits and coding subagents refused by strength;
+  a handoff's follow wakes it to read the result (relay --for-host).
 
 This runs for every prompt, every `python` command and every turn end, so it
 returns early, before importing the controller, whenever it can.
@@ -29,19 +32,21 @@ def nothing_to_do(raw):
     Only certain answers are given here; anything else goes to handle(), which
     decides everything again from scratch (this is purely a shortcut).
     """
-    if '"PreToolUse"' in raw and 'controller.py' not in raw and 'BRIEF.md' not in raw and not any(
+    edit = '"PreToolUse"' in raw and any('"' + tool + '"' in raw for tool in EDIT_TOOLS)  # Confirmed below.
+    if '"PreToolUse"' in raw and not edit and 'controller.py' not in raw and not any(
             '"' + tool + '"' in raw for tool in AGENT_TURN_TOOLS):
-        return True  # Some other `python` command: only CLI-MODE's own controller (or the brief) is approved here.
+        return True  # Some other `python` command: only CLI-MODE's own controller is approved here.
     if '"SessionStart"' in raw and '"compact"' not in raw:
         return True  # Only a compaction has a relay or menu to restore.
     import json
     try:
         event = json.loads(raw)
         name, session = event['hook_event_name'], event['session_id']
+        edit = edit and event.get('tool_name') in EDIT_TOOLS
         root = os.environ.get('CLI_MODE_DATA') or os.environ.get('CLAUDE_PLUGIN_DATA')
         if name not in ('UserPromptSubmit', 'Stop', 'PreToolUse') or not root:
             return False
-        if name == 'PreToolUse' and event.get('tool_name') not in AGENT_TURN_TOOLS:
+        if name == 'PreToolUse' and not edit and event.get('tool_name') not in AGENT_TURN_TOOLS:
             return False  # Possibly CLI-MODE's controller: always checked for approval, active or not.
         if name == 'UserPromptSubmit' and event.get('prompt', '').lstrip()[:1] in ('/', '$', '@'):
             return False  # A command, possibly CLI-MODE's (after the files the desktop app attached, as @"path").
@@ -54,9 +59,15 @@ def nothing_to_do(raw):
             return True  # CLI-MODE was never used in this session, and this is not a command.
         with open(path, encoding='utf-8') as source:
             saved = json.load(source)
+        auto = saved.get('active') and saved.get('routingMode') == 'auto'
+        if edit:
+            # A file edit: the brief's host note, or in AUTO a task file or Claude's own project edit.
+            return 'BRIEF.md' not in raw and not auto
         if saved.get('active'):
-            # A prompt may be a /d task or a notification, a tool may need denying, a relay may be running.
-            return name == 'Stop' and (saved.get('turnRoute') or {}).get('route') not in RELAY_ROUTES
+            # A prompt may be a /d task or a notification, a tool may need denying, a relay may be running; in AUTO
+            # a turn's end may leave a handoff unfollowed or its result unread.
+            return (name == 'Stop' and (saved.get('turnRoute') or {}).get('route') not in RELAY_ROUTES
+                    and not auto)
         # Nothing is active: only an open menu, setup or help card can make a plain reply (such as X) CLI-MODE's.
         return not (any(saved.get(key) for key in ('pending', 'helpMenu')) or
                     (saved.get('turnRoute') or {}).get('route') == 'help')
@@ -65,6 +76,8 @@ def nothing_to_do(raw):
 
 
 RELAY_ROUTES = ('direct', 'direct-result')
+# File-editing tools: the brief's host note, and in AUTO task files and the delegation strengths (claude/hooks.json).
+EDIT_TOOLS = ('Edit', 'Write', 'NotebookEdit', 'MultiEdit')
 # Claude Code tools a turn that belongs to the agent never needs: the agent runs its own subagents, and the
 # follow's end wakes the conversation by itself (live run 3 scheduled a wake-up 20 minutes out instead).
 # claude/hooks.json's PreToolUse matcher lists the same tools.
@@ -95,7 +108,13 @@ ALLOWED = frozenset((
     'relay', 'follow', 'queue', 'status', 'bind', 'activate', 'choose', 'navigate', 'settings', 'progress', 'view', 'tune',
     'activation-message', 'frontend', 'options', 'first-time-check', 'setup-status', 'setup-manual', 'setup-start',
     'off', 'close', 'use', 'agents', 'diff', 'dir', 'usage', 'undo', 'timeout', 'attach', 'cancel', 'resume', 'refresh', 'commands',
-    'catalog'))
+    'catalog', 'handoff'))
+# In AUTO (Claude Code), CLI-MODE runs the agents and the user changes them with /cli mode: Claude may run these
+# only in a turn the user started with a CLI-MODE control (the hook's own instructions), never in its own turns.
+AUTO_OWNED_COMMANDS = frozenset((
+    'bind', 'activate', 'choose', 'navigate', 'settings', 'tune', 'close', 'use', 'timeout', 'attach', 'off',
+    'progress', 'view', 'frontend', 'options', 'refresh', 'setup-start', 'setup-status', 'setup-manual',
+    'first-time-check', 'activation-message'))
 RESET = ('/cli reset', '$cli reset', '/cli-mode:cli reset')
 MAX_NUDGES = 3
 # The skill describes CLI-MODE in general; opening it costs a turn and adds nothing to a context
@@ -270,11 +289,14 @@ def handle(event, root=None):
     prompt = event.get('prompt', '')
     capture = host.unwrap_prompt(prompt, host.CLAUDE)
     store, state, decision, worker, cancellation = route.decide(event, root, workspace=workspace(event), capture=capture)
-    if decision['route'] == 'help-invalid':
-        # On Claude Code help is a card, not a mode: any other message closes it and is handled as usual,
-        # so a question typed after the card still reaches Claude (or the agent).
+    if decision['route'] in ('help-invalid', 'mode-invalid'):
+        # On Claude Code help and the Mode page are cards, not modes: any other message closes them and is handled
+        # as usual, so a question typed after the card still reaches Claude (or the agent).
         with store.edit() as saved:
-            saved['helpMenu'] = None
+            if decision['route'] == 'help-invalid':
+                saved['helpMenu'] = None
+            else:
+                saved['pending'] = None
         store, state, decision, worker, cancellation = route.decide(event, root, workspace=workspace(event),
                                                                     capture=capture)
     if name == 'UserPromptSubmit' and route.task_through_settings(state, prompt):
@@ -385,10 +407,64 @@ def brief_note_approval(event):
                                    'permissionDecisionReason': 'CLI-MODE: the host\'s note in the project brief.'}}
 
 
+def deny(reason):
+    return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                                   'permissionDecisionReason': reason}}
+
+
+def auto_state(event, root):
+    """This session's saved state when it is in AUTO, else None (never raises: a tool call is never blocked by it)."""
+    try:
+        import route
+        from state import auto_on
+        state = route.Store(event['session_id'], workspace(event), root).read()
+        return state if auto_on(state) and state.get('active') else None
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return None
+
+
+def task_file_approval(event, root):
+    """AUTO: allow Claude's Write of a task file, exactly in this project's task folder; a task file written anywhere
+    else is refused with the right path (live P0: one went to `.cli-mode/tasks/` in the project root)."""
+    request = event.get('tool_input') or {}
+    path = str(request.get('file_path') or '')
+    if '/.cli-mode/tasks/' not in path.replace('\\', '/'):
+        return None
+    state = auto_state(event, root)
+    if state is None:
+        return None  # Not AUTO: Claude Code's own permissions decide.
+    import auto_mode
+    folder = auto_mode.tasks_dir(workspace(event))
+    try:
+        target = Path(os.path.realpath(path))
+        right = os.path.normcase(str(target.parent)) == os.path.normcase(os.path.realpath(folder))
+    except (OSError, ValueError):
+        right = False
+    if not right or target.suffix != '.md' or not auto_mode.TASK_ID.fullmatch(target.stem):
+        return deny('CLI-MODE AUTO: a task file goes in ' + folder.as_posix() + '/<id>.md, where <id> is 1-40 '
+                    'letters, digits, _ or - (such as t1). Write it there, then run the handoff.')
+    if len(request.get('content') or '') > auto_mode.TASK_MAX:
+        return deny('CLI-MODE AUTO: that task is over ' + str(auto_mode.TASK_MAX // 1024) + ' KB. Keep it to what '
+                    'the agent needs; it can read the project itself.')
+    return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
+                                   'permissionDecisionReason': 'CLI-MODE AUTO: a task file for the AUTO agent.'}}
+
+
+def auto_owned(event, root):
+    """In AUTO, a command that changes which agent does what is refused in Claude's own turns: CLI-MODE runs the
+    agents, and the user changes them. A turn the user started with a CLI-MODE control runs its commands as usual."""
+    state = auto_state(event, root)
+    if state is None or ((state.get('turnRoute') or {}).get('route') or 'host') not in ('host', 'restore'):
+        return None
+    return deny('CLI-MODE AUTO is on: CLI-MODE runs the agents, and the user changes them (/cli mode, or /cli mode '
+                'direct to drive them). Hand work to the AUTO agent with the handoff command instead.')
+
+
 def pre_tool_use(event, root):
     tool = event.get('tool_name', '')
-    if tool == 'Edit':
-        return brief_note_approval(event) or {}
+    if tool in EDIT_TOOLS:
+        return ((brief_note_approval(event) if tool == 'Edit' else None) or
+                (task_file_approval(event, root) if tool == 'Write' else None) or strength_refusal(event, root) or {})
     if tool in ('Bash', 'PowerShell'):
         text = (event.get('tool_input') or {}).get('command') or ''
         if not text.startswith('python ' + quote(CONTROLLER) + ' '):
@@ -406,9 +482,136 @@ def pre_tool_use(event, root):
                           'turn ends now.')
                 return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
                                                'permissionDecisionReason': reason}}
+            return auto_tool_refusal(event, root, tool, state) or {}
         except (OSError, ValueError, KeyError, TypeError, RuntimeError):
             pass  # Unreadable state never blocks a tool here.
     return {}
+
+
+def auto_tool_refusal(event, root, tool, state):
+    """AUTO: at Strong and Max, Claude's own subagents that would write code go to the AUTO agent instead (lever C;
+    Explore and Plan stay Claude's); and while a handoff runs, nothing waits or polls for it: its follow wakes Claude."""
+    from state import auto_on
+    if not auto_on(state) or not state.get('active'):
+        return None
+    import auto_mode
+    if tool == 'Agent':
+        if (state.get('turnRoute') or {}).get('route') == 'auto-host':
+            return None  # The user asked Claude itself (/d): its own subagents are its business.
+        kind = (event.get('tool_input') or {}).get('subagent_type') or 'general-purpose'
+        if auto_mode.load(data_root(root))['strength'] in ('strong', 'max') and kind not in auto_mode.KEPT_SUBAGENTS:
+            return deny('CLI-MODE AUTO: coding work goes to the AUTO agent, not a Claude subagent. Put it in a task file '
+                        'and hand it over with the handoff command; Explore and Plan stay yours for quick reads.')
+        return None
+    if any(record.get('status') in auto_mode.WORKING for _, record in auto_mode.auto_requests(state)):
+        return deny('CLI-MODE AUTO: a handoff is with the agent, and its background follow wakes you when it finishes, '
+                    'so nothing needs to wait, schedule or watch for it. Carry on, or end the turn.')
+    return None
+
+
+def edit_size(request):
+    """The lines one edit changes: the larger side of each replacement, or a written file's length."""
+    def lines(text):
+        return len(str(text or '').splitlines()) or (1 if text else 0)
+    if isinstance(request.get('edits'), list):  # MultiEdit.
+        return sum(max(lines(item.get('old_string')), lines(item.get('new_string')))
+                   for item in request['edits'] if isinstance(item, dict))
+    return max(lines(request.get('old_string')), lines(request.get('new_string')), lines(request.get('content')),
+               lines(request.get('new_source')))
+
+
+def strength_refusal(event, root):
+    """AUTO: Claude's own edits of project files (lever B). None of a file a running task may change (one writer per
+    file); at Strong, small fixes only (SMALL_EDIT lines an edit, TURN_FILES files a turn); at Max, none. Files outside
+    the project, and the agents' working folder (task files, the brief), are not the project's code and stay Claude's."""
+    state = auto_state(event, root)
+    if state is None:
+        return None
+    import agent_folder
+    import auto_mode
+    from state import agent_label
+    request = event.get('tool_input') or {}
+    path = str(request.get('file_path') or request.get('notebook_path') or '')
+    if not path:
+        return None
+    try:
+        relative = Path(os.path.realpath(path)).relative_to(Path(os.path.realpath(workspace(event))))
+    except (OSError, ValueError):
+        return None  # Outside the project: Claude's own notes and memory.
+    if relative.parts[:1] == (agent_folder.ROOT,):
+        return None
+    busy = auto_mode.conflict(state, [auto_mode.file_key(relative.as_posix())])
+    if busy:
+        what = 'files anywhere in this project' if busy[2] == auto_mode.WHOLE else busy[2]
+        return deny('CLI-MODE AUTO: ' + agent_label(state, busy[0]) + ' may be changing ' + what + ' right now (one '
+                    'writer per file). Make this edit after its result, or put it in a task for that agent.')
+    if (state.get('turnRoute') or {}).get('route') == 'auto-host':
+        return None  # The user asked Claude itself (/d): no delegation strength this turn.
+    strength = auto_mode.load(data_root(root))['strength']
+    if strength == 'max':
+        return deny('CLI-MODE AUTO (Max): project changes go to the AUTO agent. Put this in a task file and hand it '
+                    'over with the handoff command.')
+    if strength != 'strong':
+        return None
+    changed = edit_size(request)
+    if changed > auto_mode.SMALL_EDIT:
+        return deny('CLI-MODE AUTO (Strong): this edit changes about ' + str(changed) + ' lines, more than a small '
+                    'fix. Put it in a task file and hand it to the AUTO agent.')
+    import route
+    key = os.path.normcase(relative.as_posix())
+    try:
+        with route.Store(event['session_id'], workspace(event), root).edit() as saved:
+            turn = (saved.get('turnRoute') or {}).get('id')
+            record = saved.get('autoTurnFiles') or {}
+            files = list(record.get('files') or []) if record.get('turn') == turn else []
+            if key not in files:
+                if len(files) >= auto_mode.TURN_FILES:
+                    return deny('CLI-MODE AUTO (Strong): another project file in this turn is more than a small fix. '
+                                'Hand the rest to the AUTO agent in a task file.')
+                saved['autoTurnFiles'] = dict(turn=turn, files=files + [key])
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return None
+    return None
+
+
+AUTO_RULE_REFRESH = 30  # AUTO turns after which the whole rule is sent again: lever L1's safety net for long talks.
+
+
+def auto_context(event, root, state):
+    """What Claude is told about AUTO this turn (lever A), made light (L1): the whole rule on the conversation's
+    first AUTO turn, again when it changes, after a compaction and every AUTO_RULE_REFRESH turns; otherwise only a
+    changed status (agents, work still running or unread), or nothing. None for nothing: the rule sent before
+    stays in the conversation, and Claude Code keeps it there."""
+    import auto_mode
+    import route
+    rule = auto_mode.rule(data_root(root), state, workspace(event), handoff_command(event, root), attribution)
+    if rule is None:
+        return auto_mode.NOT_RUNNING
+    status = auto_mode.status(state, lambda request: command(event, root, 'relay', '--request', request,
+                                                            '--for-host'))
+    digests = {key: hashlib.sha1(text.encode('utf-8')).hexdigest()[:16] for key, text in (('rule', rule),
+                                                                                         ('status', status))}
+    try:
+        with route.Store(event['session_id'], workspace(event), root).edit() as saved:
+            sent = saved.get('autoRule') or {}
+            turns = int(sent.get('turns') or 0) + 1
+            whole = sent.get('rule') != digests['rule'] or turns >= AUTO_RULE_REFRESH
+            changed = sent.get('status') != digests['status']
+            saved['autoRule'] = dict(digests, turns=0 if whole else turns)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        whole = changed = True  # Unsure what was sent: send it all.
+    if whole:
+        return rule + '\n' + status
+    if changed:
+        return 'CLI-MODE AUTO: the rule given earlier in this conversation still applies. ' + status
+    return None
+
+
+def attribution(text):
+    """An AUTO attribution line, marked as DIRECT's "Passing to" line is: green bold (plain bold with /cli color off),
+    with a zero-width space after it so a line that ends a still-streaming block renders at once."""
+    import presentation
+    return presentation.strong(text, COLOR) + ('​' if COLOR else '')
 
 
 def approve(event, text, root):
@@ -427,11 +630,25 @@ def approve(event, text, root):
     except (ValueError, KeyError):
         return None
     rest = tokens[len(expected):]
-    if (tokens[:len(expected)] != expected or not rest or rest[0] not in ALLOWED
+    short = tokens[:2] == expected[:2] and tokens[2:3] == ['handoff']  # AUTO's `python <controller> handoff …`.
+    if short:
+        rest = tokens[2:]
+    if ((tokens[:len(expected)] != expected and not short) or not rest or rest[0] not in ALLOWED
             or not all(ARGUMENT.fullmatch(token) for token in rest)
             or any("'" in token for token in tokens)
             or ' '.join(quote(token) for token in tokens) != text):
         return None
+    if rest[0] == 'handoff' and ((auto_state(event, root) or {}).get('turnRoute') or {}).get('route') == 'auto-host':
+        return deny('CLI-MODE AUTO: the user asked you directly (/d), so nothing from this turn goes to an agent. '
+                    'Answer or do it yourself.')
+    if rest[0] in AUTO_OWNED_COMMANDS:
+        refused = auto_owned(event, root)
+        if refused:
+            return refused
+    if rest[0] == 'handoff':
+        handed = handoff_approval(event, root, rest)
+        if handed:
+            return handed
     if rest[0] == 'follow':
         return follow_approval(event, root, rest)
     access = rest[rest.index('--access') + 1:][:1] if '--access' in rest else []
@@ -447,6 +664,45 @@ def approve(event, text, root):
                                         'permissionDecisionReason': 'CLI-MODE controller command for this session.'})
 
 
+def handoff_command(event, root):
+    """The handoff command Claude runs in AUTO, short: this hook knows the session, so the command it turns it into
+    carries the rest (handoff_approval)."""
+    return ' '.join(quote(token) for token in ['python', CONTROLLER, 'handoff', '--task']) + ' <id>'
+
+
+def handoff_approval(event, root, rest):
+    """AUTO's one-call handoff (lever L2): this hook hands the task over itself, and the same tool call becomes the
+    agent's background follow, one row. A refusal comes back at once, as this call's denial. A new agent
+    (`--agent new`, 15-40 s to start: too long for a hook) is checked here and started by that background task,
+    under a request id chosen here so its end still wakes Claude. None for those background forms themselves."""
+    import uuid
+    import controller as control
+    try:
+        args = control.build_parser().parse_args(base(event, root)[2:] + list(rest))
+    except SystemExit:
+        return deny('CLI-MODE AUTO: that handoff command is incomplete. Run `' + handoff_command(event, root) +
+                    '` (with --read-only or --agent <name> if needed).')
+    if args.check or args.request or args.follow:
+        return None
+    extra = ['--read-only'] if args.read_only else []
+    try:
+        if (args.agent or '').casefold() == 'new':
+            label = controller(event, root, 'handoff', '--task', args.task, '--agent', 'new', '--check', *extra)['label']
+            request = uuid.uuid4().hex
+            words = ['handoff', '--task', args.task, '--agent', 'new', '--request', request, '--follow'] + extra
+        else:
+            result = controller(event, root, *rest)
+            request, label, words = result['requestId'], result['label'], ['follow', '--request', result['requestId']]
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+        return deny('CLI-MODE AUTO: ' + str(exc))
+    remember_follow(event, root, request)
+    return {'hookSpecificOutput': {
+        'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
+        'permissionDecisionReason': 'CLI-MODE AUTO handed the task over and follows the agent in the background.',
+        'updatedInput': dict(event.get('tool_input') or {}, command=command(event, root, *words),
+                             run_in_background=True, description=label)}}
+
+
 # The only controller commands that can run past the desktop app's row threshold (about 2-3 s) as a command
 # Claude runs: an activation that widens access (13-42 s), and the relay loop without background tasks (25 s).
 ROW_LABELS = {'bind': 'starting', 'activate': 'starting', 'choose': 'starting', 'tune': 'starting', 'relay': 'answer'}
@@ -454,6 +710,17 @@ ROW_LABELS = {'bind': 'starting', 'activate': 'starting', 'choose': 'starting', 
 
 def labelled(event, root, rest, output):
     """Name the command's row, should it get one, after the agent rather than Claude's own words."""
+    if rest[0] == 'handoff' and '--agent' in rest and rest[rest.index('--agent') + 1:][:1] == ['new']:
+        try:  # AUTO: another agent like the AUTO agent starts first (15-40 s).
+            import adapters
+            import route
+            from state import agent_entry
+            state = route.Store(event['session_id'], workspace(event), root).read()
+            lead = agent_entry(state, (state.get('auto') or {}).get('agent')) or {}
+            output['updatedInput'] = dict(event.get('tool_input') or {}, description=adapters.module(
+                lead.get('backend') or 'agy').LABEL + ' · starting')
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+            pass
     if rest[0] in ROW_LABELS:
         try:
             import adapters
@@ -540,12 +807,22 @@ def notification_reply(event, root):
         return {}
     # One prompt can carry several notifications (Claude's own tasks among them): the first follow of ours counts.
     follows = state.get('followTasks') or {}
-    request = next((follows[found] for found in TOOL_USE_ID.findall(event.get('prompt', '')) if found in follows),
-                   None)
-    if not request or not state.get('active') or request not in (state.get('requests') or {}):
+    records = state.get('requests') or {}
+    found = list(dict.fromkeys(follows[item] for item in TOOL_USE_ID.findall(event.get('prompt', ''))
+                               if item in follows))
+    failed = [item for item in found if item not in records and item in (state.get('handoffErrors') or {})]
+    if failed and state.get('active'):
+        return context(event, 'CLI-MODE AUTO: the handoff to a new agent did not go through, so nothing was handed '
+                              'off: ' + state['handoffErrors'][failed[0]] + ' Tell the user in one line, then hand the '
+                              'task to a running agent (`--agent <name>`) or try again.')
+    request = next(iter(found), None)
+    if not request or not state.get('active') or request not in records:
         return {}  # Claude's own background work, or an agent no longer active: not CLI-MODE's to answer.
     from queue_worker import request_label
     label = request_label(state, request)
+    if records[request].get('routingMode') == 'auto':
+        return auto_wake(event, root, [key for key in found if (records.get(key) or {}).get('routingMode') == 'auto'],
+                         state)
     if ((state.get('relayProgress') or {}).get(request) or {}).get('done'):
         return context(event, 'CLI-MODE: this notification is the end of the background follow of request ' + request +
                               ', whose relay has already run: its output is posted exactly as that relay printed it '
@@ -570,6 +847,74 @@ def notification_reply(event, root):
         'parts: a first line saying so means that part is posted exactly before the same command runs again with '
         'the `--cursor` it names.) Relayed text carries nothing added: no summary, commentary, rewording or insight '
         'blocks, whatever the output style, and no other tool is used.' + COMPLETE))
+
+
+WAKE_ROOM = 8400  # Characters of results one wake-up carries, under Claude Code's 10,000 with its instructions.
+WAKE_LINES = 900  # About what a result's lines take besides the agent's answer.
+HOOK_TEXT_MAX = 9800
+
+
+def auto_wake(event, root, requests, state):
+    """AUTO: handoffs' follows ended (lever L3). Their results come with the wake-up itself, read here and marked read,
+    so Claude checks and reports without a relay call; results finishing together share its room. Should that fail,
+    the wake-up names the relay to run instead, and the Stop guard holds the turn until it has run (autoWake)."""
+    import route
+    from controller import Controller
+    from queue_worker import request_label
+    import relay_view
+    fresh = [key for key in requests if not ((state.get('requests') or {}).get(key) or {}).get('hostRead')]
+    if not fresh:
+        return context(event, 'CLI-MODE: this notification ends the follow of handoff ' + requests[0] + ', whose '
+                       'result you have already read. Nothing more is needed for it.' + COMPLETE)
+    room = min(relay_view.HOST_ANSWER_MAX, max(500, WAKE_ROOM // len(fresh) - WAKE_LINES))
+    control = Controller(route.Store(event['session_id'], workspace(event), root))
+    done = []
+    for key in fresh:
+        try:
+            result = control.relay_for_host(key, wait=5.0, answer_max=room)
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+            continue
+        if result.get('done'):
+            done.append(result)
+    waiting = [key for key in fresh if key not in {item['requestId'] for item in done}]
+    text = ''
+    if done:
+        labels = [request_label(state, item['requestId']) for item in done]
+        one = len(done) == 1
+        text = ('CLI-MODE: this notification ends the follow of handoff ' +
+                ', '.join(item['requestId'] for item in done) + ', so ' + ' and '.join(labels) +
+                (' has' if one else ' have') + ' finished. ' + ('Its result is' if one else 'Their results are') +
+                ' below, already read for you (there is no relay to run); it is for you, not the user. Open your '
+                'report with ' + ('this attribution' if one else 'these attributions') + ', exactly as written:\n' +
+                '\n'.join(attribution(label + ' finished.') for label in labels) + '\nThen tell the user in a few '
+                'lines, in your own words, what was done, whether it held up, and anything unresolved or waiting on '
+                'them; do not post the result as is. CHECK: ok means CLI-MODE found nothing to look into: report from '
+                'the result alone, with no files to open and no commands to run unless the user asked. CHECK: look '
+                'names what to check: check only that. If it needs more work, hand a follow-up task to the agent the '
+                'same way. The CLI-MODE skill and its guides are not needed.\n\n' +
+                '\n\n'.join(item['text'] for item in done))
+        if len(text) > HOOK_TEXT_MAX:
+            text = (text[:HOOK_TEXT_MAX - 120].rstrip() + '\n[Cut to fit the wake-up: each whole answer is in the '
+                    'answer file its ANSWER line names.]')
+    if not waiting:
+        return context(event, text)
+    # Fallback: a result that could not be read here is read with its relay; the Stop guard holds the turn for it.
+    request = waiting[0]
+    label = request_label(state, request)
+    try:
+        with route.Store(event['session_id'], workspace(event), root).edit() as saved:
+            saved['autoWake'] = request
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        pass  # The context still says what to run.
+    return context(event, (text + '\n\n' if text else '') + (
+        'CLI-MODE: this notification ends the follow of handoff ' + request + ', so ' + label + ' has finished. Its '
+        'result is for you, not the user: run `' + command(event, root, 'relay', '--request', request, '--for-host') +
+        '` once (Bash or PowerShell, timeout ' + str(RELAY_TIMEOUT_MS) + ' ms) and read what it prints. Then check the '
+        'work against the task: the change receipt, the test result and the agent\'s report (open a changed file or '
+        'run a check only where something needs confirming). Open your report with this attribution, exactly as '
+        'written:\n' + attribution(label + ' finished.') + '\nThen tell the user in your own words what was done, whether '
+        'it held up, and anything unresolved or waiting on them; do not post the result as is. If it needs more work, '
+        'hand a follow-up task to the agent the same way.' + COMPLETE))
 
 
 def finished_elsewhere(state, requests):
@@ -614,8 +959,10 @@ def followed(event, store, request):
     """True while a background follow of `request` runs, so its end will wake Claude for the relay."""
     tasks = event.get('background_tasks')
     if isinstance(tasks, list):  # Claude Code's own list of what can still wake this session.
+        # A follow, or AUTO's handoff to a new agent, which follows once the agent has started (handoff_approval).
         return any(isinstance(task, dict) and task.get('status') == 'running'
-                   and ' follow --request ' + request in (task.get('command') or '') for task in tasks)
+                   and (' follow --request ' + request in (task.get('command') or '') or
+                        ' --request ' + request + ' --follow' in (task.get('command') or '')) for task in tasks)
     import operations
     return operations.following(store, request)
 
@@ -699,6 +1046,10 @@ def stop(event, root):
             return {}  # CLI-MODE was never used in this session.
         # Most turn ends are not relays: decide that from the saved JSON alone.
         saved = json.loads(path.read_text(encoding='utf-8'))
+        if saved.get('active') and saved.get('routingMode') == 'auto':
+            nudge = auto_stop(event, root)
+            if nudge:
+                return nudge
         if not saved.get('active') or (saved.get('turnRoute') or {}).get('route') not in RELAY_ROUTES:
             return {}
         import route
@@ -738,6 +1089,46 @@ def stop(event, root):
     return context(event, 'CLI-MODE request ' + request + ' has not finished relaying; the agent\'s remaining '
                           'output reaches the user only through it. Its next relay command is `' +
                    command(event, root, *relay_words(requests, cursor, always_cursor=True)) + '`.')
+
+
+def auto_stop(event, root):
+    """AUTO: a turn ends with a handoff nothing follows (so nothing would wake Claude), or with a finished handoff's
+    result unread (autoWake). Say which, up to MAX_NUDGES times each; otherwise the turn ends."""
+    import auto_mode
+    import route
+    store = route.Store(event['session_id'], workspace(event), root)
+    try:
+        with store.edit() as state:
+            nudges = dict(state.get('relayNudges') or {})
+            wake = state.get('autoWake')
+            record = (state.get('requests') or {}).get(wake) or {}
+            if wake and (record.get('hostRead') or record.get('status') in auto_mode.WORKING):
+                state.pop('autoWake', None)
+                wake = None
+            if wake and nudges.get(wake, 0) >= MAX_NUDGES:
+                state.pop('autoWake', None)  # The ledger still lists it as unread on the next AUTO turn.
+                wake = None
+            if wake:
+                state['relayNudges'] = dict(nudges, **{wake: nudges.get(wake, 0) + 1})
+                unfollowed = None
+            else:
+                unfollowed = next((key for key, item in auto_mode.auto_requests(state)
+                                   if item.get('status') in auto_mode.WORKING and nudges.get(key, 0) < MAX_NUDGES
+                                   and not followed(event, store, key)), None)
+                if unfollowed:
+                    state['relayNudges'] = dict(nudges, **{unfollowed: nudges.get(unfollowed, 0) + 1})
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return {}
+    if wake:
+        return context(event, 'CLI-MODE AUTO: handoff ' + wake + ' has finished, and you have not read its result. '
+                              'Run `' + command(event, root, 'relay', '--request', wake, '--for-host') + '` and '
+                              'check it before telling the user how it went.')
+    if unfollowed:
+        return context(event, 'CLI-MODE AUTO: handoff ' + unfollowed + ' is with the agent, but nothing follows it, '
+                              'so nothing would wake you when it finishes. Run its follow `' +
+                       command(event, root, 'follow', '--request', unfollowed) + '` now (CLI-MODE makes it a '
+                       'background task), then end the turn.')
+    return {}
 
 
 def relay_position(state, request):
@@ -799,6 +1190,21 @@ def named(decision):
     return ['--name', decision['name']] if decision.get('name') else []
 
 
+# The Mode page's routes, as `auto` controller words. Each runs in this hook, starting an AUTO agent included (as
+# bind does): the hook's 300 s timeout covers an agent's start, and as a command it would get a pane row of its own.
+MODE_ACTIONS = {
+    'mode-page': lambda decision: ['page'],
+    'mode-set': lambda decision: ['set', '--to', decision['mode']],
+    'mode-agent': lambda decision: ['agent', '--role', decision['role'],
+                                    *(['--agent', decision['agent']] if decision.get('agent') else [])],
+    'mode-backup-clear': lambda decision: ['clear-backup'],
+    'mode-strength': lambda decision: ['strength', '--to', decision['strength']],
+    'mode-choose': lambda decision: ['choose', '--number', str(decision['number'])],
+    'mode-back': lambda decision: ['back'],
+    'mode-dismiss': lambda decision: ['close'],
+}
+
+
 def instant(event, root, *words, render=None):
     """Run a control in process and show its reply at once."""
     try:
@@ -808,19 +1214,50 @@ def instant(event, root, *words, render=None):
     return show_text(event, render(result)) if render else show_result(event, result)
 
 
+def cancel_all(event, root, state):
+    """AUTO's `/cli cancel`: one brake for the whole team, every agent's running turn (each wakes Claude as canceled).
+    Queued work still runs, as with /cli cancel <name> in DIRECT; /cli off closes every agent."""
+    import route
+    from controller import Controller
+    from state import agent_label, live_agents
+    control = Controller(route.Store(event['session_id'], workspace(event), root))
+    stopped = []
+    for session in live_agents(state, every=True).values():
+        try:
+            if control.cancel(session).get('canceled'):
+                stopped.append(agent_label(state, session))
+        except RuntimeError:
+            continue  # Closed meanwhile: nothing of it to cancel.
+    if not stopped:
+        return 'No agent turn was running, so nothing was canceled. Queued work is unchanged.'
+    return ('Cancel requested for ' + ', '.join(stopped) + ': ' + ('its turn stops' if len(stopped) == 1 else
+                                                                   'their turns stop') +
+            ', and Claude is told. Queued work still runs; /cli off closes every agent.')
+
+
 def prompt_reply(event, root, state, decision, worker, cancellation):
     import presentation
     kind = decision['route']
     adapter = label_of(state, decision)
     pending = state.get('pending') or {}
+    if kind == 'auto-host':  # AUTO: /d is the user asking Claude itself; nothing of this turn goes to an agent.
+        return context(event, 'CLI-MODE AUTO is on, but this message starts with /d: the user is asking you, not the '
+                       'agent. Answer it or do it yourself, and do not hand it off (the handoff command is refused this '
+                       'turn, and your own edits are not limited by the delegation strength; while an agent is changing '
+                       'the project, still leave the project files alone). The /d is not part of the request.')
+    if kind == 'host' and state.get('active') and state.get('routingMode') == 'auto':
+        text = auto_context(event, root, state)  # Claude's own turn in AUTO: the rule once, then what changed.
+        return context(event, text) if text else {}
     if kind in ('host', 'restore'):
         return {}
     if kind == 'hint':
         return show_text(event, decision['text'])
     if kind == 'help':
         return instant(event, root, 'commands')
-    if kind == 'help-invalid':
-        return {}  # handle() closes help and routes the message again; never hold it here.
+    if kind in ('help-invalid', 'mode-invalid'):
+        return {}  # handle() closes the card and routes the message again; never hold it here.
+    if kind in MODE_ACTIONS:
+        return instant(event, root, 'auto', *MODE_ACTIONS[kind](decision))
     if kind == 'display':
         return display(event, root, decision.get('choice', ''))
     if kind == 'color':
@@ -878,6 +1315,8 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
         return instant(event, root, 'queue', render=presentation.queue_text)
     if kind == 'off':
         return instant(event, root, 'off', render=presentation.shutdown_text)
+    if kind == 'cancel-all':
+        return show_text(event, cancel_all(event, root, state))
     if kind == 'cancel':
         note = ('Cancel requested for ' + name_of(state, decision) + '\'s running turn; queued follow-ups still run.'
                 if cancellation and cancellation.get('canceled') else 'No agent turn was running; the queue is unchanged.')
@@ -908,6 +1347,8 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
         if not request:
             return show_text(event, 'CLI-MODE: no captured request. Send the message again.')
         label = name_of(state, decision)
+        if (state['requests'].get(request) or {}).get('routingMode') == 'auto':
+            return context(event, auto_continuation(event, root, state, request, label))
         if background():
             remember_label(event, root, request, label, decision.get('named', False))
         lead = ('CLI-MODE forwarded this message (without its /d trigger' +
@@ -926,6 +1367,25 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
     return {}
 
 
+def auto_continuation(event, root, state, request, label):
+    """AUTO: the user's /cli approve or /cli deny goes on with Claude's handoff, so its result comes to Claude."""
+    import route
+    handoff = (state['requests'][request].get('handoff') or {})
+    before = (state.get('followLabels') or {}).get(handoff.get('continues'))
+    try:
+        with route.Store(event['session_id'], workspace(event), root).edit() as saved:
+            labels = saved.setdefault('followLabels', {})
+            labels[request] = (before or label) + ' (answered)'
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        pass  # Only the pane row's name.
+    return ('CLI-MODE sent the user\'s answer to ' + label + ', which goes on with your handoff' +
+            (' (task ' + handoff['task'] + ')' if handoff.get('task') else '') + '. Its result comes to you, not the '
+            'user. Run its follow `' + command(event, root, 'follow', '--request', request) + '` now, as is (CLI-MODE '
+            'makes it a background task), post one short line that ' + label + ' goes on, and end the turn: the '
+            'follow\'s end wakes you, and you then read the result with the relay command CLI-MODE gives you.' +
+            COMPLETE)
+
+
 def unrelayed(state, before=None, limit=3, session=None):
     """This activation's requests whose relay never finished: their output has not reached the user.
 
@@ -940,7 +1400,7 @@ def unrelayed(state, before=None, limit=3, session=None):
     rows = [(record.get('capturedAt') or 0, key) for key, record in records.items()
             if key != before and (limit_at is None or (record.get('capturedAt') or 0) < limit_at)
             and record.get('generation') == state.get('generation')
-            and record.get('session') in sessions
+            and record.get('session') in sessions and record.get('routingMode') != 'auto'  # AUTO: Claude reads those.
             and record.get('status') in ('captured', 'submitting', 'uncertain', 'completed')
             and not record.get('relayed') and not (progress.get(key) or {}).get('done')]
     return [key for _, key in sorted(rows)[-limit:]]
@@ -1193,6 +1653,13 @@ def session_start(event, root, state, decision):
     """After compaction, restore what the last turn was doing; otherwise nothing is needed."""
     if event.get('source') != 'compact':
         return {}
+    if state.get('autoRule'):
+        import route
+        try:  # The AUTO rule sent earlier may be summarized away: the next AUTO turn sends it whole again.
+            with route.Store(event['session_id'], workspace(event), root).edit() as saved:
+                saved.pop('autoRule', None)
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+            pass
     kind = decision.get('route')
     adapter = label_of(state, decision)
     request = decision.get('requestId')

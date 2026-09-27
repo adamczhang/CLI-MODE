@@ -148,6 +148,8 @@ class ClaudeControl(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.backend = ScriptedBackend()
         self.store = Store('claude-session', self.root, self.root / 'data')
+        with self.store.edit() as state:  # DIRECT, chosen (/cli mode direct): AUTO is Claude Code's default.
+            state.update(routingMode='direct', directChosen=True)
         self.control = Controller(self.store, self.backend)
         self.control.frontend()
         self.control.activate('gemini-3.8-flash-high', 'allow')

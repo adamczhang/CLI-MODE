@@ -10,7 +10,7 @@ import menu_view
 from operations import pending_work
 from presentation import menu_block
 from progress import PROGRESS_MODES, progress_mode
-from state import agent_entry, agent_label
+from state import agent_entry, agent_label, routing_mode
 import viewer
 
 
@@ -159,7 +159,9 @@ class MenuMixin:
         return dict(state, view='on', message=message + ' Closing the window is safe; the next turn reopens it. '
                     'Use /cli view off to stop.')
 
-    def frontend(self, agent='agy', page=1):
+    def frontend(self, agent='agy', page=1, purpose=None):
+        """The agent list (`home`) or one agent's activation page. `purpose` marks an AUTO agent being chosen or
+        started (auto_mode.PURPOSES): its activation then becomes that AUTO agent."""
         if agent != 'home':
             self.use(agent)
         current = self.store.read()
@@ -167,7 +169,17 @@ class MenuMixin:
             return self.setup_status()
         routing = frontends.routing_readiness(current)
         access = frontends.access_readiness()
-        menu = frontends.menu(self.store.root, agent, self.saved_settings(current, agent), routing, access, page)
+        mode = routing_mode(current) if host.claude() else None  # Claude Code's agent list has a Mode row.
+        if mode == 'auto' and not purpose:
+            purpose = 'auto-on'  # In AUTO, the agent started here is the AUTO agent.
+        subtitle, saved = None, None
+        if purpose:
+            import auto_mode  # Claude Code only: the list says what the agent is for, and starts the saved one first.
+            subtitle = 'Select Backup Agent' if purpose == 'auto-backup' else 'Select AUTO Agent'
+            choice = auto_mode.load(self.store.root)['agent'] if purpose == 'auto-on' and agent == 'home' else None
+            saved = auto_mode.short(self.store.root, choice) if choice else None
+        menu = frontends.menu(self.store.root, agent, self.saved_settings(current, agent), routing, access, page,
+                              mode=mode, subtitle=subtitle, saved=saved)
         if not access['ready']:
             # Display onboarding without writing outside the workspace or asking to escalate.
             return dict(current, activationMenu=menu, routingReadiness=routing, hostAccess=access)
@@ -179,8 +191,12 @@ class MenuMixin:
                                     phase='agent' if agent == 'home' else 'activation', entrypoint=agent,
                                     backend=None if agent == 'home' else agent, draft={}, page=page,
                                     choices=[{'label': b['displayName'], 'value': b['id']} for b in frontends.backends()] if agent == 'home' else [])
+            if purpose:
+                state['pending']['purpose'] = purpose
             if frontends.first_start(self.store.root, agent, routing):
                 state['pending']['onboarding'] = 'select-agent'
+            elif saved and agent == 'home':  # 1 starts the saved AUTO agent (and backup); the agents follow.
+                state['pending']['choices'].insert(0, {'label': saved, 'value': 'auto-saved'})
         return dict(state, activationMenu=menu, routingReadiness=routing, hostAccess=access)
 
     def first_time_check(self, agent='agy', check=None):
@@ -364,12 +380,12 @@ class MenuMixin:
             previous = {'access': 'effort', 'effort': 'model'}.get(phase)
             if previous:
                 return self.options(previous)
-            return self.frontend(pending['backend'] if phase == 'model' else 'home')
+            return self.frontend(pending['backend'] if phase == 'model' else 'home', purpose=pending.get('purpose'))
         if action not in ('>', '<'):
             raise ValueError('Unknown navigation action.')
         page = max(1, pending.get('page', 1) + (1 if action == '>' else -1))
         if phase == 'agent':
-            return self.frontend('home', page)
+            return self.frontend('home', page, purpose=pending.get('purpose'))
         if phase not in ('model', 'effort', 'access'):
             raise RuntimeError('This menu has no additional pages.')
         return self.options(phase, page=page)
@@ -384,9 +400,12 @@ class MenuMixin:
         choice = choices[number - 1]['value']
         phase = pending['phase']
         if phase == 'agent':
+            if choice == 'auto-saved':  # Claude Code's AUTO: the saved AUTO agent and backup, as /cli mode auto.
+                result = self.start_auto()
+                return dict(result, autoLine=result.pop('message'))  # Said under the AUTO agent's card.
             if pending.get('onboarding') or not frontends.confirmed(self.store.root, choice):
                 return self.first_time_check(choice)
-            return self.frontend(choice)
+            return self.frontend(choice, purpose=pending.get('purpose'))
         if phase not in ('model', 'effort', 'access'):
             raise ValueError('This page does not have a settings choice list.')
         draft = deepcopy(pending.get('draft') or {})

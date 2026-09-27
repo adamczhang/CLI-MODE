@@ -1,16 +1,23 @@
 """CLI-MODE lifecycle and dispatch. Run --help; hooks import the same controller.
 
 Controller composes focused mixins: menus (setup and settings), binding (owned
-session lifecycle), dispatch (one provider turn) and queue_worker (detached
-FIFO worker and receipts). Module-level helpers live in operations.
+session lifecycle), dispatch (one provider turn), queue_worker (detached
+FIFO worker and receipts) and auto_mode (Claude Code's DIRECT and AUTO modes).
+Module-level helpers live in operations.
 """
 import argparse
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 import adapters
+try:
+    from auto_mode import AutoMixin
+except ImportError:  # The Codex package: AUTO mode (auto_mode.py) ships with Claude Code only.
+    class AutoMixin:
+        pass
 import help_view
 import host
 import installer
@@ -26,7 +33,7 @@ from state import Store, agent_label, live_agents, passing_line, route
 import names
 
 
-class Controller(QueueMixin, MenuMixin, BindingMixin, DispatchMixin):
+class Controller(QueueMixin, MenuMixin, BindingMixin, DispatchMixin, AutoMixin):
     def __init__(self, store, backend=None, agent=None):
         self.store = store
         self.override = backend
@@ -86,6 +93,14 @@ def build_parser():
     p = sub.add_parser('relay'); p.add_argument('--request', required=True, action='append')
     p.add_argument('--cursor', type=int, default=0); p.add_argument('--wait', type=float)
     p.add_argument('--view-dir')
+    p.add_argument('--for-host', action='store_true', help='Claude Code AUTO: a handoff\'s result for Claude to read.')
+    p = sub.add_parser('handoff', help='Claude Code AUTO: hand Claude\'s task file to the AUTO agent.')
+    p.add_argument('--task', required=True); p.add_argument('--agent'); p.add_argument('--read-only', action='store_true')
+    # The approval hook's forms (hooks/claude.py:handoff_approval): the checks alone, or, for a new agent, its
+    # start, the handoff under the hook's id and the follow, as one background task.
+    p.add_argument('--check', action='store_true', help=argparse.SUPPRESS)
+    p.add_argument('--request', help=argparse.SUPPRESS); p.add_argument('--follow', action='store_true',
+                                                                        help=argparse.SUPPRESS)
     p = sub.add_parser('follow'); p.add_argument('--request', required=True)
     p = sub.add_parser('pump', help=argparse.SUPPRESS); p.add_argument('--token', required=True)
     p.add_argument('--session')
@@ -119,6 +134,10 @@ def build_parser():
     source.add_argument('--file'); source.add_argument('--request')
     p = sub.add_parser('cancel'); p.add_argument('--name')
     p = sub.add_parser('acknowledge'); p.add_argument('--operation', required=True)
+    p = sub.add_parser('auto', help='Claude Code: the Mode page, DIRECT or AUTO, and the AUTO agents.')
+    p.add_argument('action', choices=['page', 'set', 'agent', 'clear-backup', 'strength', 'choose', 'back', 'close'])
+    p.add_argument('--to'); p.add_argument('--role', choices=['agent', 'backup'], default='agent')
+    p.add_argument('--agent'); p.add_argument('--number', type=int)
     return parser
 
 
@@ -143,7 +162,11 @@ def run(args, control=None):
     elif command == 'relay':
         # A text host posts nothing until the agent finishes, so each call waits longer (its tool timeout is 30 s).
         wait = min(max(args.wait if args.wait is not None else 8.0 if views else 25.0, 0), 30)
-        if not views:  # A text host relays a turn's earlier, cut-off requests with its own, in one loop.
+        if args.for_host:
+            if views or len(args.request) != 1:
+                raise ValueError('relay --for-host takes one --request, on Claude Code.')
+            result = control.relay_for_host(args.request[0], wait)
+        elif not views:  # A text host relays a turn's earlier, cut-off requests with its own, in one loop.
             result = control.relay_chain(args.request, args.cursor, wait)
         elif len(args.request) == 1:
             result = control.relay(args.request[0], args.cursor, wait, args.view_dir)
@@ -167,6 +190,7 @@ def run(args, control=None):
         activated = result.get('active') and not result.get('pending') and 'activationMenu' not in result
         if confirming and activated:
             result = dict(result, activation=control.activation_message(confirm_to, session=result.get('activated')))
+        result = with_auto_line(result)
     elif command == 'refresh': result = control.refresh()
     elif command == 'navigate': result = control.navigate(args.action)
     elif command == 'settings': result = control.settings_menu(args.dismiss, control.session_of(args.name))
@@ -175,8 +199,9 @@ def run(args, control=None):
     elif command == 'catalog':
         result = control.use(args.agent or control.agent_of(control.store.read())).catalog(control.store.root)
     elif command == 'commands':
-        # The same framed card as every other menu; `text` is its fallback.
-        page = help_view.render()
+        # The same framed card as every other menu; `text` is its fallback. AUTO has its own (the user's controls).
+        from state import auto_on
+        page = help_view.render(auto=auto_on(control.store.read()))
         result = {'text': page, 'activationMenu': page}
     elif command == 'format-message':
         if not args.message_output:
@@ -235,7 +260,10 @@ def run(args, control=None):
         prefetched = control.prefetch_usage(target, model, access, effort) if confirming else None
         result = control.activate(model, access, effort=effort, agent=target, require_hooks=True)
         if confirming:
-            result = dict(result, activation=control.activation_message(confirm_to, prefetched))
+            # The card of the agent just started: not always the current one (an AUTO backup never becomes current).
+            result = dict(result, activation=control.activation_message(confirm_to, prefetched,
+                                                                        session=result.get('activated')))
+        result = with_auto_line(result)
     elif command == 'off': result = control.off()
     elif command == 'close': result = control.close(args.name)
     elif command == 'use': result = control.make_current(args.name)
@@ -255,6 +283,26 @@ def run(args, control=None):
             with Path(args.file).open(encoding='utf-8-sig', newline='') as source:
                 result = control.send(source.read())
     elif command == 'cancel': result = control.cancel(control.session_of(args.name))
+    elif command == 'auto':
+        if views:
+            raise ValueError('AUTO mode is Claude Code only; on Codex only /d reaches an agent.')
+        result = control.mode_control(args.action, args.to, args.role, args.agent, args.number)
+    elif command == 'handoff':
+        if views:
+            raise ValueError('AUTO mode is Claude Code only; on Codex only /d reaches an agent.')
+        try:
+            result = control.handoff(args.task, args.agent, args.read_only, request=args.request, check=args.check)
+        except RuntimeError as exc:
+            if args.request and args.follow:
+                control.note_handoff_error(args.request, str(exc))  # Its wake-up says why nothing was handed off.
+            raise
+        if args.follow and not args.check:
+            result = control.follow(result['requestId'], write=lambda line: print(line, flush=True))
+        elif not args.check:
+            follow = command_line(args, 'follow', '--request', result['requestId'])
+            result['next'] = ('Run `' + follow + '` now, as is: CLI-MODE makes it a background task, and its end '
+                              'wakes you with ' + result['agent'] + '\'s result. Then end your turn with a short '
+                              'status for the user.')
     else:
         result = control.acknowledge(args.operation)
     block = result.get('activationMenu') or (result.get('text') if command == 'format-menu' else None)
@@ -276,13 +324,37 @@ def main():
         sys.exit(0 if result['status'] == 'completed' else 1)
     if args.command == 'relay' and not host.views(args.host):
         # Claude Code shows this tool output to anyone who opens it: plain words, not JSON.
-        print(relay_plain(result), flush=True)
+        print(result['text'] if args.for_host else relay_plain(result), flush=True)
         return
     if not host.views(args.host) and isinstance(result, dict) and isinstance(result.get('activationMenu'), str):
         # Claude posts this menu in chat, where its title band can be green, in the same box.
         color = host.chat_color(args.data_root or host.data_root(args.host), args.host)
         result = dict(result, activationMenu=chat_menu(result['activationMenu'], color))
     emit(result)
+
+
+BARE = re.compile(r'[A-Za-z0-9_./:-]+')
+
+
+def command_line(args, *words):
+    """This controller command's own session prefix with other words, quoted as hooks/claude.py:command() quotes
+    it, so the approval hook accepts it as is (the prefix Claude ran came from that hook)."""
+    def quote(token):
+        return token if BARE.fullmatch(token) else "'" + token.replace("'", "'\\''") + "'"
+    tokens = ['python', Path(__file__).resolve().as_posix(), '--host', args.host, '--thread', args.thread,
+              '--workspace', args.workspace] + (['--data-root', args.data_root] if args.data_root else []) + list(words)
+    return ' '.join(quote(token) for token in tokens)
+
+
+def with_auto_line(result):
+    """An activation that made an AUTO agent (Claude Code) says so under its card, or as its message."""
+    line = result.pop('autoLine', None)
+    if not line:
+        return result
+    activation = result.get('activation')
+    if isinstance(activation, dict) and activation.get('text'):
+        return dict(result, activation=dict(activation, text=activation['text'] + '\n\n' + line))
+    return dict(result, message=(result['message'] + ' ' if result.get('message') else '') + line)
 
 
 def with_references(result):

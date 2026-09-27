@@ -8,6 +8,7 @@ import sys
 import adapters
 import host
 from presentation import access_display, access_note, effort_display, strong
+from state import label_name
 
 UNAVAILABLE = 'Usage not available through CLI'
 
@@ -85,7 +86,7 @@ def activation(agent, settings, summary, color=False, name=None):
     # it looked like the first question left over from an earlier session).
     help_field = '**Help:** `/cli help`' if host.claude() else '**Question:** `/help`'
     return (strong('CLI-MODE Activated', color) + '\n\n' +
-            ('**Agent:** ' + adapter.LABEL + ' ' + name + ' | ' if name else '') +
+            ('**Agent:** ' + label_name(adapter.LABEL, name) + ' | ' if name else '') +
             '**Model:** ' + settings['modelName'] + ' | **Effort:** ' + effort_display(settings['effort']) +
             ' | **Access:** ' + access + access_note(settings['access']) + ' | ' + help_field + '\n\n'
             '**Utilization:** ' + utilization(summary))

@@ -29,7 +29,7 @@ import zipfile
 PROJECT = Path(__file__).resolve().parents[1]
 PLUGIN = PROJECT / 'plugins' / 'cli-mode'
 HOOK_EVENTS = 'SessionStart, UserPromptSubmit, PreToolUse, Stop'
-HOOK_HANDLERS = 7  # SessionStart, UserPromptSubmit, PreToolUse x4 (Agent, Bash, PowerShell, Edit), Stop.
+HOOK_HANDLERS = 7  # SessionStart, UserPromptSubmit, PreToolUse x4 (Agent, Bash, PowerShell, file edits), Stop.
 # Prompts CLI-MODE answers itself, and a phrase each answer must contain. Replies are chat messages by
 # default (a model turn, and no sign-in here), so the first prompt switches to instant replies, which
 # is itself answered instantly and saved for the prompts after it.
@@ -38,8 +38,8 @@ PROMPTS = (
     ('/cli help', '/cli reset'),
     ('/cli-mode:cli help', '/cli help'),
     ('/cli', 'Setup CLI Agent.'),
-    ('$cli queue', '/cli to activate.  Say /cli help to see options'),
-    ('/cli mode', 'Prompts reach the agent only through /d'),
+    ('$cli queue', 'In AUTO, Claude and CLI-MODE run the agents'),  # AUTO is Claude Code's default; queue is Claude's.
+    ('/cli mode', 'DIRECT  You drive the agents with'),  # The Mode page (Claude Code's DIRECT and AUTO).
     # Every `claude -p` is a new session, and a session that has not used CLI-MODE keeps no state at all
     # (the hook's shortcut for events CLI-MODE has no part in).
     ('/cli reset', 'has no saved state for this session'),
