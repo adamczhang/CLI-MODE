@@ -1,12 +1,15 @@
-"""AUTO handoffs (Claude Code): Claude writes a task file, runs `handoff`, follows it in the background, and is woken
-to read the result with `relay --for-host`. The result never reaches the user's own relays."""
+"""AUTO handoffs (Claude Code): Claude writes a task file and runs `handoff` once; the hook hands it over and turns that
+call into the background follow, and its end wakes Claude with the result already read (`relay --for-host` is the
+fallback). The result never reaches the user's own relays."""
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 from unittest.mock import patch
 
 from test_claude_hook import ClaudeHook, SESSION, claude
+from test_controller import runtime_process, runtime_result
 from controller import Controller
 import auto_mode
 import relay_view
@@ -154,6 +157,55 @@ class Handoffs(AutoBase):
         self.assertIn('you have not read its result', self.context(self.stop_hook()))  # The turn is held.
         self.ctl('relay', '--request', request, '--for-host')
         self.assertEqual(self.stop_hook(), {})
+
+    def test_alongside_counts_only_work_running_at_the_same_time(self):
+        now = time.time()
+        state = {'requests': {
+            'mine': dict(submittedAt=now - 100, endedAt=now - 10),
+            'running': dict(submittedAt=now - 50, handoff=dict(files=['app/two.py'])),
+            'queued': dict(capturedAt=now - 40, handoff=dict(files=['app/three.py'])),  # Never started.
+            'before': dict(submittedAt=now - 500, endedAt=now - 200, touched=['app/four.py']),
+            'direct': dict(submittedAt=now - 60, endedAt=now - 20, touched=['App/Five.py'],
+                           handoff=dict(files=[auto_mode.WHOLE])),  # Its edits count, not a whole-project claim.
+        }}
+        self.assertEqual(auto_mode.alongside(state, 'mine'), ['app/five.py', 'app/two.py'])
+
+    def test_a_neighbours_files_are_expected_not_a_check(self):
+        """Two writers on separate claims (live matrix run, 2026-09-27): the other agent's files changed meanwhile
+        are named as work alongside, and the verdict stays ok, so Claude spends no call on git to confirm it."""
+        for name in ('app/one.py', 'app/two.py', 'app/three.py'):
+            (self.project / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.project / name).write_text('original\n', encoding='utf-8')
+        for words in (['init', '-q'], ['add', '-A'], ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm',
+                                                      'base']):
+            subprocess.run(['git'] + words, cwd=self.project, check=True, capture_output=True)
+        state = self.auto()
+        one = self.project / 'app/one.py'
+        original = self.backend.start
+
+        def start(owned, args, timeout=60):
+            process = original(owned, args, timeout)
+            if '--file' not in args:
+                return process
+            one.write_text('changed by this agent\n', encoding='utf-8')
+            (self.project / 'app/two.py').write_text('changed by the agent alongside\n', encoding='utf-8')
+            (self.project / 'app/three.py').write_text('changed by nobody known\n', encoding='utf-8')
+            return runtime_process([dict(type='touched', toolCallId='call-1', kind='edit',
+                                         locations=[dict(path=str(one))]),
+                                    dict(type='message', text='Done: one.py.'), runtime_result()])
+        self.backend.start = start
+        self.write_task('t1', 'Goal: fix one.\nFiles: app/one.py')
+        mine = self.ctl('handoff', '--task', 't1')['requestId']
+        with self.store().edit() as saved:  # Another agent's task on app/two.py, running at the same time.
+            saved['requests']['e' * 32] = dict(routingMode='auto', status='submitting', session='elsewhere',
+                                               capturedAt=time.time(), submittedAt=time.time(),
+                                               handoff=dict(task='t2', readOnly=False, files=['app/two.py']))
+        self.drain(state['auto']['agent'])
+        text = self.ctl('relay', '--request', mine, '--for-host')['text']
+        self.assertIn('ALONGSIDE: app/two.py changed by other work running at the same time', text)
+        self.assertIn('NOT ITS OWN EDITS: app/three.py changed', text)  # Nobody's claim: still worth a look.
+        self.assertEqual(text.split('\n')[1], 'CHECK: look: files it did not edit changed while it worked.')
+        self.assertNotIn('app/two.py changed while it worked', text)
 
     def test_a_new_agent_that_does_not_start_says_so_when_it_wakes_claude(self):
         self.auto()

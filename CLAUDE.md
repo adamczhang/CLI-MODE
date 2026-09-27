@@ -92,7 +92,8 @@ lands in one of three zones below; know which before editing.
   (`updatedInput`), except `--agent new`, whose start runs in that background task (`handoff --request <id>
   --follow`; a failed start is `handoffErrors`). The follow's end wakes Claude (`notification_reply` → `auto_wake`)
   with the results already read (`relay_for_host` → `relay_view.host_text`, which opens with a `CHECK:` verdict,
-  `check_line`; results ending together share `WAKE_ROOM`) and marked `hostRead`; if that fails, the wake-up names
+  `check_line`; files that work running at the same time may change, per `auto_mode.alongside`, are listed apart as
+  expected; results ending together share `WAKE_ROOM`) and marked `hostRead`; if that fails, the wake-up names
   `relay --for-host` and the Stop guard holds the turn (`autoWake`). AUTO requests
   never join a user's relay (`unrelayed`). One writer per file: a task's Files line is its claim (`auto_mode.task_files`,
   `conflict`; none named claims the whole project), `handoff --agent new` starts an extra agent like the AUTO agent

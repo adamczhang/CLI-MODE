@@ -348,22 +348,24 @@ def check_line(status, receipt, batch, read_only=False, stopped=None, others=())
 
 
 def host_text(request, label, status, batch, receipt, read_only=False, task=None, stopped=None, access=None,
-              touched=None, answer_max=HOST_ANSWER_MAX):
+              touched=None, answer_max=HOST_ANSWER_MAX, alongside=()):
     """An AUTO handoff's result as Claude reads it (relay --for-host, or the wake-up itself): plain lines, then the
     agent's answer.
 
     Claude checks it and tells the user in its own words, so there is no Markdown styling and nothing to post as is.
     The receipt covers the whole folder, so while several agents write it holds their files too: with `touched` (the
-    files the agent's own edit tools changed), the rest are named apart. The CHECK line says what, if anything,
-    needs a look; `answer_max` cuts the answer when several results share one wake-up.
+    files the agent's own edit tools changed), the rest are named apart: `alongside` are those that work running at
+    the same time may change (auto_mode.alongside), expected; the others need a look. The CHECK line says what, if
+    anything, needs a look; `answer_max` cuts the answer when several results share one wake-up.
     """
     from agent_folder import counts
     from test_gate import line, overlap_line
     receipt = receipt or {}
     changes = receipt.get('changes')
     own = {path.casefold() for path in touched} if touched is not None else None
+    near = {path.casefold() for path in alongside}
     others = [item['path'] for item in (changes or {}).get('paths') or [] if own is not None
-              and item['path'].casefold() not in own]
+              and item['path'].casefold() not in own and item['path'].casefold() not in near]
     lines = ['HANDOFF ' + request + ': ' + label + ' ' + HOST_ENDS.get(status, status) +
              (' (read-only)' if read_only else '') + '.',
              check_line(status, receipt, batch, read_only, stopped, others)]
@@ -380,6 +382,11 @@ def host_text(request, label, status, batch, receipt, read_only=False, task=None
             lines.append('NOT ITS OWN EDITS: ' + ', '.join(others[:RECEIPT_PATHS]) + (
                 ' and ' + str(len(others) - RECEIPT_PATHS) + ' more' if len(others) > RECEIPT_PATHS else '') +
                 ' changed while it worked, but not by its own edit tools (another task, or a command it ran).')
+        if alongside:
+            lines.append('ALONGSIDE: ' + ', '.join(list(alongside)[:RECEIPT_PATHS]) + (
+                ' and ' + str(len(alongside) - RECEIPT_PATHS) + ' more' if len(alongside) > RECEIPT_PATHS else '') +
+                ' changed by other work running at the same time (its claim or its own edits): expected, not this '
+                'agent\'s.')
     else:
         lines.append('CHANGES: not measured (not a git repository).')
     saved = receipt.get('saved')
