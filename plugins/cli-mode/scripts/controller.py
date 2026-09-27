@@ -246,7 +246,9 @@ def run(args, control=None):
         prefetched = control.prefetch_usage(target, model, access, effort) if confirming else None
         result = control.activate(model, access, effort=effort, agent=target, require_hooks=True)
         if confirming:
-            result = dict(result, activation=control.activation_message(confirm_to, prefetched))
+            # The card of the agent just started: not always the current one (an AUTO backup never becomes current).
+            result = dict(result, activation=control.activation_message(confirm_to, prefetched,
+                                                                        session=result.get('activated')))
         result = with_auto_line(result)
     elif command == 'off': result = control.off()
     elif command == 'close': result = control.close(args.name)

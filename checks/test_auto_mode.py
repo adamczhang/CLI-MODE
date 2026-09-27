@@ -243,6 +243,24 @@ class ModeHook(ClaudeHook):
         self.assertEqual(len(state['owned']), 1)
         self.assertIsNone(self.config()['backup'])
 
+    def test_a_backup_chosen_on_the_settings_page_gets_its_own_card(self):
+        # Live run 1 (2026-09-27): the backup's activation card described the AUTO agent, the current one.
+        self.start_auto()
+        lead = self.store().read()['main']
+        self.reply('/cli mode')
+        self.reply('3')  # AUTO settings.
+        self.reply('2')  # Backup agent: the picker.
+        pending = self.store().read()['pending']
+        self.assertEqual(pending['purpose'], 'auto-backup')
+        self.reply(str([choice['value'] for choice in pending['choices']].index('agy') + 1))
+        card = self.reply('1')
+        state = self.store().read()
+        backup = state['auto']['backup']
+        from state import agent_label
+        self.assertEqual(state['main'], lead)  # The AUTO agent stays current.
+        self.assertIn('**Agent:** Antigravity ' + next(o['alias'] for o in state['owned'] if o['name'] == backup), card)
+        self.assertIn(agent_label(state, backup) + ' is now your backup agent: it waits for work.', card)
+
     def test_a_typed_agent_and_model_is_saved_in_direct_and_starts_nothing(self):
         reply = self.reply('/cli mode agent agy gemini-3.8-flash-high')
         self.assertIn('It starts when AUTO is on', reply)
