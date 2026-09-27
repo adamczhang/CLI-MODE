@@ -236,6 +236,9 @@ class BindingMixin:
                 state['agentLimit'] = limit
         state = self.store.read()
         message = frontends.agents_text(state, self.agent_activity(state))
+        if routing_mode(state) == 'auto':  # Claude Code's AUTO: what Claude handed to which agent.
+            import auto_mode
+            message += '\n\nAUTO handoffs:\n' + '\n'.join('- ' + line for line in auto_mode.ledger_lines(state, limit=10))
         if limit is not None:
             message = 'Up to ' + str(limit) + ' agents can run at once.\n' + message
         return dict(state, message=message)

@@ -87,6 +87,12 @@ lands in one of three zones below; know which before editing.
   guard's `autoWake`) to read `relay --for-host` (`relay_view.host_text`), which marks it `hostRead`; AUTO requests
   never join a user's relay (`unrelayed`). One writer (`auto_mode.writer`); `--read-only` sends ACPX a deny-by-default
   policy (`dispatch.approval_policy`); in Claude's own turns `AUTO_OWNED_COMMANDS` are refused (`auto_owned`).
+  Delegation (tested live in P0): each of Claude's own AUTO turns gets `auto_mode.context` (rule, template, ledger)
+  from `hooks/claude.py:auto_context`; `strength_refusal` refuses Claude's project edits by strength (Strong: small
+  fixes, `SMALL_EDIT` lines and `TURN_FILES` files a turn; Max: none; never while an agent writes);
+  `auto_tool_refusal` sends coding subagents to the agent and refuses waiting or polling for a handoff; `auto_stop`
+  nudges a turn that leaves a handoff unfollowed or its result unread. The edit hook matches every file-editing
+  tool, so `nothing_to_do` leaves early unless the session is in AUTO or the edit is the brief's host note.
 - `QueueMixin.relay_text()` and `relay_chain()`: nothing mid-turn, then the whole output as the last message.
 - `QueueMixin.follow()` and `operations.follow_path`/`following`: a `/d` turn runs `controller.py follow` as a
   background task (the hook's `updatedInput` forces it and labels the row), ends, and is woken for one relay.

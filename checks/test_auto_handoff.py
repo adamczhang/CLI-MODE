@@ -20,7 +20,9 @@ def agy(model='gemini-3.8-flash-high'):
     return {'agent': 'agy', 'model': model, 'effort': None, 'access': 'allow'}
 
 
-class Handoffs(ClaudeHook):
+class AutoBase(ClaudeHook):
+    """AUTO on with a fake agent, and helpers; no tests of its own."""
+
     def setUp(self):
         super().setUp()
         for target in ('confirmation.usage', 'frontends.confirmed'):
@@ -61,6 +63,7 @@ class Handoffs(ClaudeHook):
     def stop_hook(self):
         return claude.handle(dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='Stop'), self.data)
 
+class Handoffs(AutoBase):
     def test_a_handoff_end_to_end(self):
         state = self.auto()
         lead = state['auto']['agent']
@@ -221,6 +224,134 @@ class Handoffs(ClaudeHook):
         self.assertIn('was canceled', quiet)
         self.assertIn('CHANGES: not measured', quiet)
         self.assertIn('ANSWER: none.', quiet)
+
+
+class Levers(AutoBase):
+    """What makes Claude delegate in AUTO: the rule and ledger each turn (A), refusing its own larger edits (B), its
+    own coding subagents (C), and never waiting or polling for a handoff."""
+
+    def strength(self, value):
+        config = auto_mode.load(self.data)
+        config['strength'] = value
+        auto_mode.save(self.data, config)
+
+    def edit(self, path, lines=1):
+        body = '\n'.join('line ' + str(index) for index in range(lines))
+        return self.pre('Edit', file_path=str(path), old_string='x', new_string=body)
+
+    def test_each_auto_turn_carries_the_rule_and_the_ledger(self):
+        self.assertEqual(self.prompt('hello'), {})  # DIRECT: nothing added.
+        self.auto()
+        text = self.context(self.prompt('please make the parser keep the last word'))
+        for part in ('CLI-MODE AUTO is on. The user turned it on', self.name(), 'Delegation is Strong',
+                     '`' + self.command('handoff', '--task') + ' <id>`', auto_mode.TEMPLATE,
+                     auto_mode.tasks_dir(self.project).as_posix() + '/<id>.md', 'Do not guess', 'No handoffs yet.'):
+            self.assertIn(part, text)
+        self.assertLess(len(text), 10000)  # Claude Code's cap for a hook's added context.
+        self.write_task()
+        request = self.ctl('handoff', '--task', 't1')['requestId']
+        self.drain(self.store().read()['auto']['agent'])
+        ledger = self.context(self.prompt('how did it go?'))
+        self.assertIn('NOT READ YET: `' + self.command('relay', '--request', request, '--for-host') + '`', ledger)
+        self.ctl('relay', '--request', request, '--for-host')
+        self.assertIn('add a docstring to parse().: finished, read.', self.context(self.prompt('thanks')))
+
+    def test_strong_lets_claude_make_small_fixes_only(self):
+        self.auto()
+        self.prompt('fix the typo')
+        source = self.project / 'src' / 'a.py'
+        self.assertEqual(self.edit(source), {})
+        refused = self.edit(source, lines=auto_mode.SMALL_EDIT + 5)
+        self.assertEqual(refused['permissionDecision'], 'deny')
+        self.assertIn('more than a small fix', refused['permissionDecisionReason'])
+        self.assertEqual(self.edit(self.project / 'src' / 'b.py'), {})  # A second file.
+        self.assertEqual(self.edit(self.project / 'src' / 'c.py')['permissionDecision'], 'deny')  # A third.
+        self.prompt('and another small one')  # A new turn: a new count.
+        self.assertEqual(self.edit(self.project / 'src' / 'c.py'), {})
+        outside = self.root / 'notes.md'  # Claude's own files outside the project stay Claude's.
+        self.assertEqual(self.edit(outside, lines=200), {})
+        folder = self.project / 'Agent_Working_Folder' / 'notes.md'
+        self.assertEqual(self.edit(folder, lines=200), {})
+
+    def test_max_and_normal(self):
+        self.auto()
+        self.strength('max')
+        self.assertEqual(self.edit(self.project / 'src' / 'a.py')['permissionDecision'], 'deny')
+        self.strength('normal')
+        self.assertEqual(self.edit(self.project / 'src' / 'a.py', lines=500), {})
+
+    def test_no_edit_of_claudes_while_an_agent_writes(self):
+        self.auto()
+        self.strength('normal')
+        self.write_task()
+        self.ctl('handoff', '--task', 't1')  # With the agent until drained.
+        refused = self.edit(self.project / 'src' / 'a.py')
+        self.assertEqual(refused['permissionDecision'], 'deny')
+        self.assertIn('one writer at a time', refused['permissionDecisionReason'])
+
+    def test_coding_subagents_go_to_the_agent_at_strong(self):
+        self.auto()
+        refused = self.pre('Agent', subagent_type='general-purpose', prompt='implement it')
+        self.assertEqual(refused['permissionDecision'], 'deny')
+        self.assertEqual(self.pre('Agent', subagent_type='Explore', prompt='find the parser'), {})
+        self.strength('normal')
+        self.assertEqual(self.pre('Agent', subagent_type='general-purpose', prompt='implement it'), {})
+
+    def test_nothing_waits_or_polls_for_a_handoff(self):
+        state = self.auto()
+        self.assertEqual(self.pre('Monitor', command='x'), {})
+        self.write_task()
+        self.ctl('handoff', '--task', 't1')
+        for tool in ('Monitor', 'ScheduleWakeup', 'CronCreate'):
+            self.assertEqual(self.pre(tool, command='x')['permissionDecision'], 'deny', tool)
+        self.drain(state['auto']['agent'])
+        self.assertEqual(self.pre('Monitor', command='x'), {})
+
+    def test_a_turn_that_leaves_a_handoff_unfollowed_is_told_to_follow_it(self):
+        self.auto()
+        self.write_task()
+        request = self.ctl('handoff', '--task', 't1')['requestId']
+        follow = self.command('follow', '--request', request)
+        nudge = self.context(self.stop_hook())
+        self.assertIn('nothing follows it', nudge)
+        self.assertIn('`' + follow + '`', nudge)
+        running = claude.handle(dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='Stop', background_tasks=[
+            dict(id='b1', type='shell', status='running', description='x', command=follow)]), self.data)
+        self.assertEqual(running, {})
+
+    def test_the_fast_path_leaves_edits_early_outside_auto(self):
+        import json
+        env = {'CLI_MODE_DATA': str(self.data)}
+
+        def quick(tool, path):
+            raw = json.dumps(dict(session_id=SESSION, cwd=str(self.cwd), hook_event_name='PreToolUse', tool_name=tool,
+                                  tool_input={'file_path': str(path)}))
+            with patch.dict(os.environ, env):
+                return claude.nothing_to_do(raw)
+        self.assertTrue(quick('Edit', self.project / 'a.py'))  # CLI-MODE never used here.
+        self.activate()
+        self.assertTrue(quick('Write', self.project / 'a.py'))  # DIRECT.
+        self.assertFalse(quick('Edit', self.project / 'Agent_Working_Folder' / 'BRIEF.md'))  # The host's note.
+        self.auto()
+        self.assertFalse(quick('Edit', self.project / 'a.py'))
+        self.assertFalse(quick('NotebookEdit', self.project / 'a.ipynb'))
+
+
+class Ledger(AutoBase):
+    def test_cli_list_shows_the_handoffs_in_auto(self):
+        self.activate()
+        self.assertNotIn('AUTO handoffs', self.prompt('/cli list')['reason'])  # DIRECT: the agents alone.
+        self.prompt('/cli off')
+        state = self.auto()
+        self.assertIn('AUTO handoffs:\n- No handoffs yet.', self.prompt('/cli list')['reason'])
+        self.write_task()
+        request = self.ctl('handoff', '--task', 't1')['requestId']
+        label = self.name() + ' · add a docstring to parse().'
+        self.assertIn(label + ': working.', self.prompt('/cli list')['reason'])
+        self.drain(state['auto']['agent'])
+        self.assertIn(label + ': finished, Claude has not read it yet.', self.prompt('/cli list')['reason'])
+        self.ctl('relay', '--request', request, '--for-host')
+        self.assertIn(label + ': finished, read.', self.prompt('/cli list')['reason'])
 
 
 if __name__ == '__main__':

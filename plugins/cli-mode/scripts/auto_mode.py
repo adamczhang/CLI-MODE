@@ -206,8 +206,9 @@ def unread(state):
             and not record.get('hostRead')]
 
 
-def ledger_lines(state, relay_command, limit=LEDGER_SHOWN):
-    """The AUTO ledger: unread results first, then the newest. `relay_command(request)` is the exact relay."""
+def ledger_lines(state, relay_command=None, limit=LEDGER_SHOWN):
+    """The AUTO ledger: unread results first, then the newest. With `relay_command(request)` (Claude's copy), an
+    unread result names its exact relay; without it (the user's /cli list), it says Claude has not read it yet."""
     rows = auto_requests(state)
     if not rows:
         return ['No handoffs yet.']
@@ -225,12 +226,13 @@ def ledger_lines(state, relay_command, limit=LEDGER_SHOWN):
             lines.append(name + what + ': working.')
         elif key in waiting:
             lines.append(name + what + ': ' + words.get(record.get('status'), record.get('status') or 'settled') +
-                         ', NOT READ YET: `' + relay_command(key) + '`')
+                         (', NOT READ YET: `' + relay_command(key) + '`' if relay_command else
+                          ', Claude has not read it yet.'))
         else:
             lines.append(name + what + ': ' + words.get(record.get('status'), record.get('status') or 'settled') +
                          ', read.')
     more = len(rows) - limit
-    return lines + (['(' + str(more) + ' older in /cli list)'] if more > 0 else [])
+    return lines + (['(and ' + str(more) + ' older)'] if more > 0 else [])
 
 
 def context(root, state, workspace, handoff_command, relay_command):
