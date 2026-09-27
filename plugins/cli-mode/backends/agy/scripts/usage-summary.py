@@ -73,6 +73,7 @@ def summarize(payload, model_id, now):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', required=True, help='Accepted Antigravity model ID')
+    parser.add_argument('--session', help='Unused: /cli usage passes the agent conversation, and usage is per account')
     args = parser.parse_args()
     try:
         binary = shutil.which('agy')

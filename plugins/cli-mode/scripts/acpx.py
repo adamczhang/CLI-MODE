@@ -389,6 +389,9 @@ class AcpxBackend:
     # prompt. ACPX's CLI can recover that empty session; subsequent turns use
     # the strict shared owner after a real provider identity has been saved.
     bootstrap_with_cli_readiness = True
+    # A new agent's session is reserved (its record written by the bridge) instead of `sessions ensure`, which
+    # starts the agent only to create the session: the readiness prompt's owner starts it once and creates it.
+    reserve_without_start = True
 
     def prepare(self, owned):
         if owned.get('transport') != 'native':
@@ -437,6 +440,11 @@ class AcpxBackend:
             else:
                 payload.update(action='prompt', requestId=owned['requestId'], promptFile=args[args.index('--file') + 1])
             return bridge_request(owned['acpxRuntime'], payload)
+        if control[:2] == ['sessions', 'reserve']:
+            # Not an ACPX command: a new session's record without starting the agent (the bridge's `reserve`).
+            # Only a first prompt through ACPX's CLI (bootstrapPrompt) turns it into a session; a strict prompt
+            # would refuse it. binding.provision falls back to `sessions ensure` if that prompt fails.
+            return bridge_request(owned['acpxRuntime'], dict(self.bridge_payload(owned, timeout), action='reserve'))
         if control[:1] == ['cancel'] and self.bridge_ready(owned) and bridge_idle(owned['acpxRuntime']):
             # Session-wide cancel through a warm, idle bridge instead of a new ACPX
             # process. A busy bridge would mean starting another, which is slower.

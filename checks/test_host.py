@@ -178,7 +178,8 @@ class Controllers(ClaudeControl):
         with patch('confirmation.usage', return_value=unavailable):
             message = self.control.activation_message(None)
         self.assertIn(strong('CLI-MODE Activated', True), message['text'])
-        self.assertIn('`/cli help`', message['text'])  # Claude Code's own /help is built in.
+        self.assertIn('**Help:** `/cli help`', message['text'])  # Claude Code's own /help is built in.
+        self.assertNotIn('Question', message['text'])  # Read as a question left over from an earlier session.
         self.assertNotIn('messageView', message)
         with patch('confirmation.usage', return_value=unavailable):
             result = run(self.args('activation-message'), self.control)
@@ -260,35 +261,43 @@ class Controllers(ClaudeControl):
 class UsageOverlap(ClaudeControl):
     """The activation card's usage lookup (up to 40 s for Antigravity) runs alongside the provider work."""
     def slow_activation(self, prefetching):
+        """When the provider wait and the usage lookup each ran, as (start, end) spans.
+
+        Spans, not the total time: the real provisioning after the provider wait (store edits, the
+        brief, a runtime process) takes 0.2-0.5 s on Windows, so a total can't tell one wait from two.
+        """
         original = Controller.provision
-        lookups = []
+        lookups, provider = [], []
 
         def provision(control, *args):
+            began = time.monotonic()
             time.sleep(.5)  # The provider starting and applying settings.
+            provider.append((began, time.monotonic()))
             return original(control, *args)
 
         def usage(agent, settings, workspace):
-            lookups.append(settings['model'])
+            began = time.monotonic()
             time.sleep(.5)
+            lookups.append((settings['model'], began, time.monotonic()))
             return {'status': 'unavailable', 'reason': 'test'}
         self.control.frontend()  # Back to this agent's page: activating again reconfigures the same session.
         with patch.object(Controller, 'provision', provision), patch('confirmation.usage', side_effect=usage):
-            began = time.monotonic()
             self.control.prefetching = prefetching
             self.control.activate('gemini-3.8-flash-high', 'allow')
             self.control.prefetching = False
             card = self.control.activation_message(None)
-            return time.monotonic() - began, lookups, card
+            return provider, lookups, card
 
     def test_a_setting_change_looks_up_usage_while_the_agent_reactivates(self):
-        overlapped, lookups, card = self.slow_activation(prefetching=True)
-        self.assertLess(overlapped, .85)  # About one wait, not both.
-        self.assertEqual(lookups, ['gemini-3.8-flash-high'])  # Once, for the model activated.
+        provider, lookups, card = self.slow_activation(prefetching=True)
+        self.assertEqual([model for model, *_ in lookups], ['gemini-3.8-flash-high'])  # Once, for the model activated.
+        (began, ended), (_, looked, found) = provider[0], lookups[0]
+        self.assertTrue(looked < ended and began < found)  # The lookup ran during the provider wait.
         self.assertIn('CLI-MODE Activated', plain_strong(card['text']))
         self.assertIsNone(self.control.prefetched)  # Used once, never carried into a later card.
-        sequential, lookups, _ = self.slow_activation(prefetching=False)
-        self.assertGreaterEqual(sequential, .95)
+        provider, lookups, _ = self.slow_activation(prefetching=False)
         self.assertEqual(len(lookups), 1)
+        self.assertGreaterEqual(lookups[0][1], provider[0][1])  # Without it, the card looks up afterwards.
 
     def test_run_prefetches_only_for_the_command_it_is_running(self):
         with patch.object(self.control, 'choose', side_effect=RuntimeError('menu changed')):

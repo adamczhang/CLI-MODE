@@ -456,6 +456,28 @@ class SharedRuntime(unittest.TestCase):
         time.sleep(.5)  # Let the ACPX CLI submit the probe to the owner.
         return control, activation
 
+    def test_activation_starts_the_agent_once(self):
+        # `sessions ensure` started the agent only to create the session, and the readiness prompt's owner started
+        # it again (Antigravity: ~25 s each). Reserved, the session is created by that prompt's owner alone.
+        starts = self.workspace / 'fixture-starts.log'
+        control = Controller(Store('single-start', self.workspace, self.root / 'single-start'), self.backend)
+        try:
+            control.frontend()
+            starts.unlink(missing_ok=True)  # setUp's own `sessions ensure` started it once.
+            self.assertTrue(control.activate('gemini-3.8-flash-high', 'allow')['active'])
+            self.assertEqual(starts.read_text().splitlines(), ['start'])
+            owned = control.store.read()['owned'][0]
+            self.assertTrue(owned['providerSession'])
+            # A real session now: a strict prompt through the bridge continues it (readiness was its turn 1).
+            prompt = self.root / 'next.txt'
+            prompt.write_text('count', encoding='utf-8')
+            events = self.collect(self.backend.start(dict(owned, requestId=uuid.uuid4().hex),
+                                                     ['-s', owned['name'], '--file', str(prompt)], timeout=15))
+            self.assertEqual([e['text'] for e in events if e['type'] == 'message'], ['2'])
+            self.assertEqual(starts.read_text().splitlines(), ['start'])  # The same running agent.
+        finally:
+            self.assertTrue(control.off()['shutdownComplete'])
+
     def test_bootstrap_probe_honors_the_bridge_cancel_signal(self):
         control, activation = self.held_bootstrap('bootstrap-cancel')
         try:

@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -366,6 +367,34 @@ class Usage(Flow):
             self.assertEqual(state['turnRoute']['route'], 'usage')
             text = self.control.usage_report(state['turnRoute']['session'])['text']
         self.assertEqual(text, self.label + ':\n  can\'t report its usage: Cursor shows usage only on cursor.com')
+
+    def test_every_helper_accepts_what_the_lookup_passes(self):
+        # Live, 2026-09-27: Antigravity's helper had no --session, so argparse refused it and /cli usage said
+        # "its usage helper failed" while the activation card (which passes no session) read usage fine.
+        import argparse
+        import confirmation
+        import importlib.util
+        backends = Path(__file__).resolve().parents[1] / 'plugins/cli-mode/backends'
+        parse = argparse.ArgumentParser.parse_args
+
+        class Parsed(Exception):
+            pass
+
+        def parsed(parser, args=None, namespace=None):
+            parse(parser, args, namespace)  # Exits (SystemExit) on an argument it doesn't know.
+            raise Parsed
+        for helper in sorted(backends.glob('*/scripts/usage-summary.py')):
+            with self.subTest(helper.parts[-3]):
+                with patch.object(confirmation.subprocess, 'run', side_effect=OSError) as run:
+                    confirmation.lookup(helper.parts[-3], {'model': 'some-model'}, '.', 'sess-1')
+                argv = run.call_args.args[0]
+                self.assertEqual(argv[1], str(helper))
+                spec = importlib.util.spec_from_file_location('usage_argv_' + helper.parts[-3], helper)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                with patch.object(sys, 'argv', argv[1:]), \
+                        patch.object(argparse.ArgumentParser, 'parse_args', parsed), self.assertRaises(Parsed):
+                    module.main()
 
     def test_nobody_running(self):
         self.control.off()

@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -458,6 +459,149 @@ def run_pair(agents, model, keep):
     return report
 
 
+CANCEL_LONG = ('In this folder create twelve Markdown files named part-01.md to part-12.md, one at a time, each '
+               'with an original 250-word story about a garden. Then reply with only the word finished.')
+CANCEL_NEXT = ('List every Markdown file in this folder, one per line, then read README.md and end with its '
+               'codename on a line of its own.')
+
+
+def relay_requests(events):
+    """Each relay command's requests, in order, as (event index, [request ids])."""
+    found = []
+    for index, event in enumerate(events):
+        for block in (event.get('message') or {}).get('content') or [] if event.get('type') == 'assistant' else []:
+            command = (block.get('input') or {}).get('command') or ''
+            if block.get('type') == 'tool_use' and ' relay --request ' in command:
+                words = command.split()
+                found.append((index, [words[at + 1] for at, word in enumerate(words) if word == '--request']))
+    return found
+
+
+def run_cancel(agent, usage_agent, model, keep):
+    """/cli cancel with a follow-up queued behind the running turn (live, 2026-09-27: the cancel took 2 s, but its
+    relay waited 6 minutes for the follow-up), and /cli usage with an agent whose helper refused --session."""
+    workspace = Path(tempfile.mkdtemp(prefix='cli-mode-cancel-')).resolve()
+    (workspace / 'README.md').write_text('# Notes\n\nThe project codename is ' + MARKER + '.\n', encoding='utf-8')
+    report, problems, times = dict(agent=agent, usageAgent=usage_agent, workspace=str(workspace)), [], {}
+    sys.path.insert(0, str(DEV / 'scripts'))
+    from presentation import plain_strong
+    host = Session(workspace, model)
+    session = name = long_id = next_id = None
+
+    def ask(prompt, timeout=300):
+        mark = host.mark()
+        host.send(prompt)
+        if not host.wait(len(host.results()) + 1, timeout):
+            raise RuntimeError(prompt[:40] + ': no result')
+        return mark
+
+    def said(since):
+        with host.lock:
+            events = list(host.events[since:])
+        texts = [plain_strong(block.get('text', '')) for event in events if event.get('type') == 'assistant'
+                 for block in (event.get('message') or {}).get('content') or [] if block.get('type') == 'text']
+        return texts + [plain_strong(event.get('result') or '') for event in events if event.get('type') == 'result']
+
+    def record(key):
+        return (saved_state(session, workspace).get('requests') or {}).get(key) or {}
+
+    def shown(key):
+        return bool((saved_state(session, workspace).get('relayProgress') or {}).get(key, {}).get('done'))
+    try:
+        if usage_agent:
+            ask('/cli spawn ' + usage_agent)
+        ask('/cli spawn ' + agent)
+        with host.lock:
+            session = next(event.get('session_id') for event in host.events if event.get('session_id'))
+        name = newest_name(session, workspace)
+        report['name'] = name
+        if usage_agent:
+            usage = ' '.join(said(ask('/cli usage')))
+            report['usage'] = usage[-600:]
+            other = LABELS[usage_agent]
+            if 'helper failed' in usage or not re.search(re.escape(other) + r' [A-Z0-9-]+:\s+\S+: [\d.]+% used', usage):
+                problems.append('usage: ' + other + ' did not report its usage: ' + usage[-300:])
+        ask('/d ' + name.lower() + ' ' + CANCEL_LONG)
+        long_id = saved_state(session, workspace)['turnRoute']['requestId']
+        ask('/d ' + name.lower() + ' ' + CANCEL_NEXT)  # Queued behind the running turn.
+        next_id = saved_state(session, workspace)['turnRoute']['requestId']
+        report['requests'] = dict(long=long_id, next=next_id)
+        # CLI-MODE asks agents to keep files that are not project edits in Agent_Working_Folder/<NAME>/.
+        if not host.wait(None, 300, done=lambda: record(long_id).get('status') == 'submitting'
+                         and list(workspace.rglob('part-*.md'))):
+            raise RuntimeError('the long turn never started writing files')
+        cancel_mark = ask('/cli cancel ' + name.lower())
+        times['cancel'] = time.monotonic()
+        reply = ' '.join(said(cancel_mark))
+        if 'Cancel requested' not in reply:
+            problems.append('cancel: no "Cancel requested" reply: ' + reply[:300])
+        if not host.wait(None, 240, done=lambda: shown(long_id)):
+            raise RuntimeError('the canceled turn was not relayed within 4 minutes of the cancel')
+        times['canceledShown'] = time.monotonic()
+        report['nextStatusWhenCanceledShown'] = record(next_id).get('status')
+        report['longStatus'] = record(long_id).get('status')
+        if not host.wait(None, 900, done=lambda: shown(next_id)):
+            raise RuntimeError('the follow-up was never relayed')
+        times['nextShown'] = time.monotonic()
+        host.wait(None, 120, done=host.relay_turn_ended)
+        time.sleep(3)
+        closed = ' '.join(said(ask('/cli close all')))
+        if 'CLI-MODE is off' not in closed:
+            problems.append('close all: no "CLI-MODE is off"')
+    except (RuntimeError, StopIteration, KeyError) as exc:
+        problems.append(str(exc))
+    finally:
+        host.close()
+    with host.lock:
+        events = list(host.events)
+    (workspace / 'host-events.jsonl').write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
+    if 'canceledShown' in times:
+        report['cancelToCanceledShownSeconds'] = round(times['canceledShown'] - times['cancel'], 1)
+    if 'nextShown' in times:
+        report['cancelToNextShownSeconds'] = round(times['nextShown'] - times['cancel'], 1)
+    relays = relay_requests(events)
+    report['relays'] = [ids for _, ids in relays]
+    if long_id and next_id:
+        for ids in report['relays']:
+            if long_id in ids and next_id in ids and ids.index(next_id) < ids.index(long_id):
+                problems.append('relay: the follow-up was chained before the canceled turn: ' + json.dumps(ids))
+        if report.get('nextStatusWhenCanceledShown') in ('completed',) and report.get(
+                'cancelToCanceledShownSeconds', 0) > 60:
+            problems.append('relay: the canceled turn was shown only after the follow-up had finished')
+        texts = [plain_strong(block.get('text', '')) for event in events if event.get('type') == 'assistant'
+                 for block in (event.get('message') or {}).get('content') or [] if block.get('type') == 'text']
+        if not any('Turn canceled.' in text for text in texts):
+            problems.append('relay: no "Turn canceled." posted')
+        if name and not any(LABELS[agent] + ' ' + name + ' says...' in text and MARKER in text for text in texts):
+            problems.append('relay: the follow-up\'s answer (' + MARKER + ') was not posted')
+    for index, event in enumerate(events):
+        for block in (event.get('message') or {}).get('content') or [] if event.get('type') == 'assistant' else []:
+            command = (block.get('input') or {}).get('command') or ''
+            if block.get('type') == 'tool_use' and not brief_block(block) and not (
+                    block.get('name') in ('Bash', 'PowerShell') and 'controller.py' in command
+                    and (' follow --request ' in command or ' relay --request ' in command)):
+                problems.append('used %s %s' % (block.get('name'), command[-100:]))
+    problems += folded_answers(events, plain_strong)
+    report['problems'] = problems
+    report['passed'] = not problems
+    if session:
+        import host as host_module
+        from controller import Controller
+        from state import Store
+        host_module.select(host_module.CLAUDE)
+        store = Store(session, workspace, claude_data())
+        if store.path.exists():
+            report['cleanup'] = Controller(store).off()['shutdownComplete']
+    (workspace / 'host-report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+    if not keep:
+        shutil.rmtree(workspace, ignore_errors=True)
+        if session:
+            key = hashlib.sha256(session.encode()).hexdigest()
+            for path in (claude_data() / 'sessions').glob(key + '*'):
+                path.unlink(missing_ok=True)
+    return report
+
+
 TOOLS_ASK = 'Reply with only the codename in README.md.'
 TOOLS_EDIT = 'Append one line with the single word checked to NOTES.md, then reply with only the word done.'
 TOOLS_RECALL = 'What single word did you append to NOTES.md earlier? Reply with only that word.'
@@ -677,10 +821,17 @@ def main():
     parser.add_argument('--agents', help='Two agents at once, comma-separated (for example grok-build,codex).')
     parser.add_argument('--tools', action='store_true', help='With --agents: one prompt to both, a change receipt, '
                         '/cli diff, /cli timeout and /cli attach, in a git repository.')
+    parser.add_argument('--cancel', action='store_true', help='/cli cancel with a follow-up queued behind the turn '
+                        '(and, with --usage-agent, /cli usage first).')
+    parser.add_argument('--usage-agent', help='With --cancel: an agent spawned first, whose /cli usage must report.')
     parser.add_argument('--model', help='Claude Code model for the host turns (default: your configured model).')
     parser.add_argument('--keep', action='store_true', help='Keep the workspace and CLI-MODE state for inspection.')
     args = parser.parse_args()
     assert (DEV / '.claude-plugin/plugin.json').is_file(), 'Build first: python scripts/package_plugin.py'
+    if args.cancel:
+        report = run_cancel(args.agent, args.usage_agent, args.model, args.keep)
+        print(json.dumps(dict(marker=MARKER, report=report), indent=2, ensure_ascii=False))
+        raise SystemExit(0 if report['passed'] else 1)
     if args.agents:
         pair = [item.strip() for item in args.agents.split(',') if item.strip()]
         if len(pair) != 2:

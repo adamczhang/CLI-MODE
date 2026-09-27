@@ -81,10 +81,11 @@ def utilization(summary):
 def activation(agent, settings, summary, color=False, name=None):
     adapter = adapters.module(agent)
     access = access_display(settings['access'], settings.get('accessName'))
-    # Claude Code's own /help is built in; CLI-MODE's help is /cli help there.
-    question = '/cli help' if host.claude() else '/help'
+    # Claude Code's own /help is built in; CLI-MODE's help is /cli help there, labelled Help (read as "Question",
+    # it looked like the first question left over from an earlier session).
+    help_field = '**Help:** `/cli help`' if host.claude() else '**Question:** `/help`'
     return (strong('CLI-MODE Activated', color) + '\n\n' +
             ('**Agent:** ' + adapter.LABEL + ' ' + name + ' | ' if name else '') +
             '**Model:** ' + settings['modelName'] + ' | **Effort:** ' + effort_display(settings['effort']) +
-            ' | **Access:** ' + access + access_note(settings['access']) + ' | **Question:** `' + question + '`\n\n'
+            ' | **Access:** ' + access + access_note(settings['access']) + ' | ' + help_field + '\n\n'
             '**Utilization:** ' + utilization(summary))

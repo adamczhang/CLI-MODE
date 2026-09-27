@@ -111,6 +111,24 @@ class AuditRegressions(unittest.TestCase):
         self.assertEqual(self.store.read()['main'], before)
         self.assertTrue(self.store.read()['active'])
 
+    def test_closing_before_access_says_the_picked_model_was_not_applied(self):
+        # Live, 2026-09-27: model and effort picked, then X on the access list: "Settings closed." and the old model.
+        self.activate()
+        before = self.store.read()['owned'][0]['settings']
+        self.c.tune('model')
+        menu = self.c.options('model')
+        other = next(index for index, choice in enumerate(menu['choices'], 1) if choice['value'] != before['model'])
+        self.c.choose(other)
+        if self.store.read()['pending']['phase'] == 'effort':
+            self.c.choose(1)
+        self.assertEqual(self.store.read()['pending']['phase'], 'access')
+        message = self.c.settings_menu(dismiss=True)['message']
+        self.assertEqual(message, 'Settings closed without changes: the model and effort you picked apply only once '
+                                  'the access level is chosen too. CLI remains active.')
+        self.assertEqual(self.store.read()['owned'][0]['settings'], before)
+        self.c.tune('access')  # Nothing picked: the plain close.
+        self.assertEqual(self.c.settings_menu(dismiss=True)['message'], 'Settings closed. CLI remains active.')
+
     def test_initial_setup_back_uses_previous_phase(self):
         self.c.frontend('codex')
         self.c.options('access')
