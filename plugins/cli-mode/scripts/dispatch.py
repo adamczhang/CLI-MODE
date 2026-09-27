@@ -39,11 +39,16 @@ def approval_policy(record, target):
     that prompt only. `/cli approve always` keeps a kind on the agent (`approveAlways`) for every later turn.
     Reads pass as they always do and anything else escalates: the bridge then stops the turn and asks again
     (acpx-runtime.mjs runs such a turn at approve-all, which ACPX's own write and terminal checks need).
-    At Allow access everything is approved already.
+    At Allow access everything is approved already. A read-only AUTO handoff (Claude Code) is the exception: reads,
+    and whatever the user approved for it, pass, and everything else is refused rather than asked about, so the
+    agent carries on reading.
     """
-    if (target.get('settings') or {}).get('access') == 'allow':
+    read_only = bool(((record or {}).get('handoff') or {}).get('readOnly'))
+    if (target.get('settings') or {}).get('access') == 'allow' and not read_only:
         return None
     kinds = list(dict.fromkeys(list((record or {}).get('approve') or []) + list(target.get('approveAlways') or [])))
+    if read_only:
+        return {'autoApprove': kinds + READS, 'defaultAction': 'deny'}
     if kinds and target.get('actsWithoutAsking'):
         # Its commands and file writes pass anyway at approve-all, as its question said; so do the ones it asks
         # about in that turn (Grok asks now and then), rather than stopping it again.
@@ -356,6 +361,8 @@ class DispatchMixin:
             raise RuntimeError('Mode is off or a menu is pending; no task was sent.')
         policy = record['routingMode'] if request_id is not None else routing_mode(state)
         direct = policy == 'direct'
+        if policy == 'auto' and direct_payload(text) is not None:
+            text = direct_payload(text)  # An approval's answer in AUTO is captured as a /d, as in DIRECT.
         if direct:
             payload = direct_payload(text)
             if payload is not None and record.get('named'):
@@ -366,6 +373,7 @@ class DispatchMixin:
         # Host controls were parsed before stripping the Direct prefix. An
         # explicitly targeted /help now belongs to the provider, not CLI-MODE.
         provider_command = (native_commands.name_of(text) is not None if direct
+                            else False if policy == 'auto'  # Claude's task: always a task, with its folder.
                             else self.adapter.command_request(text))
         if any(item['role'] != 'main' for item in state['owned']):
             raise RuntimeError('Legacy or invalid session ownership. Run off before activating again.')
@@ -377,7 +385,9 @@ class DispatchMixin:
         if working_folder and not provider_command and agent_folder.ensure(workspace, owned.get('alias')) is not None:
             # The brief's list of running agents, current as this task leaves (one closed since is gone).
             agent_folder.write_team(workspace, self.store.key, *team_of(state))
-            text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file(),
+            # In AUTO the task Claude wrote is the agent's brief: the project brief is not named.
+            text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file()
+                                             and (record or {}).get('routingMode') != 'auto',
                                              label=agent_label(state, session))
             text += agent_folder.attachments_note(record.get('attachments'))
         if hasattr(self.backend, 'validate_prompt'):

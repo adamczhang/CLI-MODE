@@ -81,7 +81,12 @@ lands in one of three zones below; know which before editing.
   starts those agents in the prompt hook, as bind does (an activation whose `pending.purpose` makes `adopt()` save
   it and put it in the conversation's `auto` roster), and they wait for work. In AUTO (`state.auto_on`), `/d` and
   `state.AUTO_OWNED_VERBS` are refused, `/cli` is the Mode page, the brief's host note is skipped, and `off` ends
-  AUTO (`binding.disable`). Handing work to the AUTO agent is not built yet.
+  AUTO (`binding.disable`). Handoffs: Claude writes a task file (`auto_mode.tasks_dir`; `hooks/claude.py:
+  task_file_approval`), runs `controller.py handoff --task <id>` (captured like a /d with `routingMode: auto` and
+  `handoff`), then the printed `follow`. The follow's end wakes Claude (`notification_reply` → `auto_wake`, the Stop
+  guard's `autoWake`) to read `relay --for-host` (`relay_view.host_text`), which marks it `hostRead`; AUTO requests
+  never join a user's relay (`unrelayed`). One writer (`auto_mode.writer`); `--read-only` sends ACPX a deny-by-default
+  policy (`dispatch.approval_policy`); in Claude's own turns `AUTO_OWNED_COMMANDS` are refused (`auto_owned`).
 - `QueueMixin.relay_text()` and `relay_chain()`: nothing mid-turn, then the whole output as the last message.
 - `QueueMixin.follow()` and `operations.follow_path`/`following`: a `/d` turn runs `controller.py follow` as a
   background task (the hook's `updatedInput` forces it and labels the row), ends, and is woken for one relay.

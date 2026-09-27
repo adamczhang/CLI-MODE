@@ -105,7 +105,7 @@
             ]
           },
           {
-            "matcher": "Edit",
+            "matcher": "Edit|Write|NotebookEdit|MultiEdit",
             "hooks": [
               {
                 "type": "command",
@@ -113,8 +113,7 @@
                 "args": [
                   "${CLAUDE_PLUGIN_ROOT}/hooks/claude.py"
                 ],
-                "timeout": 15,
-                "if": "Edit(**/Agent_Working_Folder/BRIEF.md)"
+                "timeout": 15
               }
             ]
           }

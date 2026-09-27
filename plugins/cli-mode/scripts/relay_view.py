@@ -318,6 +318,61 @@ def final_markdown(label, batch, history, footer=None, show_work=True, color=Fal
     return '\n\n'.join(parts)
 
 
+HOST_ANSWER_MAX = 6000  # Characters of the agent's answer Claude reads in AUTO; the whole answer stays in its file.
+HOST_ENDS = {'completed': 'finished', 'canceled': 'was canceled', 'superseded': 'was canceled',
+             'rejected': 'was not sent', 'uncertain': 'could not be confirmed (check /cli queue)'}
+
+
+def host_text(request, label, status, batch, receipt, read_only=False, task=None, stopped=None, access=None):
+    """An AUTO handoff's result as Claude reads it (relay --for-host): plain lines, then the agent's answer.
+
+    Claude checks it and tells the user in its own words, so there is no Markdown styling and nothing to post as is.
+    """
+    from agent_folder import counts
+    from test_gate import line, overlap_line
+    receipt = receipt or {}
+    lines = ['HANDOFF ' + request + ': ' + label + ' ' + HOST_ENDS.get(status, status) +
+             (' (read-only)' if read_only else '') + '.']
+    if task:
+        lines.append('TASK: ' + task)
+    changes = receipt.get('changes')
+    if changes:
+        count = changes.get('files') or 0
+        paths = [item['path'] for item in (changes.get('paths') or [])[:RECEIPT_PATHS]]
+        lines.append('CHANGES: ' + ('none' if not count else str(count) + (' file' if count == 1 else ' files') +
+                                    ', +' + str(changes.get('added', 0)) + ' -' + str(changes.get('removed', 0)) +
+                                    ': ' + ', '.join(paths) + (' and ' + str(count - len(paths)) + ' more'
+                                                               if count > len(paths) else '')))
+    else:
+        lines.append('CHANGES: not measured (not a git repository).')
+    saved = receipt.get('saved')
+    if saved:
+        lines.append('SAVED: ' + counts(saved) + ' in ' + saved['folder'] + '/' + (
+            '' if saved.get('partial') else ': ' + ', '.join(item['path'] for item in (saved.get('paths') or [])
+                                                            [:RECEIPT_PATHS])))
+    tests = line(receipt.get('tests'))
+    lines.append('TESTS: ' + (tests or 'no test command ran (the user sets one with /cli test).'))
+    lines += ['OVERLAP: ' + text for text in overlap_line(receipt.get('overlaps'))]
+    if stopped:
+        from presentation import access_display, permission_stop
+        name = access_display((access or {}).get('access', 'prompt'), (access or {}).get('accessName'))
+        lines.append('STOPPED: ' + ' '.join(permission_stop(label, name, stopped).split()) + ' Tell the user in one '
+                     'line what it asks; only they answer it (/cli approve or /cli deny).')
+    lines += ['ERROR: ' + ' '.join(event['message'].split()) for event in batch
+              if event.get('type') == 'error' and event.get('message')]
+    answer = messages(batch).strip()
+    whole = (receipt.get('refs') or {}).get('answer')
+    if not answer:
+        lines.append('ANSWER: none.')
+    elif len(answer) > HOST_ANSWER_MAX:
+        lines += ['ANSWER (its first ' + str(HOST_ANSWER_MAX) + ' characters' + ('; the whole answer is in ' + whole
+                                                                               if whole else '') + '):',
+                  answer[:HOST_ANSWER_MAX]]
+    else:
+        lines += ['ANSWER' + (' (also saved in ' + whole + ')' if whole else '') + ':', answer]
+    return '\n'.join(lines)
+
+
 def render(label, history, destination, footer=None, show_work=True, workspace=None, receipt=None, saved=None,
            refs=None, tests=None, overlaps=None):
     """The turn's one inline view: final words, artifacts, errors and nested work.

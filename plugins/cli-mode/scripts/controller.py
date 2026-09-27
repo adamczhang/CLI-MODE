@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 import adapters
@@ -92,6 +93,9 @@ def build_parser():
     p = sub.add_parser('relay'); p.add_argument('--request', required=True, action='append')
     p.add_argument('--cursor', type=int, default=0); p.add_argument('--wait', type=float)
     p.add_argument('--view-dir')
+    p.add_argument('--for-host', action='store_true', help='Claude Code AUTO: a handoff\'s result for Claude to read.')
+    p = sub.add_parser('handoff', help='Claude Code AUTO: hand Claude\'s task file to the AUTO agent.')
+    p.add_argument('--task', required=True); p.add_argument('--agent'); p.add_argument('--read-only', action='store_true')
     p = sub.add_parser('follow'); p.add_argument('--request', required=True)
     p = sub.add_parser('pump', help=argparse.SUPPRESS); p.add_argument('--token', required=True)
     p.add_argument('--session')
@@ -153,7 +157,11 @@ def run(args, control=None):
     elif command == 'relay':
         # A text host posts nothing until the agent finishes, so each call waits longer (its tool timeout is 30 s).
         wait = min(max(args.wait if args.wait is not None else 8.0 if views else 25.0, 0), 30)
-        if not views:  # A text host relays a turn's earlier, cut-off requests with its own, in one loop.
+        if args.for_host:
+            if views or len(args.request) != 1:
+                raise ValueError('relay --for-host takes one --request, on Claude Code.')
+            result = control.relay_for_host(args.request[0], wait)
+        elif not views:  # A text host relays a turn's earlier, cut-off requests with its own, in one loop.
             result = control.relay_chain(args.request, args.cursor, wait)
         elif len(args.request) == 1:
             result = control.relay(args.request[0], args.cursor, wait, args.view_dir)
@@ -273,6 +281,14 @@ def run(args, control=None):
         if views:
             raise ValueError('AUTO mode is Claude Code only; on Codex only /d reaches an agent.')
         result = control.mode_control(args.action, args.to, args.role, args.agent, args.number)
+    elif command == 'handoff':
+        if views:
+            raise ValueError('AUTO mode is Claude Code only; on Codex only /d reaches an agent.')
+        result = control.handoff(args.task, args.agent, args.read_only)
+        follow = command_line(args, 'follow', '--request', result['requestId'])
+        result['next'] = ('Run `' + follow + '` now, as is: CLI-MODE makes it a background task, and its end wakes '
+                          'you with ' + result['agent'] + '\'s result. Then end your turn with a short status for the '
+                          'user.')
     else:
         result = control.acknowledge(args.operation)
     block = result.get('activationMenu') or (result.get('text') if command == 'format-menu' else None)
@@ -294,13 +310,26 @@ def main():
         sys.exit(0 if result['status'] == 'completed' else 1)
     if args.command == 'relay' and not host.views(args.host):
         # Claude Code shows this tool output to anyone who opens it: plain words, not JSON.
-        print(relay_plain(result), flush=True)
+        print(result['text'] if args.for_host else relay_plain(result), flush=True)
         return
     if not host.views(args.host) and isinstance(result, dict) and isinstance(result.get('activationMenu'), str):
         # Claude posts this menu in chat, where its title band can be green, in the same box.
         color = host.chat_color(args.data_root or host.data_root(args.host), args.host)
         result = dict(result, activationMenu=chat_menu(result['activationMenu'], color))
     emit(result)
+
+
+BARE = re.compile(r'[A-Za-z0-9_./:-]+')
+
+
+def command_line(args, *words):
+    """This controller command's own session prefix with other words, quoted as hooks/claude.py:command() quotes
+    it, so the approval hook accepts it as is (the prefix Claude ran came from that hook)."""
+    def quote(token):
+        return token if BARE.fullmatch(token) else "'" + token.replace("'", "'\\''") + "'"
+    tokens = ['python', Path(__file__).resolve().as_posix(), '--host', args.host, '--thread', args.thread,
+              '--workspace', args.workspace] + (['--data-root', args.data_root] if args.data_root else []) + list(words)
+    return ' '.join(quote(token) for token in tokens)
 
 
 def with_auto_line(result):

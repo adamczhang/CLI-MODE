@@ -77,6 +77,10 @@ def answered(state, request_ids, approval):
     for request_id in request_ids:
         record = state['requests'][request_id]
         entry = agent_entry(state, record['session']) or {}
+        stopped = (state['requests'].get((entry.get('approval') or {}).get('requestId')) or {})
+        if record.get('routingMode') == 'auto' and stopped.get('handoff'):
+            # Claude Code's AUTO: the answer goes on with Claude's handoff, so its result goes to Claude too.
+            record['handoff'] = dict(stopped['handoff'], continues=entry['approval']['requestId'])
         entry.pop('approval', None)
         if approval and approval['answer'] == 'approve' and approval.get('rule'):
             record['approve'] = [approval['rule']]

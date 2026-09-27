@@ -10,15 +10,39 @@ what each task is belongs to Claude.
 """
 import json
 from pathlib import Path
+import re
+import time
 import uuid
 
 import adapters
+import agent_folder
 import frontends
 from operations import pending_work
 from presentation import menu_block
-from state import MODE_PAGES, STRENGTHS, agent_entry, agent_label, routing_mode
+from state import MODE_PAGES, STRENGTHS, agent_entry, agent_label, live_agents, routing_mode, target_of
 
 ROLES = ('agent', 'backup')
+# Handoffs: Claude writes each task to a file here (git-ignored, CLI-MODE's own), then runs `handoff --task <id>`.
+TASK_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,39}')
+TASK_MAX = 100 * 1024  # Characters.
+WORKING = ('captured', 'submitting')  # A request still with its agent.
+LEDGER_SHOWN = 5
+SMALL_EDIT = 20  # Strong: lines one edit of Claude's may change.
+TURN_FILES = 2  # Strong: project files Claude may edit itself in one turn.
+KEPT_SUBAGENTS = ('Explore', 'Plan', 'claude-code-guide', 'statusline-setup')  # Read-only helpers stay Claude's.
+STRENGTH_RULES = {
+    'normal': 'Delegation is Normal: you decide what to hand off.',
+    'strong': ('Delegation is Strong: you may make small fixes yourself (up to about ' + str(SMALL_EDIT) + ' changed '
+               'lines per edit, at most ' + str(TURN_FILES) + ' project files per turn); CLI-MODE refuses a larger '
+               'edit, which then goes to the agent. Your own subagents that would write code are refused too.'),
+    'max': ('Delegation is Max: every change to the project goes to the agent; you read, plan, check and write task '
+            'files, and CLI-MODE refuses your own project edits.'),
+}
+TEMPLATE = ('Goal: what to achieve, in one or two lines\n'
+            'Context: files, decisions and constraints the task needs\n'
+            'Do not: files or areas to leave alone; never commit or push\n'
+            'Done when: the check that proves it (tests, a command, behaviour)\n'
+            'Report: what changed, what you ran, anything unresolved')
 DEFAULT_STRENGTH = 'strong'
 STRENGTH_LINES = {
     'normal': ('Claude decides what to hand off.',),
@@ -148,6 +172,103 @@ def adopt(state, purpose, session, agent, settings, root):
     if purpose == 'auto-on':
         state['routingMode'] = 'auto'
     return previous if previous != session else None
+
+
+def tasks_dir(workspace):
+    return Path(workspace) / agent_folder.ROOT / agent_folder.OWN / 'tasks'
+
+
+def task_file(workspace, task):
+    if not isinstance(task, str) or not TASK_ID.fullmatch(task):
+        raise ValueError('A task id is 1-40 letters, digits, _ or -, starting with a letter or digit (such as t1).')
+    return tasks_dir(workspace) / (task + '.md')
+
+
+def auto_requests(state):
+    """This conversation's AUTO requests (handoffs, and approvals' continuations of them), oldest first."""
+    return sorted(((key, record) for key, record in (state.get('requests') or {}).items()
+                   if record.get('routingMode') == 'auto'), key=lambda item: item[1].get('capturedAt') or 0)
+
+
+def writer(state, exclude=None):
+    """(session, request) of work in progress that may change files, on an agent other than `exclude`: anything
+    unfinished but a read-only handoff. One writer at a time keeps each turn's change receipt its own."""
+    for key, record in (state.get('requests') or {}).items():
+        if (record.get('status') in WORKING and record.get('session') != exclude
+                and not (record.get('handoff') or {}).get('readOnly')):
+            return record.get('session'), key
+    return None
+
+
+def unread(state):
+    """AUTO requests that finished but whose result Claude has not read (relay --for-host), oldest first."""
+    return [key for key, record in auto_requests(state) if record.get('status') not in WORKING
+            and not record.get('hostRead')]
+
+
+def ledger_lines(state, relay_command, limit=LEDGER_SHOWN):
+    """The AUTO ledger: unread results first, then the newest. `relay_command(request)` is the exact relay."""
+    rows = auto_requests(state)
+    if not rows:
+        return ['No handoffs yet.']
+    labels = state.get('followLabels') or {}
+    waiting = set(unread(state))
+    rows = [item for item in rows if item[0] in waiting] + [item for item in reversed(rows) if item[0] not in waiting]
+    words = {'completed': 'finished', 'canceled': 'canceled', 'superseded': 'canceled', 'rejected': 'not sent',
+             'uncertain': 'unconfirmed'}
+    lines = []
+    for key, record in rows[:limit]:
+        name = labels.get(key) or agent_label(state, record.get('session'))
+        handoff = record.get('handoff') or {}
+        what = ' (read-only)' if handoff.get('readOnly') else ''
+        if record.get('status') in WORKING:
+            lines.append(name + what + ': working.')
+        elif key in waiting:
+            lines.append(name + what + ': ' + words.get(record.get('status'), record.get('status') or 'settled') +
+                         ', NOT READ YET: `' + relay_command(key) + '`')
+        else:
+            lines.append(name + what + ': ' + words.get(record.get('status'), record.get('status') or 'settled') +
+                         ', read.')
+    more = len(rows) - limit
+    return lines + (['(' + str(more) + ' older in /cli list)'] if more > 0 else [])
+
+
+def context(root, state, workspace, handoff_command, relay_command):
+    """What Claude is told on every AUTO turn (lever A), from P0's tested wording (2026-09-27: 19 of 20 prompts
+    routed as intended). `handoff_command` is the exact handoff command with `<id>` for the task id."""
+    config = load(root)
+    roster = state.get('auto') or {}
+    lead = roster.get('agent')
+    if not lead or not agent_entry(state, lead):
+        return ('CLI-MODE AUTO is on, but its AUTO agent is not running, so nothing can be handed off. Say so in one '
+                'line: /cli mode auto starts it again, and /cli mode direct switches back.')
+    name = agent_label(state, lead)
+    detail = describe(root, config['agent']).split(', ', 1)
+    backup = roster.get('backup')
+    backup_text = ('; backup ' + agent_label(state, backup) + ' (`--agent backup`), only for when the AUTO agent fails '
+                   'or is out of usage, and for read-only work while it writes') if backup and agent_entry(
+                       state, backup) else ''
+    short = (agent_entry(state, lead).get('alias') or name)
+    return (
+        'CLI-MODE AUTO is on. The user turned it on: that is their explicit request that you hand coding work to '
+        'their CLI agent. You lead; their AUTO agent, ' + name + (' (' + detail[1] + ')' if len(detail) > 1 else '') +
+        ', does the work in this same project folder' + backup_text + '. ' + STRENGTH_RULES[config['strength']] + '\n'
+        'Hand off: self-contained work such as implementing a feature to a spec, writing tests, fixing failing tests '
+        'until they pass, ports and refactors, code reviews and second opinions (read-only), and wide research. Keep '
+        'for yourself: small edits (one file, a few lines), quick questions you can answer from a short read, and '
+        'anything that depends on this conversation. Do not read the code just to write a task: give the goal and '
+        'constraints and let the agent explore. Do not guess either: name what you have not checked as something for '
+        'the agent to find out, not as a fact or a suspect. One writer: while a writing handoff runs, do not edit the '
+        'project yourself.\n'
+        'To hand off: (1) post one line, "Passing to ' + short + ': <what>"; (2) write the task with the Write tool to '
+        + tasks_dir(workspace).as_posix() + '/<id>.md, where <id> is a short new name such as t1, using this '
+        'template:\n' + TEMPLATE + '\n(3) run `' + handoff_command + '` (add `--read-only` for reviews and research); '
+        'it prints the follow command, which you run next, as is (CLI-MODE makes it a background task); (4) end your '
+        'turn with a short status for the user. The agent\'s finish wakes you: then read its result with the relay '
+        'command CLI-MODE gives you, check it (the change receipt, the test result, the agent\'s report), and tell the '
+        'user in your own words what was done and anything unresolved. Never poll or wait for it.\n'
+        '/d is off in AUTO; the user switches back with /cli mode direct.\n'
+        'AUTO ledger:\n' + '\n'.join('- ' + line for line in ledger_lines(state, relay_command)))
 
 
 class AutoMixin:
@@ -321,6 +442,117 @@ class AutoMixin:
         with self.store.edit() as state:
             self.close_page(state)
         return dict(state, message='Mode page closed. /cli mode opens it again.')
+
+    def handoff(self, task, agent=None, read_only=False):
+        """Hand Claude's task file to an AUTO agent: captured as a /d is, marked as Claude's own (routingMode auto),
+        so its result wakes Claude (relay --for-host) instead of going to the user word for word."""
+        state = self.store.read()
+        if routing_mode(state) != 'auto':
+            raise RuntimeError('AUTO is off, so nothing was handed off. The user turns it on with /cli mode auto.')
+        path = task_file(self.store.workspace, task)
+        if not path.is_file():
+            raise RuntimeError('No task file at ' + path.as_posix() + '. Write the task there with the Write tool '
+                               'first, then run the handoff again.')
+        text = path.read_text(encoding='utf-8', errors='replace').strip()
+        if not text:
+            raise RuntimeError('The task file ' + path.as_posix() + ' is empty. Nothing was handed off.')
+        if len(text) > TASK_MAX:
+            raise RuntimeError('The task file is over ' + str(TASK_MAX // 1024) + ' KB. Keep the task to what the '
+                               'agent needs; it can read the project itself.')
+        session = self.handoff_target(state, agent)
+        target = agent_entry(state, session)
+        name = agent_label(state, session)
+        if read_only and target.get('actsWithoutAsking'):
+            raise RuntimeError(name + ' runs commands and edits files without asking first, so it cannot take '
+                               'read-only work. Hand it to another agent, or drop --read-only.')
+        if not read_only:
+            busy = writer(state, exclude=session)
+            if busy:
+                raise RuntimeError(agent_label(state, busy[0]) + ' is still working on a change in this project (one '
+                                   'writer at a time). Wait for its result, or hand this over with --read-only.')
+        first = ' '.join(text.splitlines()[0].split())  # The template's Goal line names the work best.
+        goal = first[5:].strip() if first.casefold().startswith('goal:') else first
+        label = name + ' · ' + (goal[:30].rstrip() + '…' if len(goal) > 30 else goal)
+        request = uuid.uuid4().hex
+        with self.store.edit() as latest:
+            if routing_mode(latest) != 'auto':
+                raise RuntimeError('AUTO was turned off; nothing was handed off.')
+            self.store.capture(latest, request, text, session=session)
+            latest['requests'][request]['handoff'] = dict(task=task, readOnly=bool(read_only))
+            labels = latest.setdefault('followLabels', {})  # The follow's pane row: `<Agent NAME> · <goal>`.
+            labels.pop(request, None)
+            labels[request] = label
+            for stale in list(labels)[:-20]:
+                labels.pop(stale)
+        started = self.ensure_pump(session)
+        return dict(requestId=request, agent=name, task=task, readOnly=bool(read_only), label=label,
+                    worker=started.get('worker'))
+
+    def handoff_target(self, state, agent=None):
+        """The session a handoff goes to: the AUTO agent, `backup`, or a running agent the user named."""
+        roster = state.get('auto') or {}
+        if not agent or agent.casefold() in ('agent', 'auto'):
+            session = roster.get('agent')
+        elif agent.casefold() == 'backup':
+            session = roster.get('backup')
+            if not session:
+                raise RuntimeError('No backup agent is set; hand this to the AUTO agent (no --agent).')
+        else:
+            session, _ = target_of(agent, state)
+            if not session:
+                raise RuntimeError('No running agent is called ' + agent + '. Running: ' +
+                                   (', '.join(live_agents(state)) or 'none') + '.')
+        target = agent_entry(state, session) if session else None
+        if not target or not target.get('ready'):
+            raise RuntimeError('The AUTO agent is not running, so nothing was handed off. Tell the user: /cli mode auto '
+                               'starts it again.')
+        return session
+
+    def relay_for_host(self, request_id, wait=25.0, poll=.25):
+        """A handoff's result for Claude to read (not to post): plain lines, then the agent's answer. It marks the
+        result read, which keeps it out of every user relay and clears the wake-up's Stop guard."""
+        import relay_view
+        from queue_worker import request_label
+        state = self.store.read()
+        record = (state.get('requests') or {}).get(request_id)
+        if not record or record.get('routingMode') != 'auto':
+            raise RuntimeError('No AUTO handoff ' + request_id + ' in this conversation.')
+        started = time.monotonic()
+        while True:
+            view = self.observe(request_id, 0, limit=1)
+            status = view['receipt']['status']
+            if status not in WORKING or time.monotonic() - started >= wait:
+                break
+            time.sleep(poll)
+        label = request_label(state, request_id)
+        if status in WORKING:
+            return dict(requestId=request_id, done=False, status=status,
+                        text=label + ' is still working on this handoff. Its follow wakes you when it finishes: end '
+                                     'the turn now, without polling.')
+        batch, position = [], 0
+        while True:  # A settled request's log is final.
+            view = self.observe(request_id, position, limit=500)
+            if not view['events']:
+                break
+            batch, position = batch + view['events'], view['cursor']
+        public = [event for event in batch if event.get('type') in self.RELAY_PUBLIC]
+        latest = self.store.read()
+        stopped = next((item.get('approval') for item in latest.get('owned') or []
+                        if (item.get('approval') or {}).get('requestId') == request_id), None)
+        handoff = record.get('handoff') or {}
+        task = handoff.get('task')
+        text = relay_view.host_text(
+            request_id, label, status, public, view['receipt'], read_only=handoff.get('readOnly'),
+            task=task_file(self.store.workspace, task).as_posix() if task and TASK_ID.fullmatch(task) else None,
+            stopped=stopped, access=(agent_entry(latest, record.get('session')) or {}).get('settings'))
+        with self.store.edit() as latest:
+            saved = (latest.get('requests') or {}).get(request_id)
+            if saved:
+                saved.update(relayed=True, hostRead=True)
+            latest.setdefault('relayProgress', {})[request_id] = dict(cursor=position, done=True)
+            if latest.get('autoWake') == request_id:
+                latest.pop('autoWake')
+        return dict(requestId=request_id, done=True, status=status, text=text)
 
     def retire(self, session):
         """Close an AUTO agent that was replaced, unless it is still working (then say so)."""
