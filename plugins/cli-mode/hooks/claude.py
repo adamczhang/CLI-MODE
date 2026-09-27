@@ -746,7 +746,7 @@ def relay_position(state, request):
     chain = progress.get('chain')
     if chain:
         return chain['requests'], chain['cursor']
-    earlier = unrelayed(state, exclude=request, session=((state.get('requests') or {}).get(request) or {}).get('session'))
+    earlier = unrelayed(state, before=request, session=((state.get('requests') or {}).get(request) or {}).get('session'))
     return earlier + [request], (0 if earlier else progress.get('cursor', 0))
 
 
@@ -915,7 +915,7 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
                 '. Only its text was forwarded: images or files '
                 'attached to it stay with Claude Code, so if it had any, one short line saying the agent did not '
                 'receive them follows the opening line below, in the same message.')
-        earlier = unrelayed(state, exclude=request, session=(state['requests'].get(request) or {}).get('session'))
+        earlier = unrelayed(state, before=request, session=(state['requests'].get(request) or {}).get('session'))
         if earlier:
             lead += (' The relay also carries earlier requests whose output the user has not seen yet (a relay was '
                      'interrupted), first and in order; they are not sent again.')
@@ -926,16 +926,20 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
     return {}
 
 
-def unrelayed(state, exclude=None, limit=3, session=None):
+def unrelayed(state, before=None, limit=3, session=None):
     """This activation's requests whose relay never finished: their output has not reached the user.
 
     With `session`, only that agent's (a turn's relay carries its own agent's earlier requests); otherwise
-    every running agent's.
+    every running agent's. With `before`, only those captured before that request: one queued after it has
+    not even started, and chained first it held a canceled turn's relay back until it finished (live, 6 min).
     """
     progress = state.get('relayProgress') or {}
+    records = state.get('requests') or {}
     sessions = {session} if session else {item['name'] for item in state.get('owned') or []}
-    rows = [(record.get('capturedAt') or 0, key) for key, record in (state.get('requests') or {}).items()
-            if key != exclude and record.get('generation') == state.get('generation')
+    limit_at = (records.get(before) or {}).get('capturedAt') if before else None
+    rows = [(record.get('capturedAt') or 0, key) for key, record in records.items()
+            if key != before and (limit_at is None or (record.get('capturedAt') or 0) < limit_at)
+            and record.get('generation') == state.get('generation')
             and record.get('session') in sessions
             and record.get('status') in ('captured', 'submitting', 'uncertain', 'completed')
             and not record.get('relayed') and not (progress.get(key) or {}).get('done')]

@@ -178,7 +178,8 @@ class Controllers(ClaudeControl):
         with patch('confirmation.usage', return_value=unavailable):
             message = self.control.activation_message(None)
         self.assertIn(strong('CLI-MODE Activated', True), message['text'])
-        self.assertIn('`/cli help`', message['text'])  # Claude Code's own /help is built in.
+        self.assertIn('**Help:** `/cli help`', message['text'])  # Claude Code's own /help is built in.
+        self.assertNotIn('Question', message['text'])  # Read as a question left over from an earlier session.
         self.assertNotIn('messageView', message)
         with patch('confirmation.usage', return_value=unavailable):
             result = run(self.args('activation-message'), self.control)

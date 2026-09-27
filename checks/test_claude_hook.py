@@ -514,6 +514,25 @@ class BackgroundFollow(ClaudeHook):
             state['relayProgress'] = {request: dict(cursor=10, done=True)}
         self.assertIn('relay has already run', self.context(self.prompt(self.notification('toolu_follow1'))))
 
+    def test_a_canceled_turn_is_relayed_without_waiting_for_the_follow_up_queued_after_it(self):
+        # Live, 2026-09-27: `/cli cancel art` stopped the turn in 2 s, but its relay chained the follow-up queued
+        # after it first and waited 6 minutes for that to finish. Only requests captured before it go first.
+        _, request = self.start()
+        self.pre_tool_use(self.command('follow', '--request', request), tool_use_id='toolu_follow1')
+        self.prompt('/d Then list what you made')  # Queued behind the running turn.
+        queued = self.store().read()['turnRoute']['requestId']
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'canceled'
+            state['requests'][queued]['status'] = 'submitting'
+        text = self.context(self.prompt(self.notification('toolu_follow1')))
+        self.assertIn('`' + self.command('relay', '--request', request) + '`', text)
+        self.assertNotIn(queued, text)
+        with self.store().edit() as state:
+            state['requests'][request]['status'] = 'completed'
+        # An unrelayed request captured before still goes first; one captured after never does.
+        self.assertEqual(claude.relay_position(self.store().read(), queued)[0], [request, queued])
+        self.assertEqual(claude.relay_position(self.store().read(), request)[0], [request])
+
     def test_a_prompt_carrying_claudes_own_task_first_still_relays_the_follow(self):
         _, request = self.start()
         self.pre_tool_use(self.command('follow', '--request', request), tool_use_id='toolu_follow1')

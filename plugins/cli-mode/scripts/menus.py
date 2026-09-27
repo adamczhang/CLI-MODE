@@ -99,8 +99,13 @@ class MenuMixin:
             if (state.get('pending') or {}).get('stage') == 'verifying':
                 raise RuntimeError('Settings are being verified; wait before opening the menu.')
             if dismiss:
-                if (state.get('pending') or {}).get('phase') != 'settings' and not (state.get('pending') or {}).get('tuning'):
+                pending = state.get('pending') or {}
+                if pending.get('phase') != 'settings' and not pending.get('tuning'):
                     raise RuntimeError('The agent settings menu is not open.')
+                # A model or effort picked on the way to the access list applies only with it: say it was dropped.
+                picked = ((pending.get('draft') or {}).get('settings') or {}) if pending.get('tuning') else {}
+                dropped = any(key in picked and picked[key] is not None and picked[key] != target['settings'].get(key)
+                              for key in ('model', 'effortValue'))
                 state['pending'] = None
                 state['turnRoute'] = dict(route='settings-result')
             else:
@@ -108,7 +113,9 @@ class MenuMixin:
                     backend=target['backend'], entrypoint=target['backend'], draft={}, session=target['name'])
                 state['turnRoute'] = dict(route='settings')
         if dismiss:
-            return dict(state, message='Settings closed. CLI remains active.')
+            return dict(state, message=('Settings closed without changes: the model and effort you picked apply only '
+                                        'once the access level is chosen too. ' if dropped else 'Settings closed. ') +
+                        'CLI remains active.')
         return dict(state, activationMenu=self.settings_page(state, target['name']))
 
     @staticmethod
