@@ -413,6 +413,22 @@ def team_lines(state):
     return lines
 
 
+def team_hold(state):
+    """Seconds the brief keeps this conversation's list without an update from it: a working agent's turn may
+    last a day (dispatch's longest); an idle one exits after its timeout (the ACPX owner TTL)."""
+    live = set(live_agents(state).values())
+    if any(record.get('session') in live and record.get('status') in ('captured', 'submitting')
+           for record in (state.get('requests') or {}).values()):
+        return 25 * 3600
+    return 60 * max([item.get('timeout') or DEFAULT_TIMEOUT for item in state['owned'] if item['name'] in live],
+                    default=DEFAULT_TIMEOUT) + 300
+
+
+def team_of(state):
+    """(team_lines, team_hold): what agent_folder.write_team keeps for this conversation."""
+    return team_lines(state), team_hold(state)
+
+
 def passing_line(label):
     return 'Passing to ' + label + '...'
 
@@ -573,6 +589,10 @@ def approval_route(verb, choice, state):
                 'first, so approving always would let it do anything, from now on. To allow that, use /cli access '
                 'allow. /cli approve answers this question for one turn. Nothing was sent.'}
     asked = entry['approval']
+    if always and not presentation.lasting(asked):
+        return {'route': 'hint', 'text': agent_label(state, session) + '\'s request does not say what kind of tool it '
+                'is, so approving it always would only ever match this one step. /cli approve answers it for this '
+                'turn; /cli access allow lets it act freely. Nothing was sent.'}
     words, what = presentation.approval_words(asked), ' '.join((asked.get('detail') or asked.get('title') or '').split())
     if verb == 'approve':
         note = ('Approved: you may ' + words + (' (' + what + ')' if what else '') + (' from now on' if always else '') +

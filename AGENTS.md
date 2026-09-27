@@ -1,6 +1,6 @@
 # CLI-MODE — agent guide (read this first)
 
-> **Written for CLI-MODE 0.3.8** (tag `v0.3.8`, 2026-09-26).
+> **Written for CLI-MODE 0.3.9** (tag `v0.3.9`, 2026-09-26).
 > If `plugins/cli-mode/.codex-plugin/plugin.json` shows a different version, parts of this file may be
 > out of date. Verify any file, function or rule named here against the code before relying on it; when
 > they disagree, the code wins. Fix this file in the same change. `checks/test_agent_docs.py` fails
@@ -47,10 +47,20 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   snapshots behind each turn's change receipt and `/cli diff`; `scripts/agent_folder.py` keeps each agent's
   git-ignored `Agent_Working_Folder/<NAME>/`, names it in each task and reports what a turn saved there;
   `scripts/test_gate.py` runs the project's `/cli test` command after turns that change files.
+  The project brief (`/cli brief`, a BRIEF file in the working folder's root) holds your points, the host's dated notes
+  (a new agent's activation returns `hostNote`; the host fills it in) and the running agents; every change edits
+  only its own lines under a lock (`agent_folder._edit`), and each conversation keeps its agent list in the
+  working folder's hidden `.cli-mode` folder so the brief lists every conversation's agents (`write_team`).
+  `/cli undo` puts back only what the agent's own tools edited (`queue_worker._note_touched`): the bridge logs
+  each finished edit's files as a `touched` event in every progress mode, taking them from ACP's `diff`
+  content when an edit has no locations (Copilot's and Codex CLI's `apply_patch`).
 - **Approvals and attachments** (shared): below Allow a turn stops at the first permission request; the bridge
   reports the agent's request, `dispatch.remember_approval` keeps it as the agent's `approval`, and
   `/cli approve|deny` (`state.approval_route`) becomes its next /d, carrying a per-prompt ACPX
-  `permissionPolicy` (`dispatch.approval_policy`). Files attached to a /d (`host.split_attachments`, plus
+  `permissionPolicy` (`dispatch.approval_policy`): the approved kind, or `other` for one turn when the request
+  names no kind CLI-MODE knows (never "always"); an agent that acts without asking (`actsWithoutAsking`: Grok,
+  or one seen calling ACPX's terminal or file writes for a kind it didn't ask about) also gets commands and edits
+  for that turn, and can't be approved always. Files attached to a /d (`host.split_attachments`, plus
   Claude's uploads folder in `hooks/claude.py`) are copied into `Agent_Working_Folder/<NAME>/attachments/`.
 - **Routing** (shared): `state.route()` turns a prompt into a route: `/cli …` controls, `/d` (Direct),
   help, setup replies; any other text is the host's (Passthrough mode was removed). `route.decide()` records
@@ -69,7 +79,8 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
     tasks, which list any tool call running past about 2-3 s. Only an activation that widens access, and
     agent turns, get a context naming the exact command (Claude Code's permission prompt is the user's yes
     for the first). The hook names those commands' rows after the agent (`<Agent> · starting`/`answer`).
-  - PreToolUse auto-approves only CLI-MODE's own controller commands; installing (`setup-start --approved`) and
+  - PreToolUse auto-approves only CLI-MODE's own controller commands and the host's note edit in the project
+    brief (`brief_note_approval`); installing (`setup-start --approved`) and
     activating with wider access (`activate --access` other than `prompt`) still get Claude Code's permission prompt.
   - A `/d` turn posts "Passing to …", runs `controller.py follow --request <id>` and ends. PreToolUse
     approves `follow` with `updatedInput` that adds `run_in_background: true` and a row label

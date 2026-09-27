@@ -112,6 +112,75 @@ class Undo(Project):
         self.assertTrue(self.control.undo()['text'].startswith('Nothing was undone: ' + self.label + '\'s own tools'))
         self.assertTrue((self.project / 'new.py').is_file())
 
+    def test_an_agent_whose_edits_name_no_file_is_undone_by_its_receipt(self):
+        # Copilot edits with apply_patch, whose events name no file: its own named files are not all it changed.
+        self.backend.work = self.edit
+        request = self.turn()
+        self.own(request)
+        with self.store.edit() as state:
+            state['requests'][request]['unlocated'] = True
+        text = self.control.undo()['text']
+        self.assertTrue(text.startswith('Undid ' + self.label + '\'s last turn: restored '), text)
+        self.assertEqual((self.project / 'app.py').read_text(encoding='utf-8'), 'one\n')
+        self.assertFalse((self.project / 'new.py').exists())
+        self.assertTrue((self.project / 'old.py').is_file())
+
+    def test_it_still_leaves_what_another_agent_edited_meanwhile(self):
+        self.backend.work = self.edit
+        request = self.turn()
+        self.own(request)
+        with self.store.edit() as state:
+            mine = state['requests'][request]
+            mine['unlocated'] = True
+            state['requests']['other'] = dict(session='someone-else', status='completed', touched=['new.py'],
+                                              submittedAt=mine['submittedAt'], endedAt=mine['endedAt'])
+        text = self.control.undo()['text']
+        self.assertIn('Left as they are, edited by another agent while ' + self.label + ' worked: new.py.', text)
+        self.assertTrue((self.project / 'new.py').is_file())
+        self.assertEqual((self.project / 'app.py').read_text(encoding='utf-8'), 'one\n')
+
+    def test_only_a_finished_edit_that_names_no_file_marks_the_turn(self):
+        events = self.root / 'events.jsonl'
+
+        def marked(*lines):
+            events.write_text('\n'.join(json.dumps(dict(type='activity', kind='edit', **line)) for line in lines),
+                              encoding='utf-8')
+            with self.store.edit() as state:
+                state.setdefault('requests', {})['r'] = dict(session='s', status='completed', events=str(events),
+                                                             submittedAt=0)
+                self.control._note_touched(state, 'r', self.project)
+                return state['requests']['r'].get('unlocated', False)
+        self.assertTrue(marked(dict(toolCallId='a', status='completed', title='apply_patch')))
+        self.assertFalse(marked(dict(toolCallId='a', status='failed', title='apply_patch')))
+        self.assertFalse(marked(dict(toolCallId='a', status='pending'),  # Its location came in a later update.
+                                dict(toolCallId='a', status='completed', locations=[dict(path='app.py')])))
+
+    def test_the_bridges_touched_event_names_the_files_in_quiet_mode_too(self):
+        events = self.root / 'events.jsonl'
+        events.write_text(json.dumps(dict(type='touched', toolCallId='p', kind='edit',
+                                          locations=[dict(path=str(self.project / 'app.py'))])), encoding='utf-8')
+        with self.store.edit() as state:
+            state.setdefault('requests', {})['r'] = dict(session='s', status='completed', events=str(events),
+                                                         submittedAt=0)
+            self.control._note_touched(state, 'r', self.project)
+            record = state['requests']['r']
+        self.assertEqual(record['touched'], ['app.py'])
+        self.assertNotIn('unlocated', record)
+
+    def test_two_agents_whose_edits_name_no_file_are_not_told_apart(self):
+        self.backend.work = self.edit
+        request = self.turn()
+        self.own(request)
+        with self.store.edit() as state:
+            mine = state['requests'][request]
+            mine['unlocated'] = True
+            state['requests']['other'] = dict(session='someone-else', status='completed', touched=[], unlocated=True,
+                                              submittedAt=mine['submittedAt'], endedAt=mine['endedAt'])
+        text = self.control.undo()['text']
+        self.assertTrue(text.startswith('Nothing was undone: ' + self.label + ' and '), text)
+        self.assertIn('can\'t tell which changes were', text)
+        self.assertTrue((self.project / 'new.py').is_file())  # Nothing touched.
+
     def test_nothing_to_undo_says_so(self):
         self.assertIn('has no turn to undo', self.control.undo()['text'])
 

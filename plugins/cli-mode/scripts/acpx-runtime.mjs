@@ -101,6 +101,31 @@ function directCall(message) {
   }
 }
 
+/** Each edit, delete or move tool call's files, reported once as `touched` when it completes, whatever the progress
+ * mode: /cli undo and the same-file warning read it. The files come from its locations or, as Copilot and Codex CLI
+ * send them (apply_patch), from its `diff` content, which ACP gives a path. */
+function touchedTracker() {
+  const calls = new Map();
+  return update => {
+    if (!['tool_call', 'tool_call_update'].includes(update?.sessionUpdate) || typeof update.toolCallId !== 'string')
+      return;
+    const known = calls.get(update.toolCallId);
+    const kind = update.kind ?? known?.kind;
+    if (!['edit', 'delete', 'move'].includes(kind)) return;
+    const call = known ?? {paths: new Set(), reported: false};
+    call.kind = kind;
+    for (const location of Array.isArray(update.locations) ? update.locations : [])
+      if (typeof location?.path === 'string' && location.path) call.paths.add(location.path);
+    for (const item of Array.isArray(update.content) ? update.content : [])
+      if (item?.type === 'diff' && typeof item.path === 'string' && item.path) call.paths.add(item.path);
+    if (!known && calls.size < 4096) calls.set(update.toolCallId, call);
+    if (update.status !== 'completed' || call.reported) return;
+    call.reported = true;
+    return {type: 'touched', toolCallId: update.toolCallId, kind,
+      locations: [...call.paths].slice(0, 50).map(path => ({path}))};
+  };
+}
+
 /** ACPX's reply refusing a direct call because nobody could be asked. */
 const refusedForPermission = message => message.error && /permission/i.test(
   JSON.stringify(message.error.data ?? message.error.message ?? ''));
@@ -159,12 +184,14 @@ async function sharedRuntime(input) {
 
 async function main(input, cancellation, checkCancellation, progress) {
   const publicProgress = createProgressProjector(input.progressMode !== 'quiet');
+  const touched = touchedTracker();
   const runtime = await sharedRuntime(input);
   const observer = new AbortController();
   let turn, watchTask, lastCursor, observedResult = false, watchError;
   let sawStart = false, observationGap = false, repairedCursor = false, escalated = false;
   const directCalls = new Map();  // An agent's terminal or file-write requests to ACPX, by JSON-RPC id.
   const directKinds = new Set();  // The kinds of those this turn, each reported once.
+  const askedKinds = new Set();  // The kinds the agent asked permission for this turn ('*': one with no kind).
   let workedSinceText = false, segment = 0;  // Tool calls since the last text, and paragraphs they have split.
   try {
     const locate = () => runtime.findSession({sessionKey: input.session, agent: input.profile, cwd: input.workspace});
@@ -225,8 +252,13 @@ async function main(input, cancellation, checkCancellation, progress) {
             if (event.type === 'turn_started') sawStart = true;
             if (event.type === 'message') {
               if (!sawStart) { observationGap = true; continue; }
+              const asked = event.message.method === 'session/request_permission' ? permissionRequest(event.message)
+                : undefined;
+              if (asked) askedKinds.add(asked.kind ?? '*');
               const call = directCall(event.message);
-              if (call && !directKinds.has(call.kind)) {
+              // Asking first, then running the command through ACPX's terminal is ACP's usual way: only a call
+              // of a kind not asked for this turn is one made without asking.
+              if (call && !askedKinds.has(call.kind) && !askedKinds.has('*') && !directKinds.has(call.kind)) {
                 // The agent acts without asking first: approving it can't be limited to one kind (dispatch keeps it).
                 directKinds.add(call.kind);
                 write({type: 'direct', kind: call.kind});
@@ -245,6 +277,8 @@ async function main(input, cancellation, checkCancellation, progress) {
                 runtime.cancel({handle, reason: 'CLI-MODE: approval needed'}).catch(() => {});
               }
               const progress = event.message.method === 'session/update' ? event.message.params?.update : undefined;
+              const edited = progress ? touched(progress) : undefined;
+              if (edited) write(edited);
               if (['tool_call', 'tool_call_update'].includes(progress?.sessionUpdate)) workedSinceText = true;
               const update = publicUpdate(event.message) ?? (progress ? publicProgress(progress) : undefined);
               if (update?.type === 'message' && workedSinceText) {

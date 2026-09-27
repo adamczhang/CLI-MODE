@@ -75,6 +75,9 @@ def main():
         print(json.dumps(dict(status='ok', windows=windows, plan=user.get('access_type_sku'))))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         print(json.dumps(dict(status='unavailable', reason=str(exc) or 'Copilot usage lookup failed')))
+    except (TypeError, AttributeError):  # A null count, or a list where an object was: its answer changed shape.
+        print(json.dumps(dict(status='unavailable', reason='GitHub\'s answer for Copilot usage is not in a form '
+                                                           'CLI-MODE knows')))
 
 
 if __name__ == '__main__':

@@ -137,9 +137,10 @@ class Turns(unittest.TestCase):
     def test_an_agents_own_command_leaves_the_project_untouched(self):
         self.turn('/d /context')
         self.assertEqual(self.backend.sent[-1], '/context')
-        # Only the brief, written when the agent started, is there: the command made no folder for the agent.
+        # Only the brief, written when the agent started (with CLI-MODE's own lock and list of the agents running),
+        # is there: the command made no folder for the agent.
         self.assertEqual(sorted(path.name for path in (self.project / 'Agent_Working_Folder').iterdir()),
-                         ['.gitignore', 'BRIEF.md'])
+                         ['.cli-mode', '.gitignore', 'BRIEF.md'])
 
     def saving_art(self, project, name):
         folder = project / 'Agent_Working_Folder' / name

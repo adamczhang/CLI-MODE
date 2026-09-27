@@ -1,43 +1,38 @@
-# CLI-MODE v0.3.8 — Honest approvals and /cli usage
+# CLI-MODE v0.3.9 — One brief for every conversation, undo for every agent
 
 CLI-MODE drives six coding agents (Antigravity, Claude Code, Grok Build, Cursor,
 GitHub Copilot and Codex CLI) from inside **Claude Code** or **Codex**, over ACPX.
 
-**`/cli usage`: what each agent has used, from its own CLI.** One command asks
-every running agent at once, with no model request (`/cli usage <name>` asks
-one):
+This release fixes what a code review of 0.3.8 and a full live validation on both
+hosts found.
 
-```text
-Claude CLA-1A:
-  Five hour: 7% used | resets in 0 days 3 hours
-  Weekly: 18% used | resets in 5 days 6 hours
-Codex COD-2B:
-  Weekly: 0% used | resets in 6 days 23 hours
-Copilot COP-3C:
-  Chat requests: 12% used (177 of 200 left) | resets in 4 days 6 hours
-Grok GRO-4D:
-  Usage reporting not supported through its CLI
-```
+**The project brief is shared properly.**
 
-Claude, Antigravity, Codex CLI and GitHub Copilot report their limits (Copilot's
-when the GitHub CLI is signed in as the same account); Grok Build and Cursor
-don't report theirs through their CLIs, and say so.
+- Text you write in `Agent_Working_Folder/BRIEF.md` yourself now stays: CLI-MODE
+  edits only its own lines, under one lock.
+- A Claude Code conversation and a Codex conversation working in the same folder
+  now both appear in the brief's list of running agents, instead of removing each
+  other's.
+- With `/cli display instant` (Claude Code), an agent's start no longer leaves an
+  unwritten host note behind.
 
-**Honest approvals for agents that act without asking.** Grok Build runs
-commands and edits files without asking first, so an approval can't be limited
-to one kind for it. Its question now says that `/cli approve` lets it act
-freely for that one turn, and `/cli approve always` is refused (use
-`/cli access allow` for that). Agents that ask first keep kind-limited
-approvals, as before.
+**`/cli undo` works for every agent.** Copilot and Codex CLI name the file they
+edit only in the edit's diff, so undo thought they had edited nothing; and with
+`/cli progress quiet` no agent's edits were recorded at all. Both are fixed, and
+Copilot's and Codex CLI's work rows now name the files they edit.
 
-**Fixes found by a full live validation on the Codex host:**
+**Approvals ask only when they should.**
 
-- A command Grok runs without asking is now a proper question ("asks to run
-  commands: git status"), so `/cli approve` works for it.
-- With `/cli progress quiet`, an agent's text on either side of a tool call no
-  longer runs together mid-line.
+- An agent that asks first is no longer mistaken for one that acts without
+  asking once its approved command runs.
+- After `/cli approve`, an agent that acts without asking (Grok) may run commands
+  and edit files for that turn, as its question says, even when it asks.
+- Claude's commands don't say what kind of tool they are; approving one now covers
+  a reworded retry in the same turn, and "approve always" is no longer offered for
+  them (it would allow every unnamed tool for good).
 
-Also: `checks/codex_release_validation.py` and a report of the validation.
+**`/cli usage`:** Copilot and Codex CLI report an answer they can't read clearly
+instead of failing.
 
 ## Install
 
@@ -46,11 +41,11 @@ Pick your host and run its block in PowerShell.
 **Codex** (runs in the Codex desktop app):
 
 ```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.8
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.9
 codex plugin add cli-mode@cli-mode
 ```
 
-**Claude Code** (2.1.147 or later): download `cli-mode-claude-0.3.8.zip` from this
+**Claude Code** (2.1.147 or later): download `cli-mode-claude-0.3.9.zip` from this
 release, extract it, and run:
 
 ```powershell
@@ -60,7 +55,7 @@ release, extract it, and run:
 Or install it straight from GitHub, then run `/cli-mode:cli shortcuts` once:
 
 ```powershell
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.8 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.9 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
@@ -76,7 +71,7 @@ it to the new tag instead; your saved CLI-MODE settings are kept.
 
 ```powershell
 codex plugin marketplace remove cli-mode
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.8
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.9
 codex plugin add cli-mode@cli-mode
 ```
 
@@ -93,16 +88,15 @@ the marketplace otherwise deletes CLI-MODE's saved data:
 ```powershell
 claude plugin uninstall cli-mode@cli-mode --keep-data
 claude plugin marketplace remove cli-mode
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.8 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.3.9 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
 ## Validation and artifacts
 
-The [v0.3.8 validation report](checks/v0.3.8-validation.md) records this
-release's checks: the full offline suite, both install smokes, the live Codex
-validation (33 of 33 feature steps), and `/cli usage` run live across all six
-agent kinds.
+The [v0.3.9 validation report](checks/v0.3.9-validation.md) records this
+release's checks: the full offline suite, both install smokes, and live runs on
+both hosts with five of the six agents.
 
 Both archives and their SHA256 checksums are attached to the GitHub Release:
-`cli-mode-codex-0.3.8.zip` (Codex) and `cli-mode-claude-0.3.8.zip` (Claude Code).
+`cli-mode-codex-0.3.9.zip` (Codex) and `cli-mode-claude-0.3.9.zip` (Claude Code).

@@ -13,8 +13,8 @@ import native_commands
 import viewer
 from operations import emit, menu_holds, pending_work
 from presentation import PERMISSION_CODES, permission_stop
-from progress import progress_mode, public_progress
-from state import agent_entry, agent_label, routing_mode, direct_payload, team_lines
+from progress import progress_mode, public_progress, public_touched
+from state import agent_entry, agent_label, routing_mode, direct_payload, team_of
 
 
 def without_name(payload, words=1):
@@ -44,6 +44,10 @@ def approval_policy(record, target):
     if (target.get('settings') or {}).get('access') == 'allow':
         return None
     kinds = list(dict.fromkeys(list((record or {}).get('approve') or []) + list(target.get('approveAlways') or [])))
+    if kinds and target.get('actsWithoutAsking'):
+        # Its commands and file writes pass anyway at approve-all, as its question said; so do the ones it asks
+        # about in that turn (Grok asks now and then), rather than stopping it again.
+        kinds = list(dict.fromkeys(kinds + ['execute', 'edit']))
     return {'autoApprove': kinds + READS, 'defaultAction': 'escalate'} if kinds else None
 
 
@@ -262,6 +266,13 @@ class DispatchMixin:
                                 event = raw
                             elif kind in ('activity', 'usage'):
                                 event = public_progress(raw)
+                            elif kind == 'touched':
+                                # Straight to the log, past the relay: it is read by undo, never shown.
+                                event = public_touched(raw)
+                                if event:
+                                    log.write(json.dumps(event) + '\n')
+                                    log.flush()
+                                event = None
                             else:
                                 event = None
                     except (ValueError, AttributeError, TypeError):
@@ -355,7 +366,7 @@ class DispatchMixin:
         workspace = owned.get('workspace') or self.store.workspace
         if working_folder and not provider_command and agent_folder.ensure(workspace, owned.get('alias')) is not None:
             # The brief's list of running agents, current as this task leaves (one closed since is gone).
-            agent_folder.write_team(workspace, team_lines(state))
+            agent_folder.write_team(workspace, self.store.key, *team_of(state))
             text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file(),
                                              label=agent_label(state, session))
             text += agent_folder.attachments_note(record.get('attachments'))

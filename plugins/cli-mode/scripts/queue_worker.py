@@ -15,7 +15,7 @@ import changes
 import host
 import menu_view
 import relay_view
-from state import agent_entry, agent_label, passing_line, team_lines
+from state import agent_entry, agent_label, passing_line, team_of
 
 
 def request_label(state, request_id):
@@ -588,18 +588,36 @@ class QueueMixin:
         workspace = record.get('workspace') or self.store.workspace
         # Only what the agent's own tools edited: the receipt covers the whole folder, so another agent's
         # edits made meanwhile are in it too. A turn saved before tool edits were recorded undoes its receipt.
+        # An agent whose edit tool names no file (Copilot's apply_patch) can't be held to its named files: its
+        # whole receipt is undone, except what other agents' tools edited while it worked.
         own = record.get('touched')
-        restored, removed, conflicts, left = changes.undo(workspace, record['changes'],
-                                                          only=None if own is None else set(own))
-        note = ('' if not left else ' Left as they are, not edited by ' + label + '\'s own tools: ' +
-                ', '.join(left[:6]) + (' and more' if len(left) > 6 else '') + '.')
+        unlocated = own is not None and record.get('unlocated')
+        blind = [other for other in (self._overlapping(state, request_id, edited=False) if unlocated else [])
+                 if state['requests'][other].get('unlocated')]
+        if blind:
+            # Both edited without naming files: which of the receipt's changes were whose can't be told.
+            text = ('Nothing was undone: ' + label + ' and ' + request_label(state, blind[0]) + ' worked at the same '
+                    'time and their edits did not name their files, so CLI-MODE can\'t tell which changes were ' +
+                    label + '\'s. /cli diff shows them.')
+            return dict(message=text, text=text)
+        if unlocated:
+            others = {path for other in self._overlapping(state, request_id)
+                      for path in state['requests'][other]['touched']}
+            restored, removed, conflicts, left = changes.undo(workspace, record['changes'], skip=others)
+        else:
+            restored, removed, conflicts, left = changes.undo(workspace, record['changes'],
+                                                              only=None if own is None else set(own))
+        note = ('' if not left else (' Left as they are, edited by another agent while ' + label + ' worked: '
+                                     if unlocated else ' Left as they are, not edited by ' + label + '\'s own tools: ')
+                + ', '.join(left[:6]) + (' and more' if len(left) > 6 else '') + '.')
         if conflicts:
             text = ('Nothing was undone: ' + ', '.join(conflicts[:6]) + (' and more' if len(conflicts) > 6 else '') +
                     (' has' if len(conflicts) == 1 else ' have') + ' changed since ' + label + '\'s turn.')
             return dict(message=text, text=text, conflicts=conflicts)
         if not restored and not removed:
-            text = ('Nothing was undone: ' + label + '\'s own tools edited none of the files its last turn changed.'
-                    + note)
+            text = ('Nothing was undone: ' + (('another agent also edited every file ' + label + '\'s last turn '
+                    'changed.') if unlocated else label + '\'s own tools edited none of the files its last turn '
+                    'changed.') + note)
             return dict(message=text, text=text, left=left)
         with self.store.edit() as latest:
             latest['requests'][request_id]['undone'] = True
@@ -916,7 +934,7 @@ class QueueMixin:
                 self._note_touched(state, request_id, workspace)
                 state['inflight'].pop(op, None)
             self._keep_answer(request_id, workspace, name, text)
-            agent_folder.write_team(workspace, team_lines(self.store.read()))  # Idle now, with its answer.
+            agent_folder.write_team(workspace, self.store.key, *team_of(self.store.read()))  # Idle now, with its answer.
             return dict(requestId=request_id, **result)
         except BaseException as exc:
             done = receipt() if not isinstance(exc, KeyboardInterrupt) else None
@@ -946,7 +964,7 @@ class QueueMixin:
                     state['inflight'].pop(op, None)
             if not isinstance(exc, KeyboardInterrupt) and status != 'rejected':
                 self._keep_answer(request_id, workspace, name, text)  # A failed turn may still have answered.
-                agent_folder.write_team(workspace, team_lines(self.store.read()))
+                agent_folder.write_team(workspace, self.store.key, *team_of(self.store.read()))
             raise
         finally:
             path.unlink(missing_ok=True)
@@ -978,13 +996,17 @@ class QueueMixin:
         record['endedAt'] = time.time()
         path = Path(record['events']) if record.get('events') else None
         root = Path(workspace).resolve()
-        touched = []
+        touched, calls = [], {}
         try:
             for line in (path.read_text(encoding='utf-8').splitlines() if path and path.is_file() else []):
                 event = json.loads(line) if line.strip() else {}
-                if event.get('type') != 'activity' or event.get('kind') not in ('edit', 'delete', 'move'):
+                # `touched` (a finished edit and its files, logged in every progress mode) or the activity rows.
+                if event.get('type') not in ('activity', 'touched') or event.get('kind') not in ('edit', 'delete', 'move'):
                     continue
+                call = calls.setdefault(event.get('toolCallId') or len(calls), dict(located=False, done=False))
+                call['done'] = call['done'] or event.get('type') == 'touched' or event.get('status') == 'completed'
                 for location in event.get('locations') or []:
+                    call['located'] = True
                     raw = Path(location['path'])
                     try:
                         shown = (raw.resolve().relative_to(root) if raw.is_absolute() else raw).as_posix()
@@ -995,17 +1017,26 @@ class QueueMixin:
         except (OSError, ValueError, KeyError, TypeError):
             return
         record['touched'] = touched
-        start = record.get('submittedAt') or 0
+        if any(call['done'] and not call['located'] for call in calls.values()):
+            # An edit that names no file (Copilot's apply_patch): `touched` is not the whole of what it changed.
+            record['unlocated'] = True
         overlaps = []
-        for other_id, other in (state.get('requests') or {}).items():
-            if (other_id == request_id or other.get('session') == record.get('session') or not other.get('touched')
-                    or not other.get('endedAt') or other['endedAt'] < start
-                    or (other.get('submittedAt') or 0) > record['endedAt']):
-                continue
+        for other_id in self._overlapping(state, request_id):
             overlaps += [dict(path=path, agent=request_label(state, other_id))
-                         for path in touched if path in other['touched']]
+                         for path in touched if path in state['requests'][other_id]['touched']]
         if overlaps:
             record['overlaps'] = overlaps
+
+    @staticmethod
+    def _overlapping(state, request_id, edited=True):
+        """Other agents' finished turns that ran while this one did (with `edited`, only those whose tools named
+        files they edited)."""
+        record = state['requests'][request_id]
+        start, end = record.get('submittedAt') or 0, record.get('endedAt') or time.time()
+        return [other_id for other_id, other in (state.get('requests') or {}).items()
+                if other_id != request_id and other.get('session') != record.get('session')
+                and (other.get('touched') or not edited)
+                and other.get('endedAt') and other['endedAt'] >= start and (other.get('submittedAt') or 0) <= end]
 
     def _keep_answer(self, request_id, workspace, name, text):
         """Save the turn's full answer in the agent's folder and record the reference box: that file, then the

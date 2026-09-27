@@ -10,7 +10,9 @@ B. approvals in the chat at Prompt access: ask, approve, deny, approve always, a
 C. attachments in the Codex desktop app's "Files mentioned by the user" text: copied and read, a host prompt left
    alone, listed by /cli dir, removed on close;
 D. undo keeping CRLF line endings under core.autocrlf, the test gate's line in the answer, and undo leaving another
-   agent's edit made in the same turn.
+   agent's edit made in the same turn;
+E. since 0.3.8: text written by hand in the brief kept through every change CLI-MODE makes to it, /cli usage, and
+   an agent that asks first never marked as acting without asking once its approved command runs.
 
 Every turn also gets the shared harness's checks (codex_user_validation.Session): CLI-MODE's hooks ran from the
 installed copy, only its controller was run, no errors or approval requests, views came back as references.
@@ -20,6 +22,7 @@ It spends real quota: Codex turns on your plan, and both agents' own accounts.
     python checks/codex_release_validation.py [--agent grok-build] [--second codex] [--keep]
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -36,8 +39,10 @@ from codex_user_validation import INSTALLED, Session, rate_limits  # noqa: E402
 
 sys.path.insert(0, str(INSTALLED / 'scripts'))
 import agent_folder  # noqa: E402  (the installed copy)
+from state import ACTS_WITHOUT_ASKING  # noqa: E402
 
 TAGS = {'grok-build': 'gro', 'codex': 'cod', 'claude': 'cla', 'copilot': 'cop', 'agy': 'agy', 'cursor': 'cur'}
+OWN_TEXT = ('We water the beds at dawn.', '## Our own notes', 'Keep the app small.')  # Written by hand (E1).
 CODE_WORD = 'MARIGOLD-' + os.urandom(3).hex().upper()
 WAITING = agent_folder.HOST_NOTE_WAITING[:-2]
 
@@ -96,6 +101,11 @@ class Run:
     def files(self, name):
         return [path for path in self.project.rglob(name) if '.git' not in path.parts]
 
+    def own_text_kept(self, turn, shown):
+        """E1: what was written by hand in the brief is still there, after whatever CLI-MODE changed in it."""
+        text = agent_folder.brief_path(self.project).read_text(encoding='utf-8')
+        return [expect(line in text, 'text written by hand is gone from the brief: ' + line) for line in OWN_TEXT]
+
 
 def expect(condition, message):
     return None if condition else message
@@ -148,6 +158,21 @@ def run(agent, second, keep):
             expect('Use metric units.' in shown and 'Host notes: 1' in shown and alias in shown,
                    '/cli brief did not show the point, the note and the agent')])
 
+        # E. Since 0.3.8 --------------------------------------------------------------------------------------------
+        path = agent_folder.brief_path(project)
+        path.write_text(path.read_text(encoding='utf-8').rstrip('\n') + '\n\n' + OWN_TEXT[0] + '\n\n' + OWN_TEXT[1] +
+                        '\n\n' + OWN_TEXT[2] + '\n', encoding='utf-8')  # E1: written by hand, as a user would.
+        r.step('E1', '/d Reply with only the word noted.', r.own_text_kept)
+        r.step('E2', '/cli usage', lambda turn, shown: [
+            expect(alias in shown, '/cli usage did not name the agent'),
+            expect('% used' in shown or 'unlimited' in shown or 'not supported through its CLI' in shown
+                   or 'can\'t report its usage' in shown, '/cli usage showed no usage line: ' + shown[-300:])])
+
+        def asked_first(turn, shown):
+            """E3: an agent CLI-MODE doesn't know to act without asking stays unmarked after an approved turn."""
+            return [expect(agent in ACTS_WITHOUT_ASKING or not r.agents()[alias].get('actsWithoutAsking'),
+                           'an agent that asks first was marked as acting without asking')]
+
         # B. Approvals in the chat ------------------------------------------------------------------------------
         r.step('B1', '/cli access prompt', lambda turn, shown: [
             expect(r.agents()[alias]['settings']['access'] == 'prompt', 'access is not prompt')])
@@ -155,7 +180,9 @@ def run(agent, second, keep):
         def asks(kind_words):
             def check(turn, shown):
                 entry = r.agents()[alias]
-                return [expect('asks to ' + kind_words in shown, 'no "asks to ' + kind_words + '" question shown'),
+                # A request of no known kind (Claude's commands on Windows) reads "use this tool".
+                return [expect('asks to ' + kind_words in shown or 'asks to use this tool' in shown,
+                               'no "asks to ' + kind_words + '" question shown'),
                         expect('/cli approve' in shown, 'the answers are not offered'),
                         expect(entry.get('approval'), 'no approval kept on the agent'),
                         # An agent that acts without asking is told what approving then means.
@@ -165,8 +192,12 @@ def run(agent, second, keep):
         r.step('B2', '/d Create a file named hello.txt containing the word hi.', asks('edit files'))
         r.step('B3', '/cli approve', lambda turn, shown: [
             expect(r.files('hello.txt'), 'hello.txt was not created after /cli approve'),
-            expect(not r.agents()[alias].get('approval'), 'the question is still pending')])
-        r.step('B4', '/d Run the shell command: git status', asks('run commands'))
+            expect(not r.agents()[alias].get('approval'), 'the question is still pending')] + asked_first(turn, shown))
+        r.step('B4', '/d Run the shell command: git tag checkpoint-1', asks('run commands'))
+        r.step('B4a', '/cli approve', lambda turn, shown: [
+            expect(not r.agents()[alias].get('approval'), 'the question is still pending after approve')] +
+            asked_first(turn, shown))  # Its approved command runs (through ACPX's terminal, ACP's usual way, for most agents).
+        r.step('B4c', '/d Run the shell command: git tag checkpoint-2', asks('run commands'))
         r.step('B4b', '/cli deny', lambda turn, shown: [
             expect(not r.agents()[alias].get('approval'), 'the question is still pending after deny')])
         direct = bool(r.agents()[alias].get('actsWithoutAsking'))  # Grok: approvals can't be limited to a kind.
@@ -185,11 +216,11 @@ def run(agent, second, keep):
             r.step('B5c', '/d Create a file named c.txt containing c.', lambda turn, shown: [
                 expect(r.files('c.txt'), 'c.txt was not created'),
                 expect('asks to' not in shown, 'it asked again for an edit approved always')])
-        r.step('B6', '/d Run the shell command: echo hi', asks('run commands'))
+        r.step('B6', '/d Run the shell command: git tag checkpoint-3', asks('run commands'))
         r.step('B7', '/cli deny', None)
         r.step('B7b', '/cli approve', lambda turn, shown: [
             expect('No agent is waiting for an approval.' in shown, 'expected "No agent is waiting"')])
-        r.step('B8', '/d Run the shell command: echo second', asks('run commands'))
+        r.step('B8', '/d Run the shell command: git tag checkpoint-4', asks('run commands'))
         r.step('B8b', '/d Reply with only the word next.', lambda turn, shown: [
             expect(not r.agents()[alias].get('approval'), 'a new /d did not settle the question')])
         r.step('B8c', '/cli approve', lambda turn, shown: [
@@ -246,7 +277,7 @@ def run(agent, second, keep):
                     expect(len(headings) == 2, 'expected two host notes, kept: ' + json.dumps(headings)),
                     expect(not any(line.startswith(WAITING) for line in notes), 'a host note is unwritten'),
                     expect(len(team) == 2, 'agent list: ' + json.dumps(team))]
-        r.step('A5', '/cli spawn ' + tag2, second_started)
+        r.step('A5', '/cli spawn ' + tag2, lambda turn, shown: second_started(turn, shown) + r.own_text_kept(turn, shown))
         other = r.alias(second)
         r.step('D3', '/d ' + alias.lower() + ',' + other.lower() + ' If your name in the CLI-MODE line is ' + alias +
                ', append the line "from ' + alias + '" to a.txt. If it is ' + other + ', append the line "from ' +
@@ -264,11 +295,12 @@ def run(agent, second, keep):
         r.step('A6', '/cli close ' + other.lower(), lambda turn, shown: [
             expect([alias in line for line in r.brief()[2]] == [True], 'agent list after close: ' +
                    json.dumps(r.brief()[2])),
-            expect(len([line for line in r.brief()[1] if line.startswith('### ')]) == 2, 'host notes not kept')])
+            expect(len([line for line in r.brief()[1] if line.startswith('### ')]) == 2, 'host notes not kept')] +
+            r.own_text_kept(turn, shown))
         r.step('C4', '/cli close', lambda turn, shown: [
             expect(not copy.parent.exists(), 'attachments/ was not removed on close'),
             expect((project / 'Agent_Working_Folder' / alias / 'answers').is_dir(), 'answers/ was removed'),
-            expect(r.brief()[2] == [], 'the agent list is not empty after close')])
+            expect(r.brief()[2] == [], 'the agent list is not empty after close')] + r.own_text_kept(turn, shown))
     except Exception as exc:
         r.rows.append(dict(step='abort', status='fail', problems=['aborted: ' + repr(exc)[:500]]))
         print('ABORT ' + repr(exc)[:500], flush=True)
@@ -280,6 +312,8 @@ def run(agent, second, keep):
     (evidence / 'report.json').write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding='utf-8')
     if not keep and not report['failed']:
         shutil.rmtree(project, ignore_errors=True)
+        for path in (base.DATA / 'sessions').glob(hashlib.sha256(session.thread.encode()).hexdigest() + '*'):
+            path.unlink(missing_ok=True)  # Its CLI-MODE state goes with the project.
     return report
 
 

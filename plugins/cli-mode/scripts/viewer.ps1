@@ -362,6 +362,7 @@ function Finish-Turn($turn, [string]$stop) {
 
 function Handle($turn, $ev) {
     $type = [string]$ev.type
+    if ($type -eq 'touched') { return }  # The files an edit named, for /cli undo: not shown.
     if ($type -eq 'usage') { $turn.Usage = $ev; return }
     Switch-Turn $turn
     if ($type -eq 'done') { Finish-Turn $turn ([string]$ev.stopReason); return }

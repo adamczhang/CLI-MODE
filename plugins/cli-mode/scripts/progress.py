@@ -36,6 +36,20 @@ def count(value):
     return type(value) is int and 0 <= value <= 9007199254740991
 
 
+def public_touched(event):
+    """The bridge's `touched`: a finished edit, delete or move and the files it named. Kept in the turn's log
+    whatever the progress mode, for /cli undo and the same-file warning (queue_worker._note_touched); never shown."""
+    if not isinstance(event, dict):
+        return None
+    ident, kind = event.get('toolCallId'), event.get('kind')
+    if not isinstance(ident, str) or not 0 < len(ident) <= 200 or kind not in ('edit', 'delete', 'move'):
+        return None
+    locations = event.get('locations') if isinstance(event.get('locations'), list) else []
+    return dict(type='touched', toolCallId=ident, kind=kind, locations=[
+        dict(path=clean(item['path'], 1024)) for item in locations[:50]
+        if isinstance(item, dict) and clean(item.get('path'), 1024)])
+
+
 def public_progress(event):
     """Revalidate bridge/file data before logging or rendering; allowlist fields."""
     if not isinstance(event, dict):

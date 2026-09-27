@@ -204,11 +204,10 @@ def show(event, fenced, plain=None, step=None):
         plain = presentation.plain_strong(plain)  # A hook notice shows green LaTeX (the activation card's) raw.
     if style == 'model':
         import presentation
-        lead = ('CLI-MODE answered this control itself; no command needs to run.' + COMPLETE if not step else
-                'CLI-MODE answered this control itself; no command needs to run. ' + step + ' Then the reply below is '
-                'this turn\'s last message,')
-        return context(event, lead + ' Its reply is below, to be ' + ALONE + ':\n\n' +
-                       presentation.chat_menu(fenced, COLOR))
+        lead = ('CLI-MODE answered this control itself; no command needs to run.' +
+                (COMPLETE + ' Its reply is below, to be ' if not step else
+                 ' ' + step + ' Then post its reply below as this turn\'s last message, '))
+        return context(event, lead + ALONE + ':\n\n' + presentation.chat_menu(fenced, COLOR))
     if style == 'stop':
         return {'continue': False, 'stopReason': '\n' + plain}
     return {'decision': 'block', 'reason': plain, 'suppressOriginalPrompt': True}
@@ -218,8 +217,17 @@ def show_result(event, result):
     import presentation
     if isinstance(result.get('setup'), dict):
         result = result['setup']  # A finished install: the menu setup continues with, not the setup window's words.
+    note = result.get('hostNote')
+    if note and STYLE != 'model':
+        # An instant reply has no model turn to write the host's note in: its waiting entry comes out again.
+        import agent_folder
+        try:
+            agent_folder.drop_host_note(workspace(event), note)
+        except KeyError:
+            pass  # No project folder in the event: nothing to take out.
+        note = None
     return show(event, presentation.result_text(result), presentation.result_text(result, fenced=False),
-                step=presentation.host_note_step(result.get('hostNote')))
+                step=presentation.host_note_step(note))
 
 
 def show_text(event, text):

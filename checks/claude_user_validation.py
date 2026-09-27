@@ -3,7 +3,8 @@
 Only the installed copy runs. Before starting, the build, the installed marketplace
 folder and Claude Code's cache must be identical. Every turn uses the desktop app's
 own Claude Code with your real configuration (no --plugin-dir, no CLAUDE_CONFIG_DIR,
-no CLI_MODE_* variables) and, like the desktop app, bypassPermissions. After each turn
+no CLI_MODE_* variables) and, like the desktop app, bypassPermissions; a question Claude Code asks (an activation
+that widens an agent's access) is answered yes for CLI-MODE's own controller, as the user would. After each turn
 it asserts:
 - the hook that answered was the installed copy (state's hookSeen.plugin);
 - every controller command Claude ran points into the installed copy;
@@ -30,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
@@ -71,15 +73,19 @@ def norm(path):
 class Session:
     host = 'claude-code'
 
-    def __init__(self, binary, project, evidence, bypass=True):
+    def __init__(self, binary, project, evidence, bypass=True, answer=True):
         self.binary, self.project, self.evidence = binary, project, evidence
         self.id = str(uuid.uuid4())
         self.started = False
         self.bypass = bypass
+        self.answer = answer
         self.spent = 0.0
         self.turns = []
         self.env = {key: value for key, value in os.environ.items()
                     if not key.startswith(('CLI_MODE_', 'CLAUDE_PLUGIN_')) and key != 'CLAUDE_CONFIG_DIR'}
+        # `claude -p` ends background commands soon after its result, so a one-shot turn would end a /d's
+        # background follow: these turns use the relay loop. claude_background_live.py drives the background path.
+        self.env['CLAUDE_CODE_DISABLE_BACKGROUND_TASKS'] = '1'
 
     def state(self):
         path = DATA / 'sessions' / (hashlib.sha256(self.id.encode()).hexdigest() + '.json')
@@ -91,29 +97,75 @@ class Session:
     def state_file(self):
         return DATA / 'sessions' / (hashlib.sha256(self.id.encode()).hexdigest() + '.json')
 
+    def allowed(self, request):
+        """The user's answer to a question Claude Code asks: yes to CLI-MODE's own controller (an activation that
+        widens an agent's access asks first), no to anything else."""
+        command = (request.get('input') or {}).get('command') or ''
+        return request.get('tool_name') in ('Bash', 'PowerShell') and 'controller.py' in command and all(
+            norm(path).startswith(norm(INSTALLED))
+            for path in re.findall(r"'?([A-Za-z]:[/\\][^' ]*controller\.py)'?", command))
+
     def send(self, prompt, scenario, kill_after=None, extra=(), content=None):
-        """One `claude -p` turn. `content` sends a full user message (text and images) as stream-json."""
-        args = [self.binary, '-p', *([] if content else [prompt]), '--output-format', 'stream-json', '--verbose',
+        """One `claude -p` turn, its user message sent as stream-json; `content` is a full message (text and images).
+
+        A question Claude Code puts to the user comes back as a `can_use_tool` request (--permission-prompt-tool
+        stdio, as the Agent SDK answers them) and is answered as the user would (allowed()). With `answer` off,
+        nobody answers, as in a plain headless run: the question is denied.
+        """
+        args = [self.binary, '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
                 '--resume' if self.started else '--session-id', self.id, *extra]
         if self.bypass:
             args += ['--permission-mode', 'bypassPermissions']
-        if content:
-            args += ['--input-format', 'stream-json']
+        if self.answer:
+            args += ['--permission-prompt-tool', 'stdio']
         self.started = True
         began = time.monotonic()
-        process = subprocess.Popen(args, cwd=self.project, env=self.env,
-                                   stdin=subprocess.PIPE if content else subprocess.DEVNULL,
+        process = subprocess.Popen(args, cwd=self.project, env=self.env, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8',
                                    errors='replace')
-        killed = False
-        feed = (json.dumps(dict(type='user', message=dict(role='user', content=content))) + '\n') if content else None
-        try:
-            out, err = process.communicate(feed, timeout=kill_after or 900)
-        except subprocess.TimeoutExpired:
+        stopped, errors_out, answered = [], [], []
+
+        def stop():
             # Simulate the user stopping or closing mid-relay: end Claude Code and its shell children.
+            stopped.append(True)
             subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True)
-            out, err = process.communicate()
-            killed = True
+        timer = threading.Timer(kill_after or 900, stop)
+        timer.start()
+        reader = threading.Thread(target=lambda: errors_out.append(process.stderr.read()), daemon=True)
+        reader.start()
+
+        def write(message):
+            try:
+                process.stdin.write(json.dumps(message) + '\n')
+                process.stdin.flush()
+            except (OSError, ValueError):
+                pass  # It ended (or was stopped) meanwhile.
+        write(dict(type='user', message=dict(role='user', content=content or prompt)))
+        lines = []
+        for line in process.stdout:
+            lines.append(line)
+            try:
+                event = json.loads(line) if line.startswith('{') else {}
+            except ValueError:
+                continue
+            if event.get('type') == 'control_request' and (event.get('request') or {}).get('subtype') == 'can_use_tool':
+                request = event['request']
+                yes = self.allowed(request)
+                answered.append(('yes: ' if yes else 'no: ') + ((request.get('input') or {}).get('command') or
+                                                              request.get('tool_name') or '')[-120:])
+                write(dict(type='control_response', response=dict(subtype='success', request_id=event['request_id'],
+                           response=dict(behavior='allow', updatedInput=request.get('input') or {}) if yes else
+                           dict(behavior='deny', message='The user said no.'))))
+            elif event.get('type') == 'result':
+                try:
+                    process.stdin.close()  # The turn is over: nothing more to send, so Claude Code ends.
+                except OSError:
+                    pass
+        timer.cancel()
+        process.wait()
+        reader.join(timeout=10)
+        killed = bool(stopped)
+        out, err = ''.join(lines), ''.join(errors_out)
         events = [json.loads(line) for line in out.splitlines() if line.startswith('{')]
         final = next((event for event in reversed(events) if event.get('type') == 'result'), {})
         texts, tools, errors, order, parts = [], [], [], [], False
@@ -137,7 +189,8 @@ class Session:
                     texts.append(block['text'])
                     order.append('text')
                 elif block.get('type') == 'tool_use':
-                    tools.append(dict(name=block.get('name'), command=(block.get('input') or {}).get('command') or ''))
+                    tools.append(dict(name=block.get('name'), command=(block.get('input') or {}).get('command') or '',
+                                      path=(block.get('input') or {}).get('file_path') or ''))
                     order.append('tool')
         total = final.get('total_cost_usd') or self.spent
         turn = dict(scenario=scenario, prompt=prompt, seconds=round(time.monotonic() - began, 1), killed=killed,
@@ -145,6 +198,7 @@ class Session:
                     denials=final.get('permission_denials') or [], tools=tools, texts=texts, errors=errors,
                     result=final.get('result') or '', problems=[], notes=[], parts=parts,
                     controllerCalls=sum(tool['name'] in ('Bash', 'PowerShell') for tool in tools))
+        turn['notes'] += ['answered ' + answer for answer in answered]  # Claude Code's questions to the user.
         self.spent = max(self.spent, total)
         state = self.state()
         turn['route'] = (state.get('turnRoute') or {}).get('route')
@@ -165,6 +219,8 @@ class Session:
                         turn['problems'].append('controller outside the installed copy: ' + path)
             elif tool['name'] == 'Skill':
                 turn['notes'].append('opened the CLI-MODE skill')
+            elif tool['name'] in ('Read', 'Edit') and norm(tool['path']).endswith('agent_working_folder/brief.md'):
+                turn['notes'].append('the host ' + ('wrote its note' if tool['name'] == 'Edit' else 'read the brief'))
             else:
                 turn['problems'].append('used ' + str(tool['name']))
         # A relayed request is announced once, however many relay calls it takes (run 2 showed it twice).
@@ -296,13 +352,17 @@ def extra_attach(session, agent):
         dict(type='image', source=dict(type='base64', media_type='image/png', data=pixel))])
     shown = session.shown(t)
     scenarios.expect(t, 'Passing to' in shown, 'the /d with an image was not relayed')
-    scenarios.expect(t, re.search(r'(?i)(did not|didn.t|not) (receive|get|see)', shown), 'no note that the agent did not receive the image')
+    # Headless, the image is not saved in the uploads folder (hooks/claude.py:with_images), so it stays here.
+    # Claude words it its own way: "only got your text", "got only the text", "stayed with Claude Code"...
+    scenarios.expect(t, re.search(r'(?i)only got|got only|stayed (here|with)|(did not|didn.t|not) (receive|get|see)',
+                                  shown),
+                     'no note that the agent did not receive the image')
     return [row('attach', ['F12'], [t])]
 
 
 def extra_permission(binary, project, evidence, agent):
     """C7: without bypassPermissions, wider access asks first; headless, the ask is denied."""
-    session = Session(binary, project, evidence / 'permission', bypass=False)
+    session = Session(binary, project, evidence / 'permission', bypass=False, answer=False)  # Nobody answers.
     session.evidence.mkdir(exist_ok=True)
     a = session.send('/cli bind ' + agent, 'permission')
     a['problems'] = [p for p in a['problems'] if not p.startswith('permission denials')]

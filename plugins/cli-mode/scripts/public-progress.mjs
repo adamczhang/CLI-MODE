@@ -46,8 +46,13 @@ export function createProgressProjector(enabled = true) {
         const title = clean(update.title) || previous?.title;
         if (title) event.title = title;
       }
-      if (Array.isArray(update.locations)) {
-        event.locations = update.locations.slice(0, 5).flatMap(location => {
+      // An edit sent as ACP `diff` content (Copilot's and Codex CLI's apply_patch) names its file there.
+      const diffs = (Array.isArray(update.content) ? update.content : [])
+        .filter(item => item?.type === 'diff' && typeof item.path === 'string').map(item => ({path: item.path}));
+      const locations = Array.isArray(update.locations) && update.locations.length ? update.locations
+        : diffs.length ? diffs : update.locations;
+      if (Array.isArray(locations)) {
+        event.locations = locations.slice(0, 5).flatMap(location => {
           const path = clean(location?.path);
           return path ? [{path, ...(count(location.line) ? {line: location.line} : {})}] : [];
         });

@@ -8,9 +8,11 @@ git (and out of the git receipt) without touching the project's own `.gitignore`
 from listing the agent's folder before and after the turn: fast for large media, per agent even while several
 work at once, and available outside git too.
 """
+import json
 import os
 from pathlib import Path
 import re
+import time
 
 ROOT = 'Agent_Working_Folder'
 LIMIT = 5000  # Files listed per folder; past it a turn's saved files are summarised, not listed.
@@ -77,51 +79,108 @@ def brief_path(workspace):
 
 
 # The brief's three parts, in this order: the points you add (/cli brief-add); the host's notes, one dated entry
-# per agent started, never replaced; and the agents running now, rewritten by CLI-MODE before every task.
+# per agent started, never replaced; and the agents running now, kept current by CLI-MODE. Each change edits only
+# its own lines, so anything else written in the file (your own text or sections) stays as it is.
 POINTS, HOST, TEAM = ('## Points (added with /cli brief-add)', '## From the host',
                       '## Agents running now (kept current by CLI-MODE)')
 BRIEF_HEAD = '# Project brief\n\nEvery agent working in this project reads this first.\n'
+OWN_LINES = frozenset(BRIEF_HEAD.splitlines() + [POINTS, HOST, TEAM])
+OWN = '.cli-mode'  # CLI-MODE's own: the brief's lock, and each conversation's running agents (<conversation>.json).
+FOLDER = re.compile('`' + ROOT + '/[^`]+`')
+
+
+def _section(lines, heading):
+    """(start, end) of one of the brief's `## ` sections, from its heading to the next `## ` heading; or None."""
+    if heading not in lines:
+        return None
+    start = lines.index(heading)
+    return start, next((index for index in range(start + 1, len(lines)) if lines[index].startswith('## ')),
+                       len(lines))
+
+
+def _run(lines, start):
+    """Where the list right under a heading ends: its `- ` lines and the blank lines around them."""
+    end = start + 1
+    while end < len(lines) and (not lines[end].strip() or lines[end].startswith('- ')):
+        end += 1
+    return end
+
+
+def _preamble_end(lines):
+    return next((index for index, line in enumerate(lines) if line.startswith('## ')), len(lines))
+
+
+def _place(lines, block, before=()):
+    """A new section `block`, put before the first of the `before` headings in the brief, else at its end."""
+    at = min((lines.index(heading) for heading in before if heading in lines), default=len(lines))
+    return lines[:at] + [''] + block + [''] + lines[at:]
+
+
+def _set_list(lines, heading, items, before=()):
+    """The list right under `heading` set to `items` (`- ` lines); the section is added, or removed when it is
+    left empty. Other text in the section, after its list, stays."""
+    found = _section(lines, heading)
+    if found is None:
+        return _place(lines, [heading, ''] + items, before) if items else lines
+    start, end = found
+    run = _run(lines, start)
+    if items:
+        return lines[:start + 1] + [''] + items + [''] + lines[run:]
+    if any(line.strip() for line in lines[run:end]):
+        return lines[:start + 1] + [''] + lines[run:]
+    return lines[:start] + lines[end:]
+
+
+def _tidy(lines):
+    """One blank line at most between blocks, none at either end."""
+    out = []
+    for line in lines:
+        if line.strip() or (out and out[-1]):
+            out.append(line if line.strip() else '')
+    while out and not out[-1]:
+        out.pop()
+    return out
+
+
+def _parts(lines):
+    def within(heading):
+        found = _section(lines, heading)
+        return lines[found[0] + 1:found[1]] if found else []
+    # A brief written before its sections existed is only points: its `- ` lines, under no heading.
+    points = [line[2:] for line in lines[:_preamble_end(lines)] + within(POINTS) if line.startswith('- ')]
+    return points, _tidy(within(HOST)), [line for line in within(TEAM) if line.startswith('- ')]
 
 
 def read_brief(workspace):
-    """(points, host notes as lines, agent lines) from the brief; empty when there is none.
-
-    A brief written before its sections existed is only points: its `- ` lines.
-    """
+    """(points, host notes as lines, agent lines) from the brief; empty when there is none."""
     try:
-        text = brief_path(workspace).read_text(encoding='utf-8')
+        return _parts(brief_path(workspace).read_text(encoding='utf-8').splitlines())
     except OSError:
         return [], [], []
-    parts, current = {POINTS: [], HOST: [], TEAM: []}, POINTS
-    for line in text.splitlines():
-        if line.startswith('## '):
-            current = line if line in parts else None  # A heading of CLI-MODE's own, or text to leave out.
-        elif current is not None and not line.startswith('# ') and line != BRIEF_HEAD.splitlines()[-1]:
-            parts[current].append(line)
-    points = [line[2:] for line in parts[POINTS] if line.startswith('- ')]
-    host = parts[HOST]
-    while host and not host[0].strip():
-        host = host[1:]
-    while host and not host[-1].strip():
-        host = host[:-1]
-    return points, host, [line for line in parts[TEAM] if line.startswith('- ')]
 
 
-def write_brief(workspace, points, host, team):
-    """Write the brief's three parts (only those with anything in them); no parts at all remove the file."""
+def _edit(workspace, change):
+    """Change the brief (`change` maps its lines to new ones) under its lock; the lines after.
+
+    Every CLI-MODE process that writes the brief takes the lock, so none writes over another's change. The host's
+    own edit (its note) comes through its editor, between one read-and-write here and the next. A brief left with
+    nothing but its headings is removed.
+    """
+    from state import lock
     path = brief_path(workspace)
-    if not points and not host and not team:
-        path.unlink(missing_ok=True)
-        return
     ensure_root(workspace)
-    text = BRIEF_HEAD
-    if points:
-        text += '\n' + POINTS + '\n\n' + ''.join('- ' + line + '\n' for line in points)
-    if host:
-        text += '\n' + HOST + '\n\n' + '\n'.join(host) + '\n'
-    if team:
-        text += '\n' + TEAM + '\n\n' + '\n'.join(team) + '\n'
-    path.write_text(text, encoding='utf-8')
+    with lock(Path(workspace) / ROOT / OWN / 'brief.lock'):
+        try:
+            text = path.read_text(encoding='utf-8')
+        except FileNotFoundError:
+            text = None
+        lines = _tidy(change((BRIEF_HEAD if text is None else text).splitlines()))
+        if all(not line.strip() or line in OWN_LINES for line in lines):
+            path.unlink(missing_ok=True)
+            return []
+        if '\n'.join(lines) + '\n' != text:
+            path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        return lines
 
 
 def brief_lines(workspace):
@@ -131,17 +190,28 @@ def brief_lines(workspace):
 
 def add_brief(workspace, text):
     """Add one point to the brief, creating it (and the git-ignored folder) if needed; the points after it."""
-    points, host, team = read_brief(workspace)
-    points = points + [' '.join(text.split())]
-    write_brief(workspace, points, host, team)
-    return points
+    def change(lines):
+        found = _section(lines, POINTS)
+        listed = [line for line in lines[found[0] + 1:_run(lines, found[0])] if line.startswith('- ')] if found else []
+        return _set_list(lines, POINTS, listed + ['- ' + ' '.join(text.split())], before=(HOST, TEAM))
+    return _parts(_edit(workspace, change))[0]
 
 
 def clear_brief(workspace):
     """Remove your points and the host's notes; True if there were any. The running agents stay listed."""
-    points, host, team = read_brief(workspace)
-    write_brief(workspace, [], [], team)
-    return bool(points or host)
+    points, host, _ = read_brief(workspace)
+    if not points and not host:
+        return False
+
+    def change(lines):
+        for heading in (POINTS, HOST):
+            found = _section(lines, heading)
+            if found:
+                lines = lines[:found[0]] + lines[found[1]:]
+        end = _preamble_end(lines)
+        return [line for line in lines[:end] if not line.startswith('- ')] + lines[end:]
+    _edit(workspace, change)
+    return True
 
 
 HOST_NOTE_WAITING = '(The host has not written this note yet.)'
@@ -155,24 +225,87 @@ def add_host_note(workspace, stamp, label):
     waiting line names the agent, so each is unique even while an earlier one is still unwritten (names are never
     given out twice in a conversation). None when the brief can't be written.
     """
-    points, host, team = read_brief(workspace)
-    heading = stamp + ', when ' + label + ' started'
+    heading = '### ' + stamp + ', when ' + label + ' started'
     waiting = HOST_NOTE_WAITING[:-2] + ' for ' + label + '.)'
+
+    def change(lines):
+        found = _section(lines, HOST)
+        if found is None:
+            return _place(lines, [HOST, '', heading, waiting], before=(TEAM,))
+        return lines[:found[1]] + ['', heading, waiting, ''] + lines[found[1]:]
     try:
-        write_brief(workspace, points, host + ([''] if host else []) + ['### ' + heading, waiting], team)
-    except OSError:
+        _edit(workspace, change)
+    except (OSError, RuntimeError):
         return None
-    return dict(file=ROOT + '/' + BRIEF, heading='### ' + heading, placeholder=waiting)
+    return dict(file=ROOT + '/' + BRIEF, heading=heading, placeholder=waiting)
 
 
-def write_team(workspace, team):
-    """Rewrite the list of agents running now (lines from state.team_lines), keeping the rest of the brief."""
-    points, host, old = read_brief(workspace)
-    if team != old:
+def drop_host_note(workspace, note):
+    """Take out an entry add_host_note made that the host has no turn to write in (an instant reply)."""
+    if not isinstance(note, dict) or not brief_path(workspace).is_file():
+        return
+
+    def change(lines):
+        for index in range(1, len(lines)):
+            if lines[index] == note.get('placeholder') and lines[index - 1] == note.get('heading'):
+                lines = lines[:index - 1] + lines[index + 1:]
+                break
+        found = _section(lines, HOST)
+        if found and not any(line.strip() for line in lines[found[0] + 1:found[1]]):
+            lines = lines[:found[0]] + lines[found[1]:]
+        return lines
+    try:
+        _edit(workspace, change)
+    except (OSError, RuntimeError):
+        pass
+
+
+def _every_team(folder, conversation, team, hold):
+    """This conversation's list saved, then every conversation's list that is still current, as brief lines.
+
+    A list not updated for `hold` seconds is dropped (its conversation stopped, and its agents have exited). An
+    agent moved to another conversation (/cli attach) is listed once, as the conversation that saw it last has it.
+    """
+    now = time.time()
+    folder.mkdir(exist_ok=True)
+    own = folder / (conversation + '.json')
+    if team:
+        own.write_text(json.dumps(dict(updated=now, until=now + hold, lines=team)), encoding='utf-8')
+    else:
+        own.unlink(missing_ok=True)
+    newest = {}
+    for path in sorted(folder.glob('*.json')):
         try:
-            write_brief(workspace, points, host, team)
-        except OSError:
-            pass  # The task still goes; its brief is only out of date.
+            saved = json.loads(path.read_text(encoding='utf-8'))
+            lines, updated, until = list(saved['lines']), float(saved['updated']), float(saved['until'])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if until < now:
+            path.unlink(missing_ok=True)
+            continue
+        for line in lines:
+            if isinstance(line, str) and line.startswith('- '):
+                key = FOLDER.search(line)
+                key = key.group(0) if key else line
+                if key not in newest or updated > newest[key][0]:
+                    newest[key] = (updated, line)
+    return [line for _, line in newest.values()]
+
+
+def write_team(workspace, conversation, team, hold):
+    """Keep this conversation's running agents (state.team_lines) in the brief, beside other conversations'.
+
+    Several conversations (Claude Code's and Codex's alike) can run agents in one project, and the brief is the
+    project's: each keeps its own list in `Agent_Working_Folder/.cli-mode/`, and the brief lists them all.
+    `conversation` names this one's list (Store.key); `hold` is how long it stays without an update.
+    """
+    folder = Path(workspace) / ROOT / OWN
+    if not team and not folder.is_dir():
+        return  # No list anywhere: the project is left as it is.
+    try:
+        _edit(workspace, lambda lines: _set_list(lines, TEAM, _every_team(folder, conversation, team, hold)))
+    except (OSError, RuntimeError):
+        pass  # The task still goes; its brief is only out of date.
 
 
 def ensure_root(workspace):
