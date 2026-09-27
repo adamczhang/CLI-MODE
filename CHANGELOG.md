@@ -5,7 +5,7 @@
 Found while recording a demo of 0.3.9 in Claude Code's terminal.
 
 ### Starting an agent (both hosts)
-- **Each new agent's CLI starts once, not twice.** ACPX's `sessions ensure` started the agent only to create its session and then stopped it, and the readiness prompt's owner started it again. CLI-MODE now writes the new session's record through its bridge (with ACPX 0.18.0's own record functions) and the readiness prompt's owner starts the agent once and creates the session there. Antigravity, whose server unpacks itself on every start, now starts in about 30 s instead of about 55 s. If that first prompt fails, the agent is started the old way once.
+- **Each new agent's CLI starts once, not twice.** ACPX's `sessions ensure` started the agent only to create its session and then stopped it, and the readiness prompt's owner started it again. CLI-MODE now writes the new session's record through its bridge (with ACPX 0.18.0's own record functions) and the readiness prompt's owner starts the agent once and creates the session there. Antigravity, whose server unpacks itself on every start, now starts in about 30 s instead of about 55 s. If that first prompt fails, the agent is started the old way once. A start that is canceled ends there, also in its first seconds: ACPX drops a cancel that comes before the readiness prompt has reached the agent, so CLI-MODE sends it again until that prompt ends.
 
 ### Relays (Claude Code)
 - **A canceled turn is shown at once.** Its relay carried the follow-up queued after it, first, and waited for it: `/cli cancel` stopped the turn in 2 s but "Turn canceled." appeared 6 minutes later, when the follow-up finished. A relay now carries only requests sent before it.

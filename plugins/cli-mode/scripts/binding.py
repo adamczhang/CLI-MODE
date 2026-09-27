@@ -10,7 +10,7 @@ import installer
 import names
 import native_agy
 import native_commands
-from operations import operation_running, pending_work
+from operations import ProbeCanceled, operation_running, pending_work
 import json
 from pathlib import Path
 
@@ -488,8 +488,8 @@ class BindingMixin:
             try:
                 self.readiness(dict(owned, bootstrapPrompt=True), generation, pending)
             except RuntimeError as first:
-                if not reserve:
-                    raise
+                if not reserve or isinstance(first, ProbeCanceled):
+                    raise  # A canceled probe ends activation; it says nothing about the reserved record.
                 # Maybe an agent that no longer turns the reserved record into a session: once more the classic
                 # way, which starts the agent to create it. If that fails too, the first failure is reported.
                 try:

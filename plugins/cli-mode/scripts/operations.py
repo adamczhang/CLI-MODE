@@ -7,6 +7,11 @@ import time
 _detached_workers = []  # Keep Popen handles until a later launch can reap exited workers.
 
 
+class ProbeCanceled(RuntimeError):
+    """A bootstrap readiness probe ended after its cancel was signalled. Activation ends with it: a cancel says
+    nothing about whether the agent could start, so the probe is not retried another way (binding.provision)."""
+
+
 def emit(value):
     print(json.dumps(value, ensure_ascii=True), flush=True)
 
