@@ -96,6 +96,11 @@ def build_parser():
     p.add_argument('--for-host', action='store_true', help='Claude Code AUTO: a handoff\'s result for Claude to read.')
     p = sub.add_parser('handoff', help='Claude Code AUTO: hand Claude\'s task file to the AUTO agent.')
     p.add_argument('--task', required=True); p.add_argument('--agent'); p.add_argument('--read-only', action='store_true')
+    # The approval hook's forms (hooks/claude.py:handoff_approval): the checks alone, or, for a new agent, its
+    # start, the handoff under the hook's id and the follow, as one background task.
+    p.add_argument('--check', action='store_true', help=argparse.SUPPRESS)
+    p.add_argument('--request', help=argparse.SUPPRESS); p.add_argument('--follow', action='store_true',
+                                                                        help=argparse.SUPPRESS)
     p = sub.add_parser('follow'); p.add_argument('--request', required=True)
     p = sub.add_parser('pump', help=argparse.SUPPRESS); p.add_argument('--token', required=True)
     p.add_argument('--session')
@@ -194,8 +199,9 @@ def run(args, control=None):
     elif command == 'catalog':
         result = control.use(args.agent or control.agent_of(control.store.read())).catalog(control.store.root)
     elif command == 'commands':
-        # The same framed card as every other menu; `text` is its fallback.
-        page = help_view.render()
+        # The same framed card as every other menu; `text` is its fallback. AUTO has its own (the user's controls).
+        from state import auto_on
+        page = help_view.render(auto=auto_on(control.store.read()))
         result = {'text': page, 'activationMenu': page}
     elif command == 'format-message':
         if not args.message_output:
@@ -284,11 +290,19 @@ def run(args, control=None):
     elif command == 'handoff':
         if views:
             raise ValueError('AUTO mode is Claude Code only; on Codex only /d reaches an agent.')
-        result = control.handoff(args.task, args.agent, args.read_only)
-        follow = command_line(args, 'follow', '--request', result['requestId'])
-        result['next'] = ('Run `' + follow + '` now, as is: CLI-MODE makes it a background task, and its end wakes '
-                          'you with ' + result['agent'] + '\'s result. Then end your turn with a short status for the '
-                          'user.')
+        try:
+            result = control.handoff(args.task, args.agent, args.read_only, request=args.request, check=args.check)
+        except RuntimeError as exc:
+            if args.request and args.follow:
+                control.note_handoff_error(args.request, str(exc))  # Its wake-up says why nothing was handed off.
+            raise
+        if args.follow and not args.check:
+            result = control.follow(result['requestId'], write=lambda line: print(line, flush=True))
+        elif not args.check:
+            follow = command_line(args, 'follow', '--request', result['requestId'])
+            result['next'] = ('Run `' + follow + '` now, as is: CLI-MODE makes it a background task, and its end '
+                              'wakes you with ' + result['agent'] + '\'s result. Then end your turn with a short '
+                              'status for the user.')
     else:
         result = control.acknowledge(args.operation)
     block = result.get('activationMenu') or (result.get('text') if command == 'format-menu' else None)

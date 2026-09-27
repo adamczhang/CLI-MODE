@@ -9,22 +9,26 @@ Run one Claude-using check at a time: two processes refreshing the same sign-in 
 One headless session with stream-json input stays open for every step, as the desktop app keeps a
 conversation open, in a small git project:
 
- 1. /cli mode: the Mode page, Now: DIRECT.
- 2. 2 (AUTO) with no AUTO agent saved: the agent picker, marked for AUTO.
+ 1. /cli mode: the Mode page, Now: AUTO (the default).   2. B: /cli's agent list, marked for AUTO (none saved).
  3. <the AUTO agent's number>: its page.   4. 1: it starts in the hook (no command, no pane row); the card
     says AUTO is on, and the choice is saved.
- 5. /d <task>: refused in AUTO, nothing captured.   6. /cli spawn <backup>: refused.
+ 5. /d alone: asks for a question (in AUTO, /d asks Claude itself); nothing captured.   6. /cli spawn <backup>:
+    refused.
  7. An ordinary question: Claude answers it; nothing reaches an agent.
  8. /cli: the Mode page, Now: AUTO.   9-12. 3, 2, <number>, 1: the backup starts and waits; the AUTO agent
     stays current.
 13. /cli mode direct, then /d <task>: the agent's answer comes back through the background follow, as before.
 14. /cli mode auto: both agents already run; nothing starts again.
 15. /cli mode backup none: the backup closes.
-16. /cli off: AUTO ends with its agents.   17. /cli mode auto: the saved AUTO agent starts again, in the hook.
+16. /cli off: AUTO's agents close; the mode stays AUTO.   17. /cli, 1: the saved AUTO agent (offered first) starts
+    again, in the hook.
 18. /cli off.
 
     python scripts/package_plugin.py
     python checks/claude_auto_mode_live.py [--agent codex] [--backup grok-build] [--model <id>] [--keep]
+
+--complex runs the light delegation's live check instead: a multi-part feature, a self-contained simulation and a
+mixed small request, in one AUTO conversation, with Claude's own use measured per prompt (wake-ups included).
 """
 import argparse
 import hashlib
@@ -48,6 +52,28 @@ COMPARE_TASK = ('In this project: fix the failing parser test (the tests are rig
                 'tests/test_parser.py. All tests must pass. Do not commit.')
 BUG = ('The parser drops the last word of its input, and tests/test_parser.py fails because of it. Please get it '
        'fixed; the tests are right.')
+# Light delegation (--complex): a multi-part feature, a self-contained computation, and a mixed request whose small
+# edit and question Claude keeps. Each is one prompt in the same AUTO conversation.
+COMPLEX = (
+    ('feature', True, 'Build a small command-line front end for this notes app, as one piece of work: fix the failing '
+                      'parser test (the tests are right); add parse_pairs(text) to app/parser.py, returning a dict of '
+                      'key=value words (values may be quoted), and parse_flags(text), returning (words, flags) where '
+                      'flags are the words starting with --; add app/cli.py with main(argv), which prints the words, '
+                      'pairs and flags of its arguments as JSON; add tests for all of it in tests/; and add a short '
+                      '"Command line" section to README.md. All tests must pass. Do not commit.'),
+    ('simulation', True, 'A guild economy question. Our 150 siege golems run on Mana Crystals: 45 gold each, 8 crystals '
+                         'per dungeon run, 4 runs a day, for a 90-day season. Should we retrofit them to Steam Cores or '
+                         'Alchemical Biomass? Steam Cores lose 0.5% heat efficiency every run and need new gaskets at '
+                         'run 120, and add 800 lb, which cuts the loot a golem can carry out. Biomass injectors corrode, '
+                         'using 4% more fuel every 20 runs; the tanks add 250 lb and fail 5% of the time in boss fights. '
+                         'Write and run a simulation script (standard library only, in the agent\'s working folder, not '
+                         'the project) with a 500-round price-spike roll: the gold threshold where Mana stays cheaper, '
+                         'and which setup risks bankruptcy if material prices rise 30%. Choose and state any missing '
+                         'numbers.'),
+    ('mixed', False, 'Two quick things: in README.md, change "short notes" to "short notes and tags" (only that); and '
+                     'tell me in one sentence what parse() does with a quoted phrase.'),
+)
+WORKING = ('captured', 'submitting')
 
 
 def project(buggy=False):
@@ -135,9 +161,9 @@ class Run:
 
     def main(self):
         agent_label = self.label(self.agent)
-        self.step('mode page', '/cli mode', ('You drive the agents with', 'Now: DIRECT', '2. AUTO'))
+        self.step('mode page', '/cli mode', ('You drive the agents with', 'Now: AUTO', '2. AUTO (default)'))
         self.check('mode page', (self.state().get('pending') or {}).get('phase') == 'mode', 'no Mode page open')
-        self.step('auto without a choice', '2', ('Select CLI Agent', 'Choose your AUTO agent', 'M. Mode: DIRECT'))
+        self.step('agent list without a choice', 'b', ('Select AUTO Agent', 'M. Mode: AUTO'))
         self.check('picker', (self.state().get('pending') or {}).get('purpose') == 'auto-on', 'not marked for AUTO')
         self.step('agent page', self.pick(self.agent), ('1. Yes',))
         _, card = self.step('start the AUTO agent', '1', ('CLI-MODE Activated', '**Agent:** ' + agent_label,
@@ -150,16 +176,16 @@ class Run:
         self.check('AUTO agent current', roster.get('agent') == state.get('main'), json.dumps(roster))
         import auto_mode
         self.check('choice saved', (auto_mode.load(claude_data())['agent'] or {}).get('agent') == self.agent)
-        self.step('/d without a task', '/d', ('Add a task after /d',))
+        self.step('/d without a task', '/d', ('Add a question after /d',))
         self.check('/d without a task', not self.state().get('requests'), 'a request was captured')
-        self.step('spawn refused', '/cli spawn ' + self.backup, ('AUTO is on, so Claude and CLI-MODE run the agents',))
+        self.step('spawn refused', '/cli spawn ' + self.backup, ('In AUTO, Claude and CLI-MODE run the agents',))
         _, answer = self.step('ordinary question', QUESTION, tools=True)
         self.check('ordinary question', 'word' in answer.lower() or 'quot' in answer.lower(),
                    'the answer does not describe the parser: ' + answer[:200])
         self.check('ordinary question', not self.state().get('requests'), 'it reached an agent')
         self.step('/cli in AUTO', '/cli', ('Now: AUTO', agent_label))
         self.step('AUTO settings', '3', ('1. AUTO agent', '2. Backup agent', 'Delegation: Strong'))
-        self.step('backup picker', '2', ('Select CLI Agent', 'Choose your backup agent'))
+        self.step('backup picker', '2', ('Select Backup Agent', 'Choose your backup agent'))
         self.step('backup page', self.pick(self.backup), ('1. Yes',))
         # Live run 1: this card described the AUTO agent (the current one), not the backup it started.
         self.step('start the backup', '1', ('CLI-MODE Activated', '**Agent:** ' + self.label(self.backup),
@@ -178,9 +204,11 @@ class Run:
         self.check('backup closed', len(self.state()['owned']) == 1, str(len(self.state()['owned'])))
         self.step('off', '/cli off', ('CLI-MODE is off. The agent session was closed.',))
         state = self.state()
-        self.check('off ends AUTO', not state.get('active') and state.get('routingMode') == 'direct'
+        self.check('off closes AUTO agents', not state.get('active') and state.get('routingMode') == 'auto'
                    and 'auto' not in state, json.dumps(dict(active=state.get('active'), mode=state.get('routingMode'))))
-        self.step('auto from the saved choice', '/cli mode auto', ('AUTO is on: Claude hands work to',), timeout=400)
+        self.step('saved agent first', '/cli', ('1 starts your saved AUTO agent.', 'Select AUTO Agent'))
+        self.step('auto from the saved choice', '1', ('CLI-MODE Activated', 'AUTO is on: Claude hands work to'),
+                  timeout=400)
         state = self.state()
         self.check('started from the saved choice', state.get('active') and len(state['owned']) == 1
                    and state['owned'][0]['backend'] == self.agent, json.dumps([o['backend'] for o in state['owned']]))
@@ -344,6 +372,93 @@ class Run:
         self.step('off', '/cli off', ('CLI-MODE is off',))
         return use, tests.returncode == 0
 
+    def auto_requests(self):
+        return {key: record for key, record in (self.state().get('requests') or {}).items()
+                if record.get('routingMode') == 'auto'}
+
+    def idle(self):
+        """True between turns: the last result comes after the last assistant or tool event."""
+        with self.host.lock:
+            events = list(self.host.events)
+        last_result = max((index for index, event in enumerate(events) if event.get('type') == 'result'), default=-1)
+        last_turn = max((index for index, event in enumerate(events) if event.get('type') in ('assistant', 'user')),
+                        default=-1)
+        return last_result > last_turn
+
+    def settle(self, name, before, timeout=2400):
+        """Until the handoffs this prompt made have finished and been read, and Claude's last turn has ended (a
+        wake-up may hand off a follow-up, so it must stay so for a while)."""
+        def done():
+            records = [record for key, record in self.auto_requests().items() if key not in before]
+            return self.idle() and not any(record.get('status') in WORKING or not record.get('hostRead')
+                                           for record in records)
+        until = time.monotonic() + timeout
+        while time.monotonic() < until:
+            if not self.host.wait(None, max(1, until - time.monotonic()), done=done):
+                break
+            time.sleep(20)
+            if done():
+                return
+        raise RuntimeError(name + ': a handoff never finished, or its result was never read')
+
+    def tool_calls(self, since):
+        with self.host.lock:
+            return [(block.get('name'), str((block.get('input') or {}).get('command') or
+                                            (block.get('input') or {}).get('file_path') or ''))
+                    for event in self.host.events[since:] if event.get('type') == 'assistant'
+                    for block in (event.get('message') or {}).get('content') or [] if block.get('type') == 'tool_use']
+
+    def replies(self, since):
+        with self.host.lock:
+            return [self.plain(event.get('result') or '') for event in self.host.events[since:]
+                    if event.get('type') == 'result']
+
+    def complex_main(self):
+        """Light delegation, live (L1-L8): complex prompts in one AUTO conversation. A handoff is one call (Claude
+        types no follow and no relay), each result comes with its wake-up and is read there, the work holds up, and
+        the small mixed request stays with Claude. Claude's own use is measured per prompt, wake-ups included."""
+        import auto_mode
+        auto_mode.save(claude_data(), {'agent': {'agent': self.agent, 'model': None, 'effort': None, 'access': None},
+                                       'backup': None, 'strength': 'strong'})
+        self.use_defaults()
+        self.step('auto on', '/cli mode auto', ('AUTO is on: Claude hands work to',), timeout=400)
+        self.measures, said_by = [], {}  # The report keeps each reply's end; the checks read all of it.
+        for name, hands_off, prompt in COMPLEX:
+            before, mark, count = set(self.auto_requests()), self.host.mark(), len(self.host.results())
+            started = time.monotonic()
+            self.host.send(prompt)
+            if not self.host.wait(count + 1, 900):
+                raise RuntimeError(name + ': no result')
+            self.settle(name, before)
+            made = [key for key in self.auto_requests() if key not in before]
+            tools = self.tool_calls(mark)
+            said = said_by[name] = '\n'.join(self.replies(mark))
+            typed = [command for tool, command in tools if tool in ('Bash', 'PowerShell')]
+            measure = dict(name=name, minutes=round((time.monotonic() - started) / 60, 1), handoffs=len(made),
+                           claude=self.claude_use(mark), toolCalls=len(tools),
+                           handoffCalls=sum(' handoff ' in command for command in typed),
+                           followOrRelayTyped=sum(' follow --request ' in command or ' relay --request ' in command
+                                                  for command in typed),
+                           otherTools=[(tool, command[-80:]) for tool, command in tools
+                                       if ' handoff ' not in command and '/.cli-mode/tasks/' not in
+                                       command.replace('\\', '/')],
+                           reply=said[-900:])
+            self.measures.append(measure)
+            self.check(name + ': handed off' if hands_off else name + ': kept by Claude',
+                       bool(made) == hands_off, str(len(made)) + ' handoffs')
+            self.check(name + ': one call per handoff', not measure['followOrRelayTyped'],
+                       'Claude typed a follow or relay command')
+            self.check(name + ': read in the wake-up', 'autoWake' not in self.state(), 'a result waits to be read')
+        tests = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider'], cwd=self.workspace,
+                               capture_output=True, text=True, timeout=120)
+        self.check('feature: tests pass', tests.returncode == 0, (tests.stdout or tests.stderr)[-300:])
+        self.check('feature: cli.py', (self.workspace / 'app' / 'cli.py').is_file(), 'no app/cli.py')
+        self.check('simulation: the baseline', any(figure in said_by['simulation'] for figure in ('19,440,000', '19.44')),
+                   'the report lacks the 19,440,000-gold baseline')
+        readme = (self.workspace / 'README.md').read_text(encoding='utf-8')
+        self.check('mixed: the small edit', 'short notes and tags' in readme, 'README.md unchanged')
+        self.step('off', '/cli off', ('CLI-MODE is off',))
+
     def use_defaults(self):
         """Fill the saved AUTO choice with the agent's own defaults (as the picker's "Yes" would)."""
         sys.path.insert(0, str(DEV / 'scripts'))
@@ -398,6 +513,7 @@ def main():
     parser.add_argument('--handoff', action='store_true', help='The end-to-end handoff scenario instead.')
     parser.add_argument('--interrupt', action='store_true', help='P7: a mode switch and /cli off during handoffs.')
     parser.add_argument('--compare', choices=['alone', 'auto'], help='P10: one side of Claude alone versus AUTO.')
+    parser.add_argument('--complex', action='store_true', help='Light delegation: complex prompts in one conversation.')
     args = parser.parse_args()
     if 'claude' in (args.agent, args.backup):
         raise SystemExit('Use agents other than Claude Code: it shares the sign-in this session uses.')
@@ -410,9 +526,11 @@ def main():
     if saved.exists():
         saved.replace(aside)  # A first run: no AUTO agent chosen yet.
     # P10: both sides may edit files and run commands without asking, so they differ only in who does the work.
-    extra = ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'PowerShell'] if args.compare else []
-    run = Run(args.agent, args.backup, args.model, buggy=args.handoff or args.interrupt or bool(args.compare),
-              extra=extra)
+    # --complex: Claude makes the mixed request's small edit itself.
+    extra = (['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'PowerShell']
+             if args.compare or args.complex else [])
+    run = Run(args.agent, args.backup, args.model,
+              buggy=args.handoff or args.interrupt or bool(args.compare) or args.complex, extra=extra)
     report = dict(agent=args.agent, backup=args.backup, workspace=str(run.workspace))
     started = time.monotonic()
     try:
@@ -422,6 +540,8 @@ def main():
             run.check('tests pass', passed, 'the task left failing tests')
         elif args.interrupt:
             run.interrupt_main()
+        elif args.complex:
+            run.complex_main()
         else:
             run.handoff_main() if args.handoff else run.main()
     except (RuntimeError, ValueError, KeyError, StopIteration) as exc:
@@ -434,7 +554,8 @@ def main():
             saved.unlink()
     with run.host.lock:
         events = list(run.host.events)
-    report.update(session=run.session, steps=run.steps, minutes=round((time.monotonic() - started) / 60, 1), fiveHourPercent=usage(events),
+    report.update(session=run.session, steps=run.steps, measures=getattr(run, 'measures', None),
+                  minutes=round((time.monotonic() - started) / 60, 1), fiveHourPercent=usage(events),
                   model=next((event.get('model') for event in events if event.get('subtype') == 'init'), None),
                   problems=run.problems, passed=not run.problems)
     if run.session:

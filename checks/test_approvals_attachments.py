@@ -298,8 +298,8 @@ class ClaudeImages(unittest.TestCase):
 class ClaudeAttach(unittest.TestCase):
     """A /d with a file and an image from Claude Code's desktop app, through the whole Claude hook."""
     from test_claude_hook import ClaudeHook
-    setUp, event, prompt, store, activate = (ClaudeHook.setUp, ClaudeHook.event, ClaudeHook.prompt,
-                                             ClaudeHook.store, ClaudeHook.activate)
+    setUp, event, prompt, store, activate, direct = (ClaudeHook.setUp, ClaudeHook.event, ClaudeHook.prompt,
+                                                     ClaudeHook.store, ClaudeHook.activate, ClaudeHook.direct)
     del ClaudeHook
 
     def test_the_file_and_the_image_reach_the_agents_folder(self):

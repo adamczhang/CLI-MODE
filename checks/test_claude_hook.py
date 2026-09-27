@@ -65,7 +65,15 @@ class ClaudeHook(unittest.TestCase):
     def store(self):
         return Store(SESSION, self.project, self.data)
 
+    def direct(self):
+        """This conversation chose DIRECT (/cli mode direct), as the tests of /d and the user's own agent controls
+        need: AUTO is Claude Code's default otherwise (test_auto_mode)."""
+        with self.store().edit() as state:
+            state.update(routingMode='direct', directChosen=True)
+
     def activate(self):
+        """A DIRECT agent, started the way the agent list starts it."""
+        self.direct()
         control = Controller(self.store(), self.backend)
         control.frontend()
         control.activate('gemini-3.8-flash-high', 'allow')
@@ -85,6 +93,7 @@ class ClaudeHook(unittest.TestCase):
 
 class InstantControls(ClaudeHook):
     def test_menus_answer_without_a_model_turn_as_plain_frames(self):
+        self.direct()  # DIRECT's card and hints; AUTO has its own help card (test_auto_mode).
         home = self.prompt('/cli')
         self.assertEqual(home['decision'], 'block')
         self.assertIn('Setup CLI Agent.', home['reason'])
@@ -182,6 +191,7 @@ class SlowControls(ClaudeHook):
         usage = patch('confirmation.usage', return_value={'status': 'unavailable', 'reason': 'test'})
         usage.start()
         self.addCleanup(usage.stop)
+        self.direct()  # /cli bind is DIRECT's (AUTO refuses it).
 
     def test_bind_activates_in_the_hook_with_no_command_for_claude(self):
         reply = self.prompt('/cli bind agy')
@@ -880,6 +890,7 @@ class Colour(ClaudeHook):
     def test_chat_menus_have_a_green_title_and_notices_never_do(self):
         import help_view
         del os.environ['CLI_MODE_CLAUDE_INSTANT']  # The default display: chat.
+        self.direct()  # DIRECT's full help card (AUTO's own is tested in test_auto_mode).
         card = self.context(self.prompt('/cli help'))
         box = help_view.render().split('\n')
         rule = box[1][1:-1]

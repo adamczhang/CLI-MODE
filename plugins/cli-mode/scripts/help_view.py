@@ -50,6 +50,22 @@ CLAUDE_SETTINGS = (
 AGENTS = ('agy (Antigravity)  cla (Claude Code)', 'cod (Codex CLI)    gro (Grok Build)',
           'cop (GitHub Copilot) cur (Cursor)')
 COMMANDS = tuple(row for _, rows in SECTIONS for row in rows)
+# Claude Code in AUTO: Claude runs the agents, so the card shows only the user's own controls. The commands that act
+# on one agent's work (undo, diff, queue, dir, test...) stay in the plugin for Claude and for DIRECT.
+AUTO_SECTIONS = (
+    ('AUTO', (
+        ('/cli list', 'handoffs, agents'),
+        ('/cli approve|deny', 'answer its ask'),
+        ('/cli cancel', 'stop every turn'),
+        ('/cli usage [name]', 'plan usage left'),
+        ('/cli off', 'close all agents'),
+    )),
+    ('SETTINGS', (
+        MODE_ROW,
+        ('/cli view on|off', 'live window'),
+    ) + CLAUDE_SETTINGS),
+)
+AUTO_ASK = ('Ask Claude to undo, show diffs,', 'run tests or change the agents.')
 
 
 def sections():
@@ -64,8 +80,20 @@ def commands():
     return tuple(row for _, rows in sections() for row in rows)
 
 
-def text():
+def auto_text():
+    """AUTO's card (Claude Code): the user's own controls, and what to ask Claude for instead."""
+    lines = ['CLI-MODE', 'Help (AUTO)']
+    for heading, rows in AUTO_SECTIONS:
+        lines += ['', heading] + [command.ljust(COLUMN) + description for command, description in rows]
+    lines += ['', *AUTO_ASK, 'More: /cli shortcuts, /cli reset,', '/cli help (this page)',
+              '$ works in place of / everywhere.', '/cli-mode:cli if /cli clashes.', 'X. Close help']
+    return '\n'.join(lines)
+
+
+def text(auto=False):
     """Unframed card text: grouped command lines, then the rarer commands and what the placeholders mean."""
+    if auto and host.claude():
+        return auto_text()
     lines = ['CLI-MODE', 'Help']
     for index, (heading, rows) in enumerate(sections()):
         lines += ([''] if index else []) + [heading] + [command.ljust(COLUMN) + description
@@ -82,6 +110,6 @@ def text():
     return '\n'.join(lines)
 
 
-def render():
-    """The help card as framed menu text, rendered like every other menu."""
-    return menu_block(text())
+def render(auto=False):
+    """The help card as framed menu text, rendered like every other menu; `auto` for AUTO's own card."""
+    return menu_block(text(auto))

@@ -124,8 +124,9 @@ def setup_menu(result, routing, access=None):
     return menu_block('\n'.join(lines))
 
 
-def menu(root, agent, settings=None, routing=None, access=None, page=1, mode=None):
-    """The agent list (`home`) or one agent's activation page; with `mode` (Claude Code), the list's Mode row."""
+def menu(root, agent, settings=None, routing=None, access=None, page=1, mode=None, subtitle=None, saved=None):
+    """The agent list (`home`) or one agent's activation page; with `mode` (Claude Code), the list's Mode row, and in
+    AUTO its own `subtitle` and the `saved` AUTO agent as choice 1."""
     blocked = routing is not None and not routing['ready']
     if agent != 'home':
         receipt_path(root, agent)
@@ -141,9 +142,10 @@ def menu(root, agent, settings=None, routing=None, access=None, page=1, mode=Non
     if agent == 'home':
         agents = backends()
         labels = [item['displayName'] + ('' if confirmed(root, item['id']) else ' (Setup needed)') for item in agents]
-        built = options_menu('Select CLI Agent', labels, page=page,
+        built = options_menu(subtitle or 'Select CLI Agent', ([saved] if saved else []) + labels, page=page,
                              tail=['M. Mode: ' + mode.upper()] if mode else (),
-                             lead=['Hook check pending.', ''] if blocked else [])
+                             lead=(['Hook check pending.', ''] if blocked else []) +
+                             (['1 starts your saved AUTO agent.', ''] if saved else []))
         return menu_block(built['text'])
     receipt_path(root, agent)
     text = settings_text(agent, settings)

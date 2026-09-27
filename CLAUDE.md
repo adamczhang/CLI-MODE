@@ -76,21 +76,32 @@ lands in one of three zones below; know which before editing.
   `nothing_to_do()` is a pre-import fast path.
 - `claude/hooks.json`, `claude/commands/{cli,d}.md`.
 - `scripts/auto_mode.py` (`CLAUDE_ONLY` when packaged; the controller falls back to an empty mixin without it): the
-  DIRECT and AUTO modes. `/cli mode` opens the Mode page (pending phases `state.MODE_PAGES`). The user's AUTO agent,
+  DIRECT and AUTO modes. AUTO is Claude Code's default (`state.default_routing_mode`; `Store.read` opens a
+  conversation that is off in AUTO unless DIRECT was chosen there, `directChosen`). While off, `/cli` is the agent
+  list with the saved AUTO agent as 1 (`menus.frontend`, choice `auto-saved`), and an agent started in AUTO is the
+  AUTO agent (`binding.activate` defaults its purpose). `/cli mode` opens the Mode page (pending phases `state.MODE_PAGES`). The user's AUTO agent,
   optional backup and delegation strength are saved for every conversation (`auto_mode.config_path`). `/cli mode auto`
   starts those agents in the prompt hook, as bind does (an activation whose `pending.purpose` makes `adopt()` save
   it and put it in the conversation's `auto` roster), and they wait for work. In AUTO (`state.auto_on`), `/d` becomes `auto-host` (Claude answers
   itself: the hook refuses `handoff` that turn and lifts the strength limits), `state.AUTO_OWNED_VERBS` are refused, AUTO agents are named `Codex-01`
   (`auto_mode.auto_name`, shown alone by `state.label_name`), `/cli` is the Mode page, the brief's host note is skipped, and `off` ends
-  AUTO (`binding.disable`). Handoffs: Claude writes a task file (`auto_mode.tasks_dir`; `hooks/claude.py:
-  task_file_approval`), runs `controller.py handoff --task <id>` (captured like a /d with `routingMode: auto` and
-  `handoff`), then the printed `follow`. The follow's end wakes Claude (`notification_reply` → `auto_wake`, the Stop
-  guard's `autoWake`) to read `relay --for-host` (`relay_view.host_text`), which marks it `hostRead`; AUTO requests
-  never join a user's relay (`unrelayed`). One writer (`auto_mode.writer`); `--read-only` sends ACPX a deny-by-default
+  AUTO (`binding.disable`). Handoffs are light (one call, the result in the wake-up): Claude writes a task file (`auto_mode.tasks_dir`;
+  `hooks/claude.py:task_file_approval`) and runs the short `python <controller> handoff --task <id>`
+  (`handoff_command`); the approval hook hands it over itself (`handoff_approval`: captured like a /d with
+  `routingMode: auto` and `handoff`, a refusal denied at once) and turns that call into the background `follow`
+  (`updatedInput`), except `--agent new`, whose start runs in that background task (`handoff --request <id>
+  --follow`; a failed start is `handoffErrors`). The follow's end wakes Claude (`notification_reply` → `auto_wake`)
+  with the results already read (`relay_for_host` → `relay_view.host_text`, which opens with a `CHECK:` verdict,
+  `check_line`; results ending together share `WAKE_ROOM`) and marked `hostRead`; if that fails, the wake-up names
+  `relay --for-host` and the Stop guard holds the turn (`autoWake`). AUTO requests
+  never join a user's relay (`unrelayed`). One writer per file: a task's Files line is its claim (`auto_mode.task_files`,
+  `conflict`; none named claims the whole project), `handoff --agent new` starts an extra agent like the AUTO agent
+  (`start_extra`, roster `extras`), and AUTO agents idle out after `AUTO_TIMEOUT`; `--read-only` sends ACPX a deny-by-default
   policy (`dispatch.approval_policy`); in Claude's own turns `AUTO_OWNED_COMMANDS` are refused (`auto_owned`).
-  Delegation (tested live in P0): each of Claude's own AUTO turns gets `auto_mode.context` (rule, template, ledger)
-  from `hooks/claude.py:auto_context`; `strength_refusal` refuses Claude's project edits by strength (Strong: small
-  fixes, `SMALL_EDIT` lines and `TURN_FILES` files a turn; Max: none; never while an agent writes);
+  Delegation (tested live in P0): `hooks/claude.py:auto_context` gives Claude the rule (`auto_mode.rule`) once, again
+  when it changes, after a compaction and every `AUTO_RULE_REFRESH` turns (digests in `autoRule`), and otherwise only a
+  changed status (`auto_mode.status`: agents, work still running or unread) or nothing; `strength_refusal` refuses Claude's project edits by strength (Strong: small
+  fixes, `SMALL_EDIT` lines and `TURN_FILES` files a turn; Max: none; never of a file a running task claims);
   `auto_tool_refusal` sends coding subagents to the agent and refuses waiting or polling for a handoff; `auto_stop`
   nudges a turn that leaves a handoff unfollowed or its result unread. The edit hook matches every file-editing
   tool, so `nothing_to_do` leaves early unless the session is in AUTO or the edit is the brief's host note.

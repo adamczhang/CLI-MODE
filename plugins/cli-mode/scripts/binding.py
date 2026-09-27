@@ -18,6 +18,11 @@ from state import (Store, TIMEOUT_RANGE, agent_entry, agent_label, agent_limit, 
                    routing_mode, save_default_timeout, team_of, ACTS_WITHOUT_ASKING)
 
 
+def auto_timeout():
+    import auto_mode  # Claude Code only (packaged there alone); an AUTO purpose never comes up on Codex.
+    return auto_mode.AUTO_TIMEOUT
+
+
 def duration(minutes):
     return (str(minutes // 60) + (' hour' if minutes == 60 else ' hours') if minutes % 60 == 0
             else str(minutes) + ' minutes')
@@ -93,10 +98,8 @@ class BindingMixin:
             if installer_run:
                 state['stoppedInstallerRun'] = installer_run  # For off(): the routing hook disables first.
             state.update(active=False, pending=None, main=None, modeMenu=False, helpMenu=None)
-            if state.get('routingMode') == 'auto':
-                # AUTO ends with its agents: the next /cli starts in DIRECT (/cli mode auto starts them again).
-                state['routingMode'] = 'direct'
-                state.pop('auto', None)
+            # AUTO's agents close; the mode stays, so the next /cli starts them again (Claude Code).
+            state.pop('auto', None)
             state['generation'] += 1
         return state
 
@@ -607,6 +610,8 @@ class BindingMixin:
                 raise RuntimeError('An agent named ' + name + ' is already running.')
             activation_id = state['pending']['id']
             purpose = state['pending'].get('purpose')  # An AUTO agent being chosen or started (auto_mode.PURPOSES).
+            if not purpose and routing_mode(state) == 'auto' and not session:
+                purpose = 'auto-on'  # In AUTO (Claude Code), a new agent the user starts is the AUTO agent.
             origin_route = deepcopy(state.get('turnRoute'))
             completed_control = state['pending'].get('tuning') or (origin_route or {}).get('route') == 'bind'
             state['pending']['stage'] = 'verifying'
@@ -628,7 +633,8 @@ class BindingMixin:
                     name = names.generate(target, owned['name'], [alias for alias in taken if alias])
                     state['usedNames'] = (state.get('usedNames') or []) + [name]  # Never given out again.
                 owned['alias'] = name
-                owned['timeout'] = default_timeout(self.store.root)  # Minutes idle before its process exits.
+                # Minutes idle before its process exits; an AUTO agent's are AUTO's own (two hours).
+                owned['timeout'] = auto_timeout() if purpose else default_timeout(self.store.root)
                 if target in ACTS_WITHOUT_ASKING:
                     owned['actsWithoutAsking'] = True  # Approvals can't be limited to one kind for it.
             if not reuse and getattr(self.backend, 'profile', None):
@@ -663,9 +669,9 @@ class BindingMixin:
                             item['nativeModel'] = owned['nativeModel']
                 state.update(active=True, pending=None)
                 if ((not reuse or owned['name'] == state['main'] or not state['main'])
-                        and not (purpose == 'auto-backup' and state['main'])):
+                        and not (purpose in ('auto-backup', 'auto-extra') and state['main'])):
                     # A new agent becomes the current one; changing another agent's settings leaves it be.
-                    # A backup AUTO agent never does: the AUTO agent stays current.
+                    # A backup or extra AUTO agent never does: the AUTO agent stays current.
                     state.update(main=owned['name'], settings=settings, backend=target)
                 replaced = None
                 if purpose:

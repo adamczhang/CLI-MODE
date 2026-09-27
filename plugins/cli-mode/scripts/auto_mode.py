@@ -10,6 +10,7 @@ what each task is belongs to Claude.
 """
 import json
 from pathlib import Path
+import posixpath
 import re
 import time
 import uuid
@@ -19,7 +20,8 @@ import agent_folder
 import frontends
 from operations import pending_work
 from presentation import menu_block
-from state import MODE_PAGES, STRENGTHS, agent_entry, agent_label, live_agents, routing_mode, target_of
+from state import (MODE_PAGES, STRENGTHS, agent_entry, agent_label, agent_limit, live_agents, routing_mode,
+                   target_of)
 
 ROLES = ('agent', 'backup')
 # Handoffs: Claude writes each task to a file here (git-ignored, CLI-MODE's own), then runs `handoff --task <id>`.
@@ -40,17 +42,24 @@ STRENGTH_RULES = {
 }
 TEMPLATE = ('Goal: what to achieve, in one or two lines\n'
             'Context: files, decisions and constraints the task needs\n'
-            'Do not: files or areas to leave alone; never commit or push\n'
+            'Files: the only files or folders it may change (other agents may be changing the rest)\n'
+            'Do not: anything else to avoid; never commit or push\n'
             'Done when: the check that proves it (tests, a command, behaviour)\n'
             'Report: what changed, what you ran, anything unresolved')
+# One writer per file: a writing task claims the files and folders its Files line names, and no two running tasks
+# (nor Claude's own edits) may change the same file. A task without that line, and any other request, claims them all.
+WHOLE = '*'
+EVERYTHING = frozenset(('*', '.', 'all', 'any', 'everything', 'project', 'repo', 'repository'))
+AUTO_TIMEOUT = 120  # Minutes an idle AUTO agent keeps running (its ACPX owner TTL); /cli off closes it sooner.
 DEFAULT_STRENGTH = 'strong'
 STRENGTH_LINES = {
     'normal': ('Claude decides what to hand off.',),
     'strong': ('Claude fixes small things itself;', 'bigger work goes to the agent.'),
     'max': ('Every change goes to the agent;', 'Claude plans and checks.'),
 }
-# Purposes a pending activation can carry: whose agent it starts, and whether it turns AUTO on.
-PURPOSES = {'auto-on': 'agent', 'auto-agent': 'agent', 'auto-backup': 'backup'}
+# Purposes a pending activation can carry: whose agent it starts, and whether it turns AUTO on. An extra is another
+# agent like the AUTO agent that Claude starts for work in parallel (`handoff --agent new`).
+PURPOSES = {'auto-on': 'agent', 'auto-agent': 'agent', 'auto-backup': 'backup', 'auto-extra': 'extra'}
 
 
 def config_path(root):
@@ -109,6 +118,12 @@ def describe(root, choice, effort=True):
     return ', '.join(parts)
 
 
+def short(root, choice):
+    """`Codex, GPT-6 Sol`: a saved agent in one agent-list row."""
+    detail = describe(root, choice, effort=False).split(', ', 1)
+    return adapters.module(choice['agent']).LABEL + (', ' + detail[1] if len(detail) > 1 else '')
+
+
 def page_text(page, root, state):
     """One page as framed menu text (menu_block adds X. Exit)."""
     config = load(root)
@@ -118,7 +133,7 @@ def page_text(page, root, state):
                  'AUTO    Talk to Claude only. It', '        hands work to your AUTO', '        agent, checks it, reports.',
                  '', 'AUTO agent: ' + (describe(root, config['agent'], effort=False) if config['agent'] else
                                        'not chosen yet'),
-                 '', '1. DIRECT', '2. AUTO', '3. AUTO settings', 'B. Back']
+                 '', '1. DIRECT', '2. AUTO (default)', '3. AUTO settings', 'B. Back']
     elif page == 'auto-settings':
         lines = ['AUTO settings', '', '1. AUTO agent', '   ' + (describe(root, config['agent']) if config['agent']
                                                               else 'not chosen yet'),
@@ -162,6 +177,8 @@ def auto_name(agent, taken):
 def adopted_line(root, state, purpose, session):
     """One line for the activation card: what the agent that just started is now."""
     label = agent_label(state, session)
+    if purpose == 'auto-extra':
+        return label + ' started for work in parallel.'
     if routing_mode(state) != 'auto':  # A backup chosen while no AUTO agent runs here.
         return (label + ' is now your backup agent. It works for Claude once AUTO is on with an AUTO agent '
                 '(/cli mode auto).')
@@ -175,6 +192,11 @@ def adopt(state, purpose, session, agent, settings, root):
     """An activation with an AUTO purpose finished: save its agent as the user's choice and put it in this
     conversation's AUTO roster. Returns the session it replaces there, if any."""
     role = PURPOSES[purpose]
+    if role == 'extra':  # Like the AUTO agent, so nothing is saved: it joins this conversation's extras.
+        roster = dict(state.get('auto') or {})
+        roster['extras'] = [item for item in roster.get('extras') or [] if agent_entry(state, item)] + [session]
+        state['auto'] = roster
+        return None
     config = load(root)
     config[role] = entry_of(agent, settings)
     save(root, config)
@@ -186,6 +208,7 @@ def adopt(state, purpose, session, agent, settings, root):
     lead = agent_entry(state, roster.get('agent')) if roster.get('agent') else None
     if role == 'agent' or (lead and lead.get('ready')):
         state['routingMode'] = 'auto'
+        state.pop('directChosen', None)
     return previous if previous != session else None
 
 
@@ -205,14 +228,90 @@ def auto_requests(state):
                    if record.get('routingMode') == 'auto'), key=lambda item: item[1].get('capturedAt') or 0)
 
 
-def writer(state, exclude=None):
-    """(session, request) of work in progress that may change files, on an agent other than `exclude`: anything
-    unfinished but a read-only handoff. One writer at a time keeps each turn's change receipt its own."""
+def file_key(word, workspace=None):
+    """A file or folder as a claim: project-relative, `/`-separated and case-folded (Windows ignores case); WHOLE for
+    the whole project; None for a path outside it. A wildcard claims the folder it is in (`src/*.py` is `src`)."""
+    word = str(word or '').strip().strip('`"\'').replace('\\', '/')
+    wild = re.search(r'[*?\[]', word)
+    if wild:
+        word = word[:wild.start()].rpartition('/')[0]
+    if not word or word.casefold() in EVERYTHING:
+        return WHOLE
+    path = Path(word)
+    if path.is_absolute() or re.match(r'[A-Za-z]:', word):
+        try:
+            word = path.resolve().relative_to(Path(workspace or '.').resolve()).as_posix()
+        except (OSError, ValueError):
+            return None
+    word = posixpath.normpath(word.lstrip('/'))
+    if word == '.':
+        return WHOLE
+    return None if word.startswith('../') or word == '..' else word.casefold()
+
+
+def task_files(text, workspace=None):
+    """The claims of a writing task's Files line: [WHOLE] without one, or when it names no path (prose, `none`)."""
+    line = next((row.split(':', 1)[1] for row in text.splitlines() if re.match(r'\s*files\s*:', row, re.I)), None)
+    if line is None:
+        return [WHOLE]
+    words = re.sub(r'\([^)]*\)', ' ', line).replace(',', ' ').replace(';', ' ').split()
+    keys = []
+    for word in words:
+        if (not re.search(r'[/.*\\]', word) and word.casefold() not in EVERYTHING
+                and not (workspace and exists(Path(workspace) / word))):
+            continue  # Not a path: `and`, `the`, `new`; a file such as `Makefile` counts when it is there.
+        key = file_key(word.rstrip('.:'), workspace)
+        if key == WHOLE:
+            return [WHOLE]
+        if key and key not in keys:
+            keys.append(key)
+    return keys or [WHOLE]
+
+
+def exists(path):
+    try:
+        return path.exists()
+    except (OSError, ValueError):
+        return False
+
+
+def overlaps(one, other):
+    return (WHOLE in (one, other) or one == other or one.startswith(other.rstrip('/') + '/')
+            or other.startswith(one.rstrip('/') + '/'))
+
+
+def claims(state, exclude=None):
+    """(session, request, files) of the work in progress that may change files, on agents other than `exclude`: each
+    writing handoff claims its Files line, and any other request (a /d from DIRECT) the whole project."""
+    found = []
     for key, record in (state.get('requests') or {}).items():
-        if (record.get('status') in WORKING and record.get('session') != exclude
-                and not (record.get('handoff') or {}).get('readOnly')):
-            return record.get('session'), key
+        handoff = record.get('handoff') or {}
+        if record.get('status') in WORKING and record.get('session') != exclude and not handoff.get('readOnly'):
+            found.append((record.get('session'), key, list(handoff.get('files') or [WHOLE])))
+    return found
+
+
+def conflict(state, files, exclude=None):
+    """The first running task that may change one of `files`: (session, request, its claim), else None. One writer
+    per file keeps each turn's change receipt, and each undo, its own."""
+    for session, request, claimed in claims(state, exclude):
+        for theirs in claimed:
+            if any(overlaps(mine, theirs) for mine in files):
+                return session, request, theirs
     return None
+
+
+def conflict_text(state, found, files):
+    session, request, theirs = found
+    name = agent_label(state, session)
+    task = ((state.get('requests') or {}).get(request, {}).get('handoff') or {}).get('task')
+    what = 'files anywhere in the project' if theirs == WHOLE else theirs
+    return (name + ' may be changing ' + what + (' (task ' + task + ')' if task else '') + ' right now, and one agent '
+            'writes a file at a time.' + (' This task has no Files line, so it claims the whole project.'
+                                          if files == [WHOLE] else '') +
+            ' Hand it to ' + name + ' to run after that' + (', list other files in its Files line' if WHOLE not in
+                                                             (theirs, *files) else '') +
+            ', or wait for the result; --read-only work can run alongside.')
 
 
 def unread(state):
@@ -221,10 +320,16 @@ def unread(state):
             and not record.get('hostRead')]
 
 
-def ledger_lines(state, relay_command=None, limit=LEDGER_SHOWN):
+def ledger_lines(state, relay_command=None, limit=LEDGER_SHOWN, active=False):
     """The AUTO ledger: unread results first, then the newest. With `relay_command(request)` (Claude's copy), an
-    unread result names its exact relay; without it (the user's /cli list), it says Claude has not read it yet."""
+    unread result names its exact relay; without it (the user's /cli list), it says Claude has not read it yet.
+    `active` keeps only what is still working or unread (Claude's per-turn copy, lever L5: what it has read is
+    already in the conversation)."""
     rows = auto_requests(state)
+    if active:
+        rows = [item for item in rows if item[1].get('status') in WORKING or not item[1].get('hostRead')]
+        if not rows:
+            return []
     if not rows:
         return ['No handoffs yet.']
     labels = state.get('followLabels') or {}
@@ -250,44 +355,92 @@ def ledger_lines(state, relay_command=None, limit=LEDGER_SHOWN):
     return lines + (['(and ' + str(more) + ' older)'] if more > 0 else [])
 
 
+def agents_line(state):
+    """Claude's AUTO agents and what each is doing: `Codex-01 (AUTO agent): t1, changing src/app.py; Codex-02: idle`."""
+    roster = state.get('auto') or {}
+    sessions = [(roster.get('agent'), 'AUTO agent'), (roster.get('backup'), 'backup')]
+    sessions += [(item, None) for item in roster.get('extras') or []]
+    parts = []
+    for session, role in sessions:
+        if not session or not agent_entry(state, session):
+            continue
+        work = []
+        for key, record in sorted(((key, record) for key, record in (state.get('requests') or {}).items()
+                                   if record.get('session') == session and record.get('status') in WORKING),
+                                  key=lambda item: item[1].get('capturedAt') or 0):
+            handoff = record.get('handoff') or {}
+            files = handoff.get('files') or [WHOLE]
+            work.append((handoff.get('task') or 'a /d task') + ' (' + (
+                'read-only' if handoff.get('readOnly') else 'may change any file' if files == [WHOLE] else
+                'changing ' + ' '.join(files[:4]) + (' …' if len(files) > 4 else '')) + ')')
+        parts.append(agent_label(state, session) + (' (' + role + ')' if role else '') + ': ' +
+                     (' then '.join(work) if work else 'idle'))
+    return '; '.join(parts) or 'none'
+
+
+NOT_RUNNING = ('CLI-MODE AUTO is on, but its AUTO agent is not running, so nothing can be handed off. Say so in one '
+               'line: /cli mode auto starts it again, and /cli mode direct switches back.')
+
+
 def context(root, state, workspace, handoff_command, relay_command, style=lambda text: text):
-    """What Claude is told on every AUTO turn (lever A), from P0's tested wording (2026-09-27: 19 of 20 prompts
-    routed as intended). `handoff_command` is the exact handoff command with `<id>` for the task id; `style` marks
-    CLI-MODE's attribution lines as DIRECT's are (green bold, or plain bold with /cli color off)."""
+    """Everything Claude is told about AUTO: the rule, then the status. hooks/claude.py sends the rule once and
+    after that only a changed status (lever L1)."""
+    text = rule(root, state, workspace, handoff_command, style)
+    return NOT_RUNNING if text is None else text + '\n' + status(state, relay_command)
+
+
+def status(state, relay_command=None):
+    """What changes between AUTO turns: the agents and what each does, and what is still working or unread."""
+    rows = ledger_lines(state, relay_command, active=True)
+    return 'Agents now: ' + agents_line(state) + '.' + ('\nAUTO ledger:\n' + '\n'.join('- ' + row for row in rows)
+                                                         if rows else '')
+
+
+def rule(root, state, workspace, handoff_command, style=lambda text: text):
+    """The AUTO rule (lever A), from P0's tested wording (2026-09-27: 19 of 20 prompts routed as intended), made
+    light (levers L2, L3, L6-L8): one call hands off, the result comes with the wake-up, a CHECK line says what to
+    look at. None while the AUTO agent is not running. `handoff_command` is the handoff command with `<id>` for the
+    task id; `style` marks CLI-MODE's attribution lines as DIRECT's are (green bold, or plain bold with color off)."""
     config = load(root)
     roster = state.get('auto') or {}
     lead = roster.get('agent')
     if not lead or not agent_entry(state, lead):
-        return ('CLI-MODE AUTO is on, but its AUTO agent is not running, so nothing can be handed off. Say so in one '
-                'line: /cli mode auto starts it again, and /cli mode direct switches back.')
+        return None
     name = agent_label(state, lead)
     detail = describe(root, config['agent']).split(', ', 1)
     backup = roster.get('backup')
     backup_text = ('; backup ' + agent_label(state, backup) + ' (`--agent backup`), only for when the AUTO agent fails '
-                   'or is out of usage, and for read-only work while it writes') if backup and agent_entry(
-                       state, backup) else ''
+                   'or is out of usage') if backup and agent_entry(state, backup) else ''
+    kind = adapters.module(agent_entry(state, lead)['backend']).LABEL
     return (
         'CLI-MODE AUTO is on. The user turned it on: that is their explicit request that you hand coding work to '
         'their CLI agent. You lead; their AUTO agent, ' + name + (' (' + detail[1] + ')' if len(detail) > 1 else '') +
         ', does the work in this same project folder' + backup_text + '. ' + STRENGTH_RULES[config['strength']] + '\n'
         'Hand off: self-contained work such as implementing a feature to a spec, writing tests, fixing failing tests '
-        'until they pass, ports and refactors, code reviews and second opinions (read-only), and wide research. Keep '
-        'for yourself: small edits (one file, a few lines), quick questions you can answer from a short read, and '
+        'until they pass, ports and refactors, code reviews and second opinions (read-only), and wide research. A '
+        'handoff costs you about three steps (hand off, end the turn, report), so keep for yourself what you can '
+        'finish in one or two tool calls (an edit you already know how to make, a quick answer from a short read) and '
         'anything that depends on this conversation. Do not read the code just to write a task: give the goal and '
         'constraints and let the agent explore. Do not guess either: name what you have not checked as something for '
-        'the agent to find out, not as a fact or a suspect. One writer: while a writing handoff runs, do not edit the '
-        'project yourself.\n'
-        'To hand off: (1) post one line that opens with this attribution, exactly as written, then says in plain words '
-        'what you pass on:\n' + style('Passing to ' + name + ':') + '\n(2) write the task with the Write tool to '
-        + tasks_dir(workspace).as_posix() + '/<id>.md, where <id> is a short new name such as t1, using this '
-        'template:\n' + TEMPLATE + '\n(3) run `' + handoff_command + '` (add `--read-only` for reviews and research); '
-        'it prints the follow command, which you run next, as is (CLI-MODE makes it a background task); (4) end your '
-        'turn with a short status for the user that opens with this attribution, exactly as written:\n' +
-        style(name + ' is working.') + '\nThe agent\'s finish wakes you: then read its result with the relay '
-        'command CLI-MODE gives you, check it (the change receipt, the test result, the agent\'s report), and tell the '
-        'user in your own words what was done and anything unresolved. Never poll or wait for it.\n'
-        'The user switches back to driving the agents with /cli mode direct.\n'
-        'AUTO ledger:\n' + '\n'.join('- ' + line for line in ledger_lines(state, relay_command)))
+        'the agent to find out, not as a fact or a suspect.\n'
+        'One writer per file: a writing task\'s Files line names the only files or folders it may change (without one, '
+        'it claims the whole project), and CLI-MODE refuses a handoff, or an edit of yours, that would change a file '
+        'another running task may change. Work on other files can run in parallel: hand it to an idle agent '
+        '(`--agent <name>`), or start another ' + kind + ' like ' + name + ' for it with `--agent new` (15-40 s; at '
+        'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn.\n'
+        'To hand off, all in one message: (1) a line that opens with this attribution, exactly as written but with the '
+        'name of the agent you hand it to, then says in plain words what you pass on:\n' +
+        style('Passing to ' + name + ':') + '\n(2) the task, written with the Write tool to ' +
+        tasks_dir(workspace).as_posix() + '/<id>.md, where <id> is a short new name such as t1, using this template '
+        '(for a small, self-contained task, Goal and Done when are enough):\n' + TEMPLATE + '\n(3) `' +
+        handoff_command + '`, run after the Write (add `--read-only` for reviews and research, `--agent <name>` or '
+        '`--agent new` for another agent). CLI-MODE hands the task over and turns that same call into the background '
+        'follow of the agent\'s work: there is nothing else to run, and a refusal comes back as the call\'s error. '
+        'Then end your turn with one short line that opens with this attribution, the same way:\n' +
+        style(name + ' is working.') + '\nThe agent\'s finish wakes you with its result, already read for you, and '
+        'a CHECK line: CHECK: ok means tell the user in a few lines what was done, from the result alone; CHECK: look '
+        'names the only things to check first. Never poll or wait for it.\n'
+        'The user switches back to driving the agents with /cli mode direct.')
 
 
 class AutoMixin:
@@ -331,7 +484,8 @@ class AutoMixin:
             with self.store.edit() as state:
                 self.close_page(state)
                 was = routing_mode(state)
-                state['routingMode'] = 'direct'
+                state.update(routingMode='direct', directChosen=True)  # Kept after /cli off too (Store.read).
+                state.pop('autoRule', None)  # Back in AUTO, Claude is given the whole rule again.
             running = ' Your agents keep running; /d sends them work.' if state['active'] else \
                 ' /cli starts an agent; /d sends it work.'
             return dict(state, message=('DIRECT is on' if was == 'auto' else 'DIRECT is already on') + ': you drive '
@@ -359,6 +513,7 @@ class AutoMixin:
             self.close_page(state)
             was = routing_mode(state)
             state['routingMode'] = 'auto'
+            state.pop('directChosen', None)
             lead = (state.get('auto') or {}).get('agent')
             target = agent_entry(state, lead) if lead else None
             if target:  # The AUTO agent is the current one, even when the backup started last.
@@ -370,7 +525,7 @@ class AutoMixin:
 
     def start_role(self, role, choice):
         """Start one AUTO agent with its saved settings, the way bind starts one (in the hook, 13-42 s)."""
-        purpose = 'auto-backup' if role == 'backup' else 'auto-agent'
+        purpose = {'backup': 'auto-backup', 'extra': 'auto-extra'}.get(role, 'auto-agent')
         self.use(choice['agent'])
         self.frontend(choice['agent'], purpose=purpose)
         return self.activate(choice['model'], choice['access'], effort=choice.get('effort'), agent=choice['agent'],
@@ -457,8 +612,9 @@ class AutoMixin:
             return self.mode_page('auto-settings')
         if page == 'auto-settings':
             return self.mode_page('mode')
-        if routing_mode(self.store.read()) == 'auto':
-            return self.mode_close()  # In AUTO, /cli is the Mode page: there is no agent list behind it.
+        state = self.store.read()
+        if routing_mode(state) == 'auto' and state['active']:
+            return self.mode_close()  # With AUTO's agents running, /cli is the Mode page: no agent list behind it.
         return self.frontend('home')
 
     def mode_close(self):
@@ -466,12 +622,21 @@ class AutoMixin:
             self.close_page(state)
         return dict(state, message='Mode page closed. /cli mode opens it again.')
 
-    def handoff(self, task, agent=None, read_only=False):
+    def handoff(self, task, agent=None, read_only=False, request=None, check=False):
         """Hand Claude's task file to an AUTO agent: captured as a /d is, marked as Claude's own (routingMode auto),
-        so its result wakes Claude (relay --for-host) instead of going to the user word for word."""
+        so its result wakes Claude instead of going to the user word for word.
+
+        The approval hook normally runs this itself and turns Claude's call into the follow (lever L2). A new agent
+        (`--agent new`) takes too long to start in a hook: `check` then runs only the checks that can refuse it, and
+        the background task runs the rest under the `request` id the hook chose (hooks/claude.py:handoff_approval)."""
+        if request is not None and not re.fullmatch(r'[0-9a-f]{32}', request):
+            raise ValueError('A handoff --request is 32 lowercase hex characters.')
         state = self.store.read()
         if routing_mode(state) != 'auto':
             raise RuntimeError('AUTO is off, so nothing was handed off. The user turns it on with /cli mode auto.')
+        if not state['active']:
+            raise RuntimeError('AUTO is off (no agent is running), so nothing was handed off. The user starts it with '
+                               '/cli.')
         path = task_file(self.store.workspace, task)
         if not path.is_file():
             raise RuntimeError('No task file at ' + path.as_posix() + '. Write the task there with the Write tool '
@@ -482,26 +647,44 @@ class AutoMixin:
         if len(text) > TASK_MAX:
             raise RuntimeError('The task file is over ' + str(TASK_MAX // 1024) + ' KB. Keep the task to what the '
                                'agent needs; it can read the project itself.')
-        session = self.handoff_target(state, agent)
+        files = None if read_only else task_files(text, self.store.workspace)
+        if agent and agent.casefold() == 'new':
+            # Another agent like the AUTO agent, for work in parallel: checked first, since it takes 15-40 s to start.
+            lead = agent_entry(state, self.handoff_target(state))
+            found = files and conflict(state, files)
+            if found:
+                raise RuntimeError(conflict_text(state, found, files) + ' No agent was started.')
+            if len(state.get('owned') or []) >= agent_limit(state):
+                raise RuntimeError(str(len(state['owned'])) + ' agents are running, the limit, so no agent was started. '
+                                   'Hand this to one of them with --agent <name>; it waits its turn there. (The user '
+                                   'raises the limit with /cli agents max <n>.)')
+            if check:
+                first = ' '.join(text.splitlines()[0].split())
+                goal = first[5:].strip() if first.casefold().startswith('goal:') else first
+                return dict(checked=True, label=adapters.module(lead['backend']).LABEL + ' (new) · ' + (
+                    goal[:24].rstrip() + '…' if len(goal) > 24 else goal))
+            session = self.start_extra()
+            state = self.store.read()
+        else:
+            session = self.handoff_target(state, agent)
         target = agent_entry(state, session)
         name = agent_label(state, session)
         if read_only and target.get('actsWithoutAsking'):
             raise RuntimeError(name + ' runs commands and edits files without asking first, so it cannot take '
                                'read-only work. Hand it to another agent, or drop --read-only.')
-        if not read_only:
-            busy = writer(state, exclude=session)
-            if busy:
-                raise RuntimeError(agent_label(state, busy[0]) + ' is still working on a change in this project (one '
-                                   'writer at a time). Wait for its result, or hand this over with --read-only.')
         first = ' '.join(text.splitlines()[0].split())  # The template's Goal line names the work best.
         goal = first[5:].strip() if first.casefold().startswith('goal:') else first
         label = name + ' · ' + (goal[:30].rstrip() + '…' if len(goal) > 30 else goal)
-        request = uuid.uuid4().hex
+        request = request or uuid.uuid4().hex
         with self.store.edit() as latest:
             if routing_mode(latest) != 'auto':
                 raise RuntimeError('AUTO was turned off; nothing was handed off.')
+            found = files and conflict(latest, files, exclude=session)  # One writer per file; its own queue waits.
+            if found:
+                raise RuntimeError(conflict_text(latest, found, files) + ' Nothing was handed off.')
             self.store.capture(latest, request, text, session=session)
-            latest['requests'][request]['handoff'] = dict(task=task, readOnly=bool(read_only))
+            latest['requests'][request]['handoff'] = dict(task=task, readOnly=bool(read_only),
+                                                          **({'files': files} if files else {}))
             labels = latest.setdefault('followLabels', {})  # The follow's pane row: `<Agent NAME> · <goal>`.
             labels.pop(request, None)
             labels[request] = label
@@ -510,6 +693,15 @@ class AutoMixin:
         started = self.ensure_pump(session)
         return dict(requestId=request, agent=name, task=task, readOnly=bool(read_only), label=label,
                     worker=started.get('worker'))
+
+    def note_handoff_error(self, request, message):
+        """A handoff the background task could not make (a new agent that did not start): its wake-up says why."""
+        with self.store.edit() as state:
+            errors = state.setdefault('handoffErrors', {})
+            errors.pop(request, None)
+            errors[request] = message
+            for stale in list(errors)[:-10]:
+                errors.pop(stale)
 
     def handoff_target(self, state, agent=None):
         """The session a handoff goes to: the AUTO agent, `backup`, or a running agent the user named."""
@@ -531,9 +723,28 @@ class AutoMixin:
                                'starts it again.')
         return session
 
-    def relay_for_host(self, request_id, wait=25.0, poll=.25):
+    def start_extra(self):
+        """Start another agent like the running AUTO agent (its kind, model, effort and access), named after it:
+        `Codex-02`. It joins this conversation's extras, closes with the others, and idles out like them."""
+        state = self.store.read()
+        lead = agent_entry(state, self.handoff_target(state))
+        if len(state.get('owned') or []) >= agent_limit(state):
+            raise RuntimeError(str(len(state['owned'])) + ' agents are running, the limit, so no agent was started. '
+                               'Hand this to one of them with --agent <name>; it waits its turn there. (The user '
+                               'raises the limit with /cli agents max <n>.)')
+        settings = lead.get('settings') or {}
+        choice = {'agent': lead['backend'], 'model': settings.get('model'), 'access': settings.get('access'),
+                  'effort': settings.get('effortValue')}
+        result = self.start_role('extra', choice)
+        session = result.get('activated')
+        if not session or not agent_entry(self.store.read(), session):
+            raise RuntimeError('The new agent did not start, so nothing was handed off.')
+        return session
+
+    def relay_for_host(self, request_id, wait=25.0, poll=.25, answer_max=None):
         """A handoff's result for Claude to read (not to post): plain lines, then the agent's answer. It marks the
-        result read, which keeps it out of every user relay and clears the wake-up's Stop guard."""
+        result read, which keeps it out of every user relay and clears the wake-up's Stop guard. The wake-up builds
+        it itself (lever L3, `answer_max` sharing its room between results); `relay --for-host` is the fallback."""
         import relay_view
         from queue_worker import request_label
         state = self.store.read()
@@ -560,6 +771,7 @@ class AutoMixin:
             batch, position = batch + view['events'], view['cursor']
         public = [event for event in batch if event.get('type') in self.RELAY_PUBLIC]
         latest = self.store.read()
+        finished = (latest.get('requests') or {}).get(request_id) or record  # Its touched files, now it has settled.
         stopped = next((item.get('approval') for item in latest.get('owned') or []
                         if (item.get('approval') or {}).get('requestId') == request_id), None)
         handoff = record.get('handoff') or {}
@@ -567,7 +779,9 @@ class AutoMixin:
         text = relay_view.host_text(
             request_id, label, status, public, view['receipt'], read_only=handoff.get('readOnly'),
             task=task_file(self.store.workspace, task).as_posix() if task and TASK_ID.fullmatch(task) else None,
-            stopped=stopped, access=(agent_entry(latest, record.get('session')) or {}).get('settings'))
+            stopped=stopped, access=(agent_entry(latest, record.get('session')) or {}).get('settings'),
+            touched=None if finished.get('unlocated') else finished.get('touched'),
+            answer_max=answer_max or relay_view.HOST_ANSWER_MAX)
         with self.store.edit() as latest:
             saved = (latest.get('requests') or {}).get(request_id)
             if saved:
