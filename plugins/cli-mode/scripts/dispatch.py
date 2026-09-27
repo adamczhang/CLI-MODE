@@ -11,7 +11,7 @@ import agent_folder
 import native_agy
 import native_commands
 import viewer
-from operations import emit, menu_holds, pending_work
+from operations import ProbeCanceled, emit, menu_holds, pending_work
 from presentation import PERMISSION_CODES, permission_stop
 from progress import progress_mode, public_progress, public_touched
 from state import agent_entry, agent_label, routing_mode, direct_payload, team_of
@@ -77,6 +77,7 @@ class DispatchMixin:
         completed = False
         not_dispatched = False
         spawn_attempted = False
+        cancel_sent = False  # A bootstrap probe's cancel went to its owner.
         provider_outcome = None
         observed_session = None
         try:
@@ -154,22 +155,27 @@ class DispatchMixin:
                             stop = event['stopReason']
                         had_message |= event['type'] in ('message', 'artifact')
                         errored |= event['type'] == 'error'
-                cancel_sent = False
+                cancel_due = 0  # When the bootstrap probe's cancel is sent (again).
                 while finished < 2:
                     if owned.get('transport') == 'native' and native_agy.marker(owned, '.cancel').exists():
                         process.terminate()
                         raise RuntimeError('Native CLI turn canceled. Background provider tasks, if any, require provider verification.')
-                    if owned.get('bootstrapPrompt') and not cancel_sent and self.store.cancel_path(op).exists():
+                    if (owned.get('bootstrapPrompt') and time.monotonic() >= cancel_due
+                            and self.store.cancel_path(op).exists()):
                         # The bridge polls its cancel file; the ACPX CLI used for the
                         # first readiness probe does not. Cancel through the owner
                         # (nothing but this probe can be running before activation),
                         # then keep draining so settlement is still observed.
-                        cancel_sent = True
+                        # ACPX drops a cancel that comes before the CLI has started the owner and handed it the
+                        # probe, as a warm bridge's can (in milliseconds; the ACPX CLI's own cancel took long
+                        # enough to start that it came after), so it is sent again each second until the probe ends.
+                        if not cancel_sent:
+                            until = min(until, time.monotonic() + 15)
+                        cancel_sent, cancel_due = True, time.monotonic() + 1
                         try:
                             self.backend.collect(self.backend.start(owned, ['cancel', '-s', owned['name']]))
                         except RuntimeError:
                             pass  # An already settled probe has nothing left to cancel.
-                        until = min(until, time.monotonic() + 15)
                     if time.monotonic() > until:
                         raise RuntimeError('Prompt timed out; inspect status/files before retrying. Work may continue.')
                     try:
@@ -305,6 +311,10 @@ class DispatchMixin:
             if known_command and not had_message:
                 result['noPublicOutput'] = True
             return result
+        except RuntimeError as error:
+            if cancel_sent and not isinstance(error, ProbeCanceled):
+                raise ProbeCanceled(str(error)) from error  # Same message; activation stops here.
+            raise
         finally:
             if not spawn_attempted:
                 not_dispatched = completed = True

@@ -265,9 +265,12 @@ class Tests(unittest.TestCase):
                     self.calls[-1] = args + (['reserved' if args[1] == 'reserve' else 'started'])
                     return Process({'reserved': True} if args[1] == 'reserve' else {})
                 return process
+        from operations import ProbeCanceled
         refused, down = RuntimeError('placeholder refused'), RuntimeError('still down')
+        canceled = ProbeCanceled('probe canceled')
         cases = {'reserved, then ready': (True, [None]), 'reserve fails, the classic way works': (True, [refused, None]),
-                 'both fail: the first error': (True, [refused, down]), 'classic ensure fails: no retry': (False, [down])}
+                 'both fail: the first error': (True, [refused, down]), 'classic ensure fails: no retry': (False, [down]),
+                 'canceled probe: no retry': (True, [canceled])}
         for index, (case, (reserves, outcomes)) in enumerate(cases.items()):
             with self.subTest(case):
                 backend = ReservingBackend(reserves)
@@ -291,7 +294,7 @@ class Tests(unittest.TestCase):
                     else:
                         self.assertTrue(activate()['active'])
                 ensures = [call[-1] for call in backend.calls if call[:1] == ['sessions']]
-                retried = reserves and outcomes[0] is not None
+                retried = reserves and outcomes[0] is not None and outcomes[0] is not canceled
                 self.assertEqual(ensures, ['reserved', 'started'] if retried else ['reserved' if reserves else 'started'])
                 self.assertEqual(probes, ensures)  # One readiness prompt after each.
                 if retried:

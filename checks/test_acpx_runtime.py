@@ -15,6 +15,7 @@ from unittest.mock import patch
 from test_controller import PLUGIN, Controller, Store, hook
 import acpx
 import agy
+from operations import ProbeCanceled
 from state import agent_label
 
 
@@ -437,23 +438,33 @@ class SharedRuntime(unittest.TestCase):
         finally:
             self.assertTrue(control.off()['shutdownComplete'])
 
-    def held_bootstrap(self, name):
-        """Start activation whose first (ACPX CLI) readiness probe the fixture holds."""
+    def held_bootstrap(self, name, held=True):
+        """Start activation whose first (ACPX CLI) readiness probe the fixture holds.
+
+        Returns once the agent holds the probe, or with `held=False` as soon as the probe's ACPX CLI is started:
+        before it can have started the owner and handed it the probe (ACPX needs seconds for that on a slow start).
+        """
         (self.workspace / 'hold-readiness').touch()
         control = Controller(Store(name, self.workspace, self.root / name), self.backend)
         control.frontend()
         pool = concurrent.futures.ThreadPoolExecutor(1)
         self.addCleanup(pool.shutdown)
         activation = pool.submit(control.activate, 'gemini-3.8-flash-high', 'allow')
+
+        def probe_held():
+            try:
+                return self.prompts_seen() > 0  # setUp's session has had no prompt: this is the probe.
+            except ValueError:
+                return False  # Read mid-write.
         until = time.monotonic() + 20
         while time.monotonic() < until:
             entries = list(control.store.read()['inflight'].values())
-            if entries and entries[0].get('origin') == 'readiness' and entries[0].get('pid'):
+            if (entries and entries[0].get('origin') == 'readiness' and entries[0].get('pid')
+                    and (not held or probe_held())):
                 break
             time.sleep(.05)
         else:
-            self.fail('bootstrap readiness never started')
-        time.sleep(.5)  # Let the ACPX CLI submit the probe to the owner.
+            self.fail('the agent never held the bootstrap readiness probe' if held else 'bootstrap readiness never started')
         return control, activation
 
     def test_activation_starts_the_agent_once(self):
@@ -478,19 +489,28 @@ class SharedRuntime(unittest.TestCase):
         finally:
             self.assertTrue(control.off()['shutdownComplete'])
 
-    def test_bootstrap_probe_honors_the_bridge_cancel_signal(self):
-        control, activation = self.held_bootstrap('bootstrap-cancel')
+    def assert_bootstrap_cancel_honored(self, name, held):
+        control, activation = self.held_bootstrap(name, held)
         try:
-            started = time.monotonic()
             with control.store.edit() as state:
                 control.store.signal_cancel(state)
-            with self.assertRaises(RuntimeError):
+            # Honored: the probe settles as canceled (the fixture ends a held probe only on the agent's cancel),
+            # not at dispatch's timeout after a lost cancel, and activation ends with it: a probe retried the
+            # classic way would be held again, past this wait.
+            with self.assertRaisesRegex(ProbeCanceled, r'stop=cancelled\)'):
                 activation.result(timeout=20)
-            self.assertLess(time.monotonic() - started, 15)
             self.assertFalse(control.store.read()['active'])
         finally:
             (self.workspace / 'hold-readiness').unlink(missing_ok=True)
             self.assertTrue(control.off()['shutdownComplete'])
+
+    def test_bootstrap_probe_honors_the_bridge_cancel_signal(self):
+        self.assert_bootstrap_cancel_honored('bootstrap-cancel', held=True)
+
+    def test_a_bootstrap_cancel_before_the_owner_has_the_probe_is_sent_again(self):
+        # A warm bridge cancels within milliseconds, while the probe's ACPX CLI is still starting its owner:
+        # ACPX drops that cancel (no owner holds the session yet), and the probe ran to dispatch's timeout.
+        self.assert_bootstrap_cancel_honored('bootstrap-early-cancel', held=False)
 
     def test_off_during_bootstrap_probe_shuts_down_cleanly(self):
         control, activation = self.held_bootstrap('bootstrap-off')
