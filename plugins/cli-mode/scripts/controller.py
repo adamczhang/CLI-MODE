@@ -1,8 +1,9 @@
 """CLI-MODE lifecycle and dispatch. Run --help; hooks import the same controller.
 
 Controller composes focused mixins: menus (setup and settings), binding (owned
-session lifecycle), dispatch (one provider turn) and queue_worker (detached
-FIFO worker and receipts). Module-level helpers live in operations.
+session lifecycle), dispatch (one provider turn), queue_worker (detached
+FIFO worker and receipts) and auto_mode (Claude Code's DIRECT and AUTO modes).
+Module-level helpers live in operations.
 """
 import argparse
 import json
@@ -11,6 +12,11 @@ from pathlib import Path
 import sys
 
 import adapters
+try:
+    from auto_mode import AutoMixin
+except ImportError:  # The Codex package: AUTO mode (auto_mode.py) ships with Claude Code only.
+    class AutoMixin:
+        pass
 import help_view
 import host
 import installer
@@ -26,7 +32,7 @@ from state import Store, agent_label, live_agents, passing_line, route
 import names
 
 
-class Controller(QueueMixin, MenuMixin, BindingMixin, DispatchMixin):
+class Controller(QueueMixin, MenuMixin, BindingMixin, DispatchMixin, AutoMixin):
     def __init__(self, store, backend=None, agent=None):
         self.store = store
         self.override = backend
@@ -119,6 +125,10 @@ def build_parser():
     source.add_argument('--file'); source.add_argument('--request')
     p = sub.add_parser('cancel'); p.add_argument('--name')
     p = sub.add_parser('acknowledge'); p.add_argument('--operation', required=True)
+    p = sub.add_parser('auto', help='Claude Code: the Mode page, DIRECT or AUTO, and the AUTO agents.')
+    p.add_argument('action', choices=['page', 'set', 'agent', 'clear-backup', 'strength', 'choose', 'back', 'close'])
+    p.add_argument('--to'); p.add_argument('--role', choices=['agent', 'backup'], default='agent')
+    p.add_argument('--agent'); p.add_argument('--number', type=int)
     return parser
 
 
@@ -167,6 +177,7 @@ def run(args, control=None):
         activated = result.get('active') and not result.get('pending') and 'activationMenu' not in result
         if confirming and activated:
             result = dict(result, activation=control.activation_message(confirm_to, session=result.get('activated')))
+        result = with_auto_line(result)
     elif command == 'refresh': result = control.refresh()
     elif command == 'navigate': result = control.navigate(args.action)
     elif command == 'settings': result = control.settings_menu(args.dismiss, control.session_of(args.name))
@@ -236,6 +247,7 @@ def run(args, control=None):
         result = control.activate(model, access, effort=effort, agent=target, require_hooks=True)
         if confirming:
             result = dict(result, activation=control.activation_message(confirm_to, prefetched))
+        result = with_auto_line(result)
     elif command == 'off': result = control.off()
     elif command == 'close': result = control.close(args.name)
     elif command == 'use': result = control.make_current(args.name)
@@ -255,6 +267,10 @@ def run(args, control=None):
             with Path(args.file).open(encoding='utf-8-sig', newline='') as source:
                 result = control.send(source.read())
     elif command == 'cancel': result = control.cancel(control.session_of(args.name))
+    elif command == 'auto':
+        if views:
+            raise ValueError('AUTO mode is Claude Code only; on Codex only /d reaches an agent.')
+        result = control.mode_control(args.action, args.to, args.role, args.agent, args.number)
     else:
         result = control.acknowledge(args.operation)
     block = result.get('activationMenu') or (result.get('text') if command == 'format-menu' else None)
@@ -283,6 +299,17 @@ def main():
         color = host.chat_color(args.data_root or host.data_root(args.host), args.host)
         result = dict(result, activationMenu=chat_menu(result['activationMenu'], color))
     emit(result)
+
+
+def with_auto_line(result):
+    """An activation that made an AUTO agent (Claude Code) says so under its card, or as its message."""
+    line = result.pop('autoLine', None)
+    if not line:
+        return result
+    activation = result.get('activation')
+    if isinstance(activation, dict) and activation.get('text'):
+        return dict(result, activation=dict(activation, text=activation['text'] + '\n\n' + line))
+    return dict(result, message=(result['message'] + ' ' if result.get('message') else '') + line)
 
 
 def with_references(result):

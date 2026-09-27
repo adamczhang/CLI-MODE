@@ -293,9 +293,21 @@ INACTIVE_HINT = '/cli to activate.  Say /help to see options'
 PREFIXES = ('/', '$')
 # Claude Code also names a plugin's commands by plugin: /cli-mode:cli, /cli-mode:d.
 NAMESPACE = '/cli-mode:'
-ROUTING_MODES = ('direct',)  # A prompt reaches the agent only through /d (Passthrough was removed).
+# DIRECT: a prompt reaches an agent only through /d (Passthrough was removed). AUTO (Claude Code only): the user
+# talks to Claude, which hands work to the user's AUTO agent; /d is off. Codex has no AUTO.
+ROUTING_MODES = ('direct', 'auto')
 MODE_REMOVED = ('Prompts reach the agent only through /d <prompt>; every other message stays with {host}. '
                 'Passthrough mode was removed.')
+MODE_PAGES = ('mode', 'auto-settings', 'auto-strength')  # The Mode page and its sub-pages (pending phases).
+STRENGTHS = ('normal', 'strong', 'max')  # How strongly Claude hands work off in AUTO.
+AUTO_D = ('AUTO is on: tell Claude what you want, and it hands the work to your AUTO agent. /d is off in AUTO; '
+          '/cli mode direct lets you drive the agents yourself.')
+AUTO_OWNED = ('AUTO is on, so Claude and CLI-MODE run the agents. Ask Claude, change the AUTO agent with /cli mode, '
+              'or switch back with /cli mode direct.')
+MODE_USAGE = ('Use /cli mode, /cli mode auto|direct, /cli mode agent [<agent> [<model>]], /cli mode backup '
+              '[<agent>|none], or /cli mode strength normal|strong|max.')
+# Controls that change which agent does what: the user's in DIRECT, Claude's and CLI-MODE's in AUTO.
+AUTO_OWNED_VERBS = frozenset(('bind', 'use', 'model', 'effort', 'menu', 'timeout', 'attach', 'brief', 'brief-add'))
 
 
 def inactive_hint():
@@ -314,6 +326,11 @@ def routing_mode(state):
     if mode not in ROUTING_MODES:
         raise ValueError('Unsupported CLI-MODE routing mode; inspect state before dispatch.')
     return mode
+
+
+def auto_on(state):
+    """True while this Claude Code conversation is in AUTO mode."""
+    return host.claude() and routing_mode(state) == 'auto'
 
 
 def agent_entry(state, session=None):
@@ -607,7 +624,15 @@ def approval_route(verb, choice, state):
 def cli_route(verb, choice, state):
     """One `/cli <verb> [choice]` control, with `verb` already folded and de-aliased."""
     if not verb:
-        return {'route': 'home'}
+        return {'route': 'mode-page'} if auto_on(state) else {'route': 'home'}
+    if verb == 'mode' and host.claude():
+        return mode_route(choice)
+    if auto_on(state):
+        if verb in AUTO_OWNED_VERBS or (resolve_backend(verb) and not choice) or (
+                verb == 'close' and choice and choice.casefold() != 'all'):
+            return {'route': 'hint', 'text': AUTO_OWNED}
+        if verb == 'close':
+            return {'route': 'off'}  # In AUTO, closing means every agent: they are one team.
     if verb == 'help' and not choice:
         return {'route': 'help', 'text': help_view.render()}
     if verb == 'display' and host.claude():
@@ -712,6 +737,42 @@ def cli_route(verb, choice, state):
     return {'route': 'hint', 'text': inactive_hint() if not state['active'] else help_hint()}
 
 
+def mode_route(choice):
+    """`/cli mode [auto|direct|agent ...|backup ...|strength ...]` on Claude Code."""
+    words = choice.split()
+    if not words:
+        return {'route': 'mode-page'}
+    first = words[0].casefold()
+    if first in ROUTING_MODES and len(words) == 1:
+        return {'route': 'mode-set', 'mode': first}
+    if first in ('agent', 'backup'):
+        rest = words[1:]
+        if first == 'backup' and len(rest) == 1 and rest[0].casefold() in ('none', 'off', 'remove'):
+            return {'route': 'mode-backup-clear'}
+        if not rest:
+            return {'route': 'mode-agent', 'role': first}
+        agent = resolve_backend(rest[0])
+        if not agent:
+            return {'route': 'hint', 'text': 'CLI-MODE has no agent called ' + rest[0] + '. Use a tag or full name: '
+                    'agy, cla, cod, gro, cop or cur.'}
+        return {'route': 'mode-agent', 'role': first, 'agent': agent, 'text': ' '.join(rest[1:])}
+    if first == 'strength':
+        if len(words) == 2 and words[1].casefold() in STRENGTHS:
+            return {'route': 'mode-strength', 'strength': words[1].casefold()}
+        return {'route': 'hint', 'text': 'Use /cli mode strength normal, strong or max.'}
+    return {'route': 'hint', 'text': MODE_USAGE}
+
+
+def mode_page_reply(message):
+    """A reply to the open Mode page: a number, B or X; anything else closes the page and routes as usual."""
+    reply = message.strip().casefold()
+    if reply.isdigit():
+        return {'route': 'mode-choose', 'number': int(reply)}
+    if reply in ('b', 'x'):
+        return {'route': 'mode-back' if reply == 'b' else 'mode-dismiss'}
+    return {'route': 'mode-invalid'}
+
+
 def direct_targets(payload, state):
     """The agents a /d payload starts by naming: ([(session, name)...], words used, problem hint or None).
 
@@ -776,6 +837,8 @@ def route(message, state):
         reply = close_menu_reply(message, state)
         if reply:
             return reply
+    if host.claude() and (state.get('pending') or {}).get('phase') in MODE_PAGES and not is_command(command_word, 'cli'):
+        return mode_page_reply(message)
     if is_command(command_word, 'help') and not rest:
         return {'route': 'help', 'text': help_view.render()}
     if command_word == 'x' and not rest and (state.get('helpMenu') or state.get('turnRoute', {}).get('route') == 'help'):
@@ -798,6 +861,8 @@ def route(message, state):
         pending = state['pending']
         if pending.get('choices') and pending.get('phase') in ('agent', 'model', 'effort', 'access') and message.strip().isdigit():
             return {'route': 'choose', 'number': int(message.strip())}
+        if host.claude() and pending.get('phase') == 'agent' and message.strip().casefold() == 'm':
+            return {'route': 'mode-page'}  # The agent list's "M. Mode" row.
         if pending.get('phase') == 'settings' and pending.get('stage') == 'menu':
             choice = message.strip().casefold()
             phase = {'1':'model', 'model':'model', '2':'effort', 'effort':'effort',
@@ -813,5 +878,5 @@ def route(message, state):
     # Only an explicit /d or $d reaches an agent; everything else is the host's.
     payload = direct_payload(message)
     if payload is not None:
-        return direct_route(payload, state)
+        return {'route': 'hint', 'text': AUTO_D} if auto_on(state) else direct_route(payload, state)
     return {'route': 'host'}

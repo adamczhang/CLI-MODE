@@ -41,6 +41,8 @@ SECTIONS = (
         ('/cli brief ...', 'shared brief'),
     )),
 )
+# Claude Code's SEND WORK section ends with its modes instead: in AUTO, Claude hands the work over, not /d.
+MODE_ROW = ('/cli mode ...', 'DIRECT or AUTO')
 CLAUDE_SETTINGS = (
     ('/cli display ...', 'chat or instant'),
     ('/cli color on|off', 'green or plain'),
@@ -69,7 +71,7 @@ def text():
         lines += ([''] if index else []) + [heading] + [command.ljust(COLUMN) + description
                                                        for command, description in rows]
         if heading == 'SEND WORK':
-            lines.append('Only /d reaches an agent.')
+            lines.append(MODE_ROW[0].ljust(COLUMN) + MODE_ROW[1] if host.claude() else 'Only /d reaches an agent.')
     lines += ['', *(['More: /cli attach|resume|shortcuts,', '/cli reset, /cli help (this page)'] if host.claude()
                     else ['More: /cli attach, /cli resume,', '/help (this page)']),
               '<agent>: a tag or full name:', *AGENTS, '<name>: a name, tag (gro) or -7K',

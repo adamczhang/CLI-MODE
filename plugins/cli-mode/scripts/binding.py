@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from state import (Store, TIMEOUT_RANGE, agent_entry, agent_label, agent_limit, default_timeout, last_used, live_agents,
-                   save_default_timeout, team_of, ACTS_WITHOUT_ASKING)
+                   routing_mode, save_default_timeout, team_of, ACTS_WITHOUT_ASKING)
 
 
 def duration(minutes):
@@ -93,6 +93,10 @@ class BindingMixin:
             if installer_run:
                 state['stoppedInstallerRun'] = installer_run  # For off(): the routing hook disables first.
             state.update(active=False, pending=None, main=None, modeMenu=False, helpMenu=None)
+            if state.get('routingMode') == 'auto':
+                # AUTO ends with its agents: the next /cli starts in DIRECT (/cli mode auto starts them again).
+                state['routingMode'] = 'direct'
+                state.pop('auto', None)
             state['generation'] += 1
         return state
 
@@ -599,6 +603,7 @@ class BindingMixin:
                                             for item in state['owned']):
                 raise RuntimeError('An agent named ' + name + ' is already running.')
             activation_id = state['pending']['id']
+            purpose = state['pending'].get('purpose')  # An AUTO agent being chosen or started (auto_mode.PURPOSES).
             origin_route = deepcopy(state.get('turnRoute'))
             completed_control = state['pending'].get('tuning') or (origin_route or {}).get('route') == 'bind'
             state['pending']['stage'] = 'verifying'
@@ -651,20 +656,35 @@ class BindingMixin:
                         if owned.get('transport') == 'native':
                             item['nativeModel'] = owned['nativeModel']
                 state.update(active=True, pending=None)
-                if not reuse or owned['name'] == state['main'] or not state['main']:
+                if ((not reuse or owned['name'] == state['main'] or not state['main'])
+                        and not (purpose == 'auto-backup' and state['main'])):
                     # A new agent becomes the current one; changing another agent's settings leaves it be.
+                    # A backup AUTO agent never does: the AUTO agent stays current.
                     state.update(main=owned['name'], settings=settings, backend=target)
+                replaced = None
+                if purpose:
+                    import auto_mode
+                    replaced = auto_mode.adopt(state, purpose, owned['name'], target, settings, self.store.root)
                 # A new user prompt owns its own route, even if its command is identical.
                 if (completed_control and origin_route and state.get('turnRoute') == origin_route
                         and origin_route['route'] in ('bind', 'tune', 'setup')):
                     state['turnRoute']['route'] = 'control-result'
             latest = self.store.read()
+            retired = self.retire(replaced) if replaced and routing_mode(latest) == 'auto' else None
+            if purpose:
+                import auto_mode
+                # Said under the activation card (controller.with_auto_line): what the new agent is now.
+                line = auto_mode.adopted_line(self.store.root, self.store.read(), purpose, owned['name'])
+                latest = dict(self.store.read(), autoLine=line + (' ' + retired if retired else ''))
             if reuse:
                 return dict(latest, activated=owned['name'])
             # A new agent: the brief lists it now, and gets an entry for the host's note on what the conversation
-            # has been working on, which the host writes as it shows this activation (hostNote).
+            # has been working on, which the host writes as it shows this activation (hostNote). Not in AUTO,
+            # where each task Claude writes is its agent's brief.
             workspace = owned.get('workspace') or self.store.workspace
             agent_folder.write_team(workspace, self.store.key, *team_of(latest))
+            if purpose or routing_mode(latest) == 'auto':
+                return dict(latest, activated=owned['name'])
             note = agent_folder.add_host_note(workspace, time.strftime('%Y-%m-%d %H:%M'),
                                               agent_label(latest, owned['name']))
             return dict(latest, activated=owned['name'], **({'hostNote': note} if note else {}))

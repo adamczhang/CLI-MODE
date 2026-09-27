@@ -75,6 +75,13 @@ lands in one of three zones below; know which before editing.
   `brief_note_approval`: only the host's note edit in the project brief), the Stop guard and `/cli reset`.
   `nothing_to_do()` is a pre-import fast path.
 - `claude/hooks.json`, `claude/commands/{cli,d}.md`.
+- `scripts/auto_mode.py` (`CLAUDE_ONLY` when packaged; the controller falls back to an empty mixin without it): the
+  DIRECT and AUTO modes. `/cli mode` opens the Mode page (pending phases `state.MODE_PAGES`). The user's AUTO agent,
+  optional backup and delegation strength are saved for every conversation (`auto_mode.config_path`). `/cli mode auto`
+  starts those agents in the prompt hook, as bind does (an activation whose `pending.purpose` makes `adopt()` save
+  it and put it in the conversation's `auto` roster), and they wait for work. In AUTO (`state.auto_on`), `/d` and
+  `state.AUTO_OWNED_VERBS` are refused, `/cli` is the Mode page, the brief's host note is skipped, and `off` ends
+  AUTO (`binding.disable`). Handing work to the AUTO agent is not built yet.
 - `QueueMixin.relay_text()` and `relay_chain()`: nothing mid-turn, then the whole output as the last message.
 - `QueueMixin.follow()` and `operations.follow_path`/`following`: a `/d` turn runs `controller.py follow` as a
   background task (the hook's `updatedInput` forces it and labels the row), ends, and is woken for one relay.

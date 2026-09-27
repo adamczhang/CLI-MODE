@@ -270,11 +270,14 @@ def handle(event, root=None):
     prompt = event.get('prompt', '')
     capture = host.unwrap_prompt(prompt, host.CLAUDE)
     store, state, decision, worker, cancellation = route.decide(event, root, workspace=workspace(event), capture=capture)
-    if decision['route'] == 'help-invalid':
-        # On Claude Code help is a card, not a mode: any other message closes it and is handled as usual,
-        # so a question typed after the card still reaches Claude (or the agent).
+    if decision['route'] in ('help-invalid', 'mode-invalid'):
+        # On Claude Code help and the Mode page are cards, not modes: any other message closes them and is handled
+        # as usual, so a question typed after the card still reaches Claude (or the agent).
         with store.edit() as saved:
-            saved['helpMenu'] = None
+            if decision['route'] == 'help-invalid':
+                saved['helpMenu'] = None
+            else:
+                saved['pending'] = None
         store, state, decision, worker, cancellation = route.decide(event, root, workspace=workspace(event),
                                                                     capture=capture)
     if name == 'UserPromptSubmit' and route.task_through_settings(state, prompt):
@@ -799,6 +802,21 @@ def named(decision):
     return ['--name', decision['name']] if decision.get('name') else []
 
 
+# The Mode page's routes, as `auto` controller words. Each runs in this hook, starting an AUTO agent included (as
+# bind does): the hook's 300 s timeout covers an agent's start, and as a command it would get a pane row of its own.
+MODE_ACTIONS = {
+    'mode-page': lambda decision: ['page'],
+    'mode-set': lambda decision: ['set', '--to', decision['mode']],
+    'mode-agent': lambda decision: ['agent', '--role', decision['role'],
+                                    *(['--agent', decision['agent']] if decision.get('agent') else [])],
+    'mode-backup-clear': lambda decision: ['clear-backup'],
+    'mode-strength': lambda decision: ['strength', '--to', decision['strength']],
+    'mode-choose': lambda decision: ['choose', '--number', str(decision['number'])],
+    'mode-back': lambda decision: ['back'],
+    'mode-dismiss': lambda decision: ['close'],
+}
+
+
 def instant(event, root, *words, render=None):
     """Run a control in process and show its reply at once."""
     try:
@@ -819,8 +837,10 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
         return show_text(event, decision['text'])
     if kind == 'help':
         return instant(event, root, 'commands')
-    if kind == 'help-invalid':
-        return {}  # handle() closes help and routes the message again; never hold it here.
+    if kind in ('help-invalid', 'mode-invalid'):
+        return {}  # handle() closes the card and routes the message again; never hold it here.
+    if kind in MODE_ACTIONS:
+        return instant(event, root, 'auto', *MODE_ACTIONS[kind](decision))
     if kind == 'display':
         return display(event, root, decision.get('choice', ''))
     if kind == 'color':

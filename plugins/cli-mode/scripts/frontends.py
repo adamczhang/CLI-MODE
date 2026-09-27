@@ -124,7 +124,8 @@ def setup_menu(result, routing, access=None):
     return menu_block('\n'.join(lines))
 
 
-def menu(root, agent, settings=None, routing=None, access=None, page=1):
+def menu(root, agent, settings=None, routing=None, access=None, page=1, mode=None):
+    """The agent list (`home`) or one agent's activation page; with `mode` (Claude Code), the list's Mode row."""
     blocked = routing is not None and not routing['ready']
     if agent != 'home':
         receipt_path(root, agent)
@@ -141,6 +142,7 @@ def menu(root, agent, settings=None, routing=None, access=None, page=1):
         agents = backends()
         labels = [item['displayName'] + ('' if confirmed(root, item['id']) else ' (Setup needed)') for item in agents]
         built = options_menu('Select CLI Agent', labels, page=page,
+                             tail=['M. Mode: ' + mode.upper()] if mode else (),
                              lead=['Hook check pending.', ''] if blocked else [])
         return menu_block(built['text'])
     receipt_path(root, agent)

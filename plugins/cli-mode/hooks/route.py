@@ -165,8 +165,9 @@ def decide(event, root=None, workspace=None, capture=None):
                 state['turnRoute']['text'] = decision['text']
             if decision.get('session'):
                 state['turnRoute']['session'] = decision['session']  # The agent a named control is for.
-            if decision['route'] == 'tune':
-                state['turnRoute']['phase'] = decision['phase']
+            if decision['route'] in ('tune', 'mode-agent'):
+                if decision['route'] == 'tune':
+                    state['turnRoute']['phase'] = decision['phase']
                 # The typed setting (not task prose), matched by the controller.
                 state['turnRoute']['choice'] = (decision.get('text') or '')[:80]
             if decision['route'] in ('mode', 'progress', 'view'):
