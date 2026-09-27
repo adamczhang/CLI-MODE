@@ -353,7 +353,9 @@ def extra_attach(session, agent):
     shown = session.shown(t)
     scenarios.expect(t, 'Passing to' in shown, 'the /d with an image was not relayed')
     # Headless, the image is not saved in the uploads folder (hooks/claude.py:with_images), so it stays here.
-    scenarios.expect(t, re.search(r'(?i)only got your text|(did not|didn.t|not) (receive|get|see)', shown),
+    # Claude words it its own way: "only got your text", "got only the text", "stayed with Claude Code"...
+    scenarios.expect(t, re.search(r'(?i)only got|got only|stayed (here|with)|(did not|didn.t|not) (receive|get|see)',
+                                  shown),
                      'no note that the agent did not receive the image')
     return [row('attach', ['F12'], [t])]
 

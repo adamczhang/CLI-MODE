@@ -181,6 +181,28 @@ class SharedRuntime(unittest.TestCase):
         finally:
             self.assertTrue(control.off()['shutdownComplete'])
 
+    def test_an_edit_named_only_in_its_diff_is_logged_as_touched_in_both_progress_modes(self):
+        control = Controller(Store('runtime-patch', self.workspace, self.root / 'patch'), self.backend)
+        try:
+            control.frontend()
+            control.activate('gemini-3.8-flash-high', 'allow')
+            for mode in ('activity', 'quiet'):
+                control.progress(mode)
+                output = []
+                result = control.send('/d patch-edit', output=output.append)
+                saved = [json.loads(line) for line in Path(result['events']).read_text(encoding='utf-8').splitlines()]
+                touched = [event for event in saved if event['type'] == 'touched']
+                self.assertEqual(len(touched), 1, mode)
+                self.assertTrue(touched[0]['locations'][0]['path'].endswith('notes.txt'), mode)
+                self.assertNotIn('touched', [event['type'] for event in output], mode)  # Logged, never shown.
+                rows = [event for event in output if event['type'] == 'activity']
+                if mode == 'activity':  # The row names the file too, from the diff.
+                    self.assertTrue(rows[-1]['locations'][0]['path'].endswith('notes.txt'))
+                else:
+                    self.assertEqual(rows, [])
+        finally:
+            self.assertTrue(control.off()['shutdownComplete'])
+
     def test_hook_worker_queues_steering_without_host_turn_lifetime(self):
         control = Controller(Store('runtime-worker', self.workspace, self.root / 'worker'), self.backend)
         try:

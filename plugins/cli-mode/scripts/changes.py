@@ -66,21 +66,22 @@ def compare(workspace, before, after):
                 added=sum(item['added'] or 0 for item in files), removed=sum(item['removed'] or 0 for item in files))
 
 
-def undo(workspace, receipt, only=None):
+def undo(workspace, receipt, only=None, skip=()):
     """Put back the files a turn changed, as they were before the turn: (restored, removed, conflicts, left).
 
     The receipt covers the whole folder, so it can hold another agent's edits made while the turn ran; `only`
-    (the files the agent's own tools edited) limits undo to those, and the receipt's other files come back as
-    `left`, untouched. All or nothing: if any file to undo changed again since the turn (by you or another
-    agent), nothing is touched and those files come back as conflicts. A file the turn created is removed; one it
-    removed or changed is written back from the before snapshot.
+    (the files the agent's own tools edited) limits undo to those, `skip` (files other agents' tools edited
+    meanwhile) leaves those out, and the receipt's other files come back as `left`, untouched. All or nothing: if
+    any file to undo changed again since the turn (by you or another agent), nothing is touched and those files
+    come back as conflicts. A file the turn created is removed; one it removed or changed is written back from the
+    before snapshot.
     """
     before, after = receipt.get('before'), receipt.get('after')
     if not before or not after:
         raise RuntimeError('This turn has no snapshots to undo from (they are taken in a git repository).')
     out = _git(workspace, 'diff-tree', '-r', '--name-only', '-z', '--no-renames', before, after)
     paths = [path for path in out.split('\0') if path]
-    left = [path for path in paths if only is not None and path not in only]
+    left = [path for path in paths if (only is not None and path not in only) or path in skip]
     paths = [path for path in paths if path not in left]
     root = Path(workspace)
 

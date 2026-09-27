@@ -13,7 +13,7 @@ import native_commands
 import viewer
 from operations import emit, menu_holds, pending_work
 from presentation import PERMISSION_CODES, permission_stop
-from progress import progress_mode, public_progress
+from progress import progress_mode, public_progress, public_touched
 from state import agent_entry, agent_label, routing_mode, direct_payload, team_of
 
 
@@ -266,6 +266,13 @@ class DispatchMixin:
                                 event = raw
                             elif kind in ('activity', 'usage'):
                                 event = public_progress(raw)
+                            elif kind == 'touched':
+                                # Straight to the log, past the relay: it is read by undo, never shown.
+                                event = public_touched(raw)
+                                if event:
+                                    log.write(json.dumps(event) + '\n')
+                                    log.flush()
+                                event = None
                             else:
                                 event = None
                     except (ValueError, AttributeError, TypeError):

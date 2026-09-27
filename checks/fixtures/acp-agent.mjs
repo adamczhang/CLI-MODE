@@ -83,6 +83,16 @@ createInterface({input: process.stdin}).on('line', line => {
         options: [{optionId: 'allow', name: 'Allow', kind: 'allow_once'}, {optionId: 'deny', name: 'Deny', kind: 'reject_once'}]}});
       return;
     }
+    if (text === 'patch-edit') {
+      // Copilot's and Codex CLI's apply_patch: no locations; the file is named only in its diff content.
+      update(request, {sessionUpdate: 'tool_call', toolCallId: 'patch', kind: 'edit', title: 'apply_patch',
+        status: 'pending', rawInput: '*** Begin Patch\n*** Update File: notes.txt\n*** End Patch\n'});
+      update(request, {sessionUpdate: 'tool_call_update', toolCallId: 'patch', status: 'completed',
+        content: [{type: 'diff', path: join(process.cwd(), 'notes.txt'), oldText: 'a', newText: 'b'}]});
+      message(request, 'Patched.');
+      finish(request);
+      return;
+    }
     if (text === 'split-message') {
       // One message ID around a tool call, as Grok Build sends it: two paragraphs, not one run-on line.
       const chunk = words => update(request, {sessionUpdate: 'agent_message_chunk', messageId: 'one-message',
