@@ -66,6 +66,17 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   help, setup replies; any other text is the host's (Passthrough mode was removed). `route.decide()` records
   it in the conversation state and, for `direct`, captures the exact text as a request and ensures the worker
   runs.
+- **DIRECT and AUTO** (Claude Code only; `scripts/auto_mode.py`, packaged `CLAUDE_ONLY`): `routingMode` is
+  `direct` or `auto`. `/cli mode` opens the Mode page. In AUTO the user talks to Claude only: `/d` and the
+  commands that change which agent does what are refused, the user's AUTO agent (and backup) start when AUTO
+  turns on and wait, and Claude hands work over itself: a task file in the working folder's task folder
+  (`auto_mode.tasks_dir`),
+  `controller.py handoff --task <id>` (a request captured with `routingMode: auto` and `handoff`), then its
+  `follow`. The follow's end wakes Claude to read `relay --for-host` and check the result; AUTO requests never
+  join a user's relay. Each of Claude's own AUTO turns carries the rule and ledger (`auto_mode.context`), and
+  the PreToolUse hook refuses Claude's larger project edits and coding subagents by delegation strength, and
+  every project edit while an agent writes (one writer). Codex keeps DIRECT only (it has no wake-up), so the
+  Codex golden record does not change.
 - **Codex reply path** (Codex only): `route.codex_output()` returns additionalContext telling the model
   which controller commands to run. Menus and results come back as inline HTML views (`menuView` or
   `messageView` with a `reference` line; `menu_view.py`, `relay_view.render`). A relay loops

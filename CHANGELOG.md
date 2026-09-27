@@ -2,7 +2,27 @@
 
 ## Unreleased
 
-Found while recording a demo of 0.3.9 in Claude Code's terminal.
+### AUTO mode (Claude Code)
+- **Two modes: DIRECT and AUTO.** `/cli mode` opens a Mode page. DIRECT is `/d` as before. In AUTO you talk to
+  Claude only, and Claude hands the work to your AUTO agent: it writes the task, the agent works in the
+  background, and Claude reads the result, checks it and tells you how it went. Small edits and quick questions
+  Claude keeps. Codex keeps DIRECT only.
+- **Your AUTO agent** and its model are chosen once, the usual way, and remembered for every conversation;
+  `/cli mode agent`, `/cli mode backup` and the AUTO settings page change them. Switching AUTO on starts the AUTO
+  agent (and backup) at once, and they wait for work.
+- **Handoffs:** each task is a file in `Agent_Working_Folder/.cli-mode/tasks/` (Goal, Context, Do not, Done
+  when, Report). The agent's work is a background-tasks row; its finish wakes Claude with the change receipt,
+  the test result, overlaps and the agent's report. A handoff's result never shows up in a `/d` answer.
+- **One writer at a time.** A second writing handoff waits for the first; reviews and research go read-only,
+  and their agent's writes are refused. Claude does not edit the project while an agent does.
+- **Delegation strength** Normal, Strong (default) or Max: how much Claude may edit itself before a change goes
+  to the agent, and whether its own coding subagents are sent to the agent instead.
+- In AUTO, `/d` and the commands that change which agent does what are refused; the safety and read-only
+  controls stay yours (`cancel`, `undo`, `diff`, `list` with a ledger of the handoffs, `usage`, `access`, `off`).
+  An agent's permission question comes to you, and your `/cli approve` or `/cli deny` goes on with Claude's task.
+- An AUTO backup's activation card shows the backup, not the AUTO agent.
+
+Found while recording a demo of 0.3.9 in Claude Code's terminal:
 
 ### Starting an agent (both hosts)
 - **Each new agent's CLI starts once, not twice.** ACPX's `sessions ensure` started the agent only to create its session and then stopped it, and the readiness prompt's owner started it again. CLI-MODE now writes the new session's record through its bridge (with ACPX 0.18.0's own record functions) and the readiness prompt's owner starts the agent once and creates the session there. Antigravity, whose server unpacks itself on every start, now starts in about 30 s instead of about 55 s. If that first prompt fails, the agent is started the old way once. A start that is canceled ends there, also in its first seconds: ACPX drops a cancel that comes before the readiness prompt has reached the agent, so CLI-MODE sends it again until that prompt ends.

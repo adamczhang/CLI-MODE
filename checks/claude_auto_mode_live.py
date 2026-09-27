@@ -41,10 +41,13 @@ from claude_live_relay import DEV, MARKER, claude_data
 
 QUESTION = 'In one sentence: what does app/parser.py do?'
 TASK = 'Read README.md in this folder and reply with the project codename only.'
+BUG = ('The parser drops the last word of its input, and tests/test_parser.py fails because of it. Please get it '
+       'fixed; the tests are right.')
 
 
-def project():
-    """A small git project, like the ones CLI-MODE is used in."""
+def project(buggy=False):
+    """A small git project, like the ones CLI-MODE is used in. `buggy`: the parser drops its last word, and its
+    tests say so (the handoff scenario's task)."""
     workspace = Path(tempfile.mkdtemp(prefix='cli-mode-auto-')).resolve()
     (workspace / 'app').mkdir()
     (workspace / 'README.md').write_text('# Notes app\n\nThe project codename is ' + MARKER + '. It keeps short '
@@ -54,8 +57,18 @@ def project():
         'def parse(text):\n    words, current, quoted = [], \'\', False\n    for char in text:\n'
         '        if char == \'"\':\n            quoted = not quoted\n        elif char == \' \' and not quoted:\n'
         '            if current:\n                words.append(current)\n            current = \'\'\n'
-        '        else:\n            current += char\n    return words + ([current] if current else [])\n',
+        '        else:\n            current += char\n' +
+        ('    return words\n' if buggy else '    return words + ([current] if current else [])\n'),
         encoding='utf-8')
+    if buggy:
+        (workspace / 'app' / '__init__.py').write_text('', encoding='utf-8')
+        (workspace / 'conftest.py').write_text('', encoding='utf-8')
+        (workspace / 'tests').mkdir()
+        (workspace / 'tests' / 'test_parser.py').write_text(
+            'from app.parser import parse\n\n\ndef test_last_word_is_kept():\n'
+            '    assert parse(\'tag urgent\') == [\'tag\', \'urgent\']\n\n\ndef test_quoted_phrase():\n'
+            '    assert parse(\'open "my notes" now\') == [\'open\', \'my notes\', \'now\']\n', encoding='utf-8')
+        (workspace / '.gitignore').write_text('__pycache__/\nAgent_Working_Folder/\n', encoding='utf-8')
     for command in (['init', '-q'], ['add', '-A'],
                     ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'Notes app']):
         subprocess.run(['git', *command], cwd=workspace, check=True)
@@ -63,9 +76,9 @@ def project():
 
 
 class Run:
-    def __init__(self, agent, backup, model):
+    def __init__(self, agent, backup, model, buggy=False):
         self.agent, self.backup = agent, backup
-        self.workspace = project()
+        self.workspace = project(buggy)
         self.host = Session(self.workspace, model)
         self.session, self.steps, self.problems = None, [], []
         sys.path.insert(0, str(DEV / 'scripts'))
@@ -168,6 +181,76 @@ class Run:
                    and state['owned'][0]['backend'] == self.agent, json.dumps([o['backend'] for o in state['owned']]))
         self.step('final off', '/cli off', ('CLI-MODE is off. The agent session was closed.',))
 
+    def handoff_main(self):
+        """Phase 2-3, end to end: AUTO on from the saved choice, then a bug report in plain words. Claude should hand
+        it off (a task file, handoff, its follow) without editing the project, be woken when the agent finishes, read
+        the result with relay --for-host, and report; the tests then pass."""
+        import auto_mode
+        auto_mode.save(claude_data(), {'agent': {'agent': self.agent, 'model': None, 'effort': None, 'access': None},
+                                       'backup': None, 'strength': 'strong'})
+        self.use_defaults()
+        self.step('auto on', '/cli mode auto', ('AUTO is on: Claude hands work to',), timeout=400)
+        count, mark = len(self.host.results()), self.host.mark()
+        started = time.monotonic()
+        self.host.send(BUG)
+        if not self.host.wait(count + 1, 600):
+            raise RuntimeError('the bug report: no result')
+
+        def read():
+            requests = (self.state().get('requests') or {}).values()
+            return any(record.get('routingMode') == 'auto' and record.get('hostRead') for record in requests)
+        if not self.host.wait(None, 1500, done=read):
+            raise RuntimeError('the handoff result was never read (relay --for-host)')
+        if not self.host.wait(None, 300, done=lambda: len(self.host.results()) >= count + 2):
+            raise RuntimeError('the wake-up turn never ended')
+        time.sleep(3)  # Let the wake-up turn's last events arrive.
+        with self.host.lock:
+            events = self.host.events[mark:]
+        tools = [(block.get('name'), block.get('input') or {}) for event in events if event.get('type') == 'assistant'
+                 for block in (event.get('message') or {}).get('content') or [] if block.get('type') == 'tool_use']
+        commands = [str(data.get('command') or '') for name, data in tools if name in ('Bash', 'PowerShell')]
+        writes = [str(data.get('file_path') or '') for name, data in tools if name in ('Write', 'Edit', 'MultiEdit')]
+        rows = [event.get('description') for event in events if event.get('type') == 'system'
+                and event.get('subtype') == 'task_started']
+        texts = [self.plain(event.get('result') or '') for event in events if event.get('type') == 'result']
+        passing = any('Passing to' in self.plain(block.get('text') or '') for event in events
+                      if event.get('type') == 'assistant' for block in (event.get('message') or {}).get('content') or []
+                      if block.get('type') == 'text')
+        record = next(record for record in (self.state().get('requests') or {}).values()
+                      if record.get('routingMode') == 'auto')
+        self.steps.append(dict(name='handoff', prompt=BUG, seconds=round(time.monotonic() - started, 1),
+                               tools=[(name, str(data.get('command') or data.get('file_path') or '')[-100:])
+                                      for name, data in tools], rows=rows, reply=(texts[-1] if texts else '')[:900]))
+        self.check('passing line', passing, 'no "Passing to" line')
+        self.check('task file', any('/.cli-mode/tasks/' in path.replace('\\', '/') for path in writes),
+                   'no task file written: ' + json.dumps(writes))
+        self.check('no own project edits', all('Agent_Working_Folder' in path for path in writes),
+                   'Claude edited the project: ' + json.dumps(writes))
+        self.check('handoff command', any(' handoff --task ' in command for command in commands), json.dumps(commands))
+        self.check('follow in the background', any(' follow --request ' in command for command in commands) and
+                   len(rows) == 1, json.dumps(rows))
+        self.check('read with --for-host', any(' --for-host' in command for command in commands), json.dumps(commands))
+        self.check('no polling', not any(name in ('Monitor', 'ScheduleWakeup', 'CronCreate') for name, _ in tools),
+                   json.dumps([name for name, _ in tools]))
+        self.check('handoff record', (record.get('handoff') or {}).get('task') and record.get('status') == 'completed',
+                   json.dumps(dict(handoff=record.get('handoff'), status=record.get('status'))))
+        tests = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider'], cwd=self.workspace,
+                               capture_output=True, text=True, timeout=120)
+        self.check('the fix works', tests.returncode == 0, tests.stdout[-300:])
+        self.check('report', texts and len(texts[-1]) > 40, 'no report after the wake-up')
+        self.step('off', '/cli off', ('CLI-MODE is off.',))
+
+    def use_defaults(self):
+        """Fill the saved AUTO choice with the agent's own defaults (as the picker's "Yes" would)."""
+        sys.path.insert(0, str(DEV / 'scripts'))
+        import adapters
+        import auto_mode
+        config = auto_mode.load(claude_data())
+        adapter = adapters.module(self.agent)
+        selected = adapter.selection(claude_data(), **adapter.DEFAULTS)
+        config['agent'] = auto_mode.entry_of(self.agent, selected)
+        auto_mode.save(claude_data(), config)
+
     def direct_task(self):
         """/d in DIRECT after AUTO: the background follow and the wake-up relay, as before."""
         count, mark = len(self.host.results()), self.host.mark()
@@ -208,6 +291,7 @@ def main():
     parser.add_argument('--backup', default='grok-build')
     parser.add_argument('--model')
     parser.add_argument('--keep', action='store_true')
+    parser.add_argument('--handoff', action='store_true', help='The end-to-end handoff scenario instead.')
     args = parser.parse_args()
     if 'claude' in (args.agent, args.backup):
         raise SystemExit('Use agents other than Claude Code: it shares the sign-in this session uses.')
@@ -219,11 +303,11 @@ def main():
     aside = saved.with_suffix('.before-live-check')
     if saved.exists():
         saved.replace(aside)  # A first run: no AUTO agent chosen yet.
-    run = Run(args.agent, args.backup, args.model)
+    run = Run(args.agent, args.backup, args.model, buggy=args.handoff)
     report = dict(agent=args.agent, backup=args.backup, workspace=str(run.workspace))
     started = time.monotonic()
     try:
-        run.main()
+        run.handoff_main() if args.handoff else run.main()
     except (RuntimeError, ValueError, KeyError, StopIteration) as exc:
         run.problems.append('stopped: ' + str(exc))
     finally:
