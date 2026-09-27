@@ -291,6 +291,26 @@ def claims(state, exclude=None):
     return found
 
 
+def alongside(state, request_id):
+    """What other work could change while `request_id` ran: the Files claims (short of the whole project) and the
+    edited files of every other request that was running at the same time (it had started, and had not ended before
+    this one started). Such changes in its receipt are expected, not a CHECK: look (live: two writers on
+    separate claims flagged each other's files, and Claude spent a call on git to confirm it)."""
+    records = state.get('requests') or {}
+    mine = records.get(request_id) or {}
+    start = mine.get('submittedAt') or mine.get('capturedAt') or 0
+    end = mine.get('endedAt') or time.time()
+    keys = set()
+    for key, record in records.items():
+        begin, finish = record.get('submittedAt'), record.get('endedAt')
+        if key == request_id or not begin or begin > end or (finish is not None and finish < start):
+            continue  # Itself, work still queued (never started), or work that did not overlap it.
+        keys.update(claim for claim in (record.get('handoff') or {}).get('files') or [] if claim != WHOLE)
+        keys.update(found for found in (file_key(path) for path in record.get('touched') or [])
+                    if found and found != WHOLE)
+    return sorted(keys)
+
+
 def conflict(state, files, exclude=None):
     """The first running task that may change one of `files`: (session, request, its claim), else None. One writer
     per file keeps each turn's change receipt, and each undo, its own."""
@@ -776,12 +796,18 @@ class AutoMixin:
                         if (item.get('approval') or {}).get('requestId') == request_id), None)
         handoff = record.get('handoff') or {}
         task = handoff.get('task')
+        own = None if finished.get('unlocated') else finished.get('touched')
+        near = alongside(latest, request_id) if own is not None else []
+        mine = {path.casefold() for path in own or []}
+        changed = [(item['path'], file_key(item['path'])) for item in
+                   ((view['receipt'] or {}).get('changes') or {}).get('paths') or []]
+        expected = [path for path, key in changed if path.casefold() not in mine and key and key != WHOLE
+                    and any(overlaps(key, claim) for claim in near)]
         text = relay_view.host_text(
             request_id, label, status, public, view['receipt'], read_only=handoff.get('readOnly'),
             task=task_file(self.store.workspace, task).as_posix() if task and TASK_ID.fullmatch(task) else None,
             stopped=stopped, access=(agent_entry(latest, record.get('session')) or {}).get('settings'),
-            touched=None if finished.get('unlocated') else finished.get('touched'),
-            answer_max=answer_max or relay_view.HOST_ANSWER_MAX)
+            touched=own, answer_max=answer_max or relay_view.HOST_ANSWER_MAX, alongside=expected)
         with self.store.edit() as latest:
             saved = (latest.get('requests') or {}).get(request_id)
             if saved:

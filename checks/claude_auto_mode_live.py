@@ -27,6 +27,8 @@ conversation open, in a small git project:
     python scripts/package_plugin.py
     python checks/claude_auto_mode_live.py [--agent codex] [--backup grok-build] [--model <id>] [--keep]
 
+--matrix runs simple and complex prompts in one AUTO conversation started from /cli (the default path): simple ones
+stay with Claude, complex ones are handed off, two separate jobs may run on two agents, a review goes read-only.
 --complex runs the light delegation's live check instead: a multi-part feature, a self-contained simulation and a
 mixed small request, in one AUTO conversation, with Claude's own use measured per prompt (wake-ups included).
 """
@@ -34,6 +36,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -72,6 +75,25 @@ COMPLEX = (
                          'numbers.'),
     ('mixed', False, 'Two quick things: in README.md, change "short notes" to "short notes and tags" (only that); and '
                      'tell me in one sentence what parse() does with a quoted phrase.'),
+)
+# --matrix: simple and complex prompts in one AUTO conversation, started the default way (/cli, the saved AUTO agent
+# as 1). Simple ones stay with Claude (and /d asks Claude itself); complex ones are handed off: one piece of work, two
+# on separate files (which may run at once, one writer per file), a review (read-only) and a computation.
+PARALLEL = ('Two independent pieces of work, which can run at the same time: (1) add app/tags.py with '
+            'normalize_tags(words), which lowercases each tag, strips a leading #, and drops duplicates keeping the '
+            'first, with tests in tests/test_tags.py; (2) add app/export.py with to_markdown(notes), which turns a '
+            'list of {"title": ..., "body": ...} dicts into one Markdown document (a "## <title>" heading, then the '
+            'body, for each note), with tests in tests/test_export.py. All tests must pass. Do not commit.')
+REVIEW = ('Review app/cli.py and app/parser.py for bugs and unhandled edge cases, and tell me what you find, most '
+          'serious first. Do not change any files.')
+MATRIX = (
+    ('simple: question', 'keep', QUESTION),
+    ('simple: small edit', 'keep', 'In README.md, change "short notes" to "short notes and tags" (only that).'),
+    ('simple: /d', 'ask', '/d Without changing anything: what does parse() return for an empty string? One line.'),
+    ('complex: feature', 'handoff', COMPLEX[0][2]),
+    ('complex: parallel', 'parallel', PARALLEL),
+    ('complex: review', 'review', REVIEW),
+    ('complex: simulation', 'handoff', COMPLEX[1][2]),
 )
 WORKING = ('captured', 'submitting')
 
@@ -453,11 +475,104 @@ class Run:
                                capture_output=True, text=True, timeout=120)
         self.check('feature: tests pass', tests.returncode == 0, (tests.stdout or tests.stderr)[-300:])
         self.check('feature: cli.py', (self.workspace / 'app' / 'cli.py').is_file(), 'no app/cli.py')
-        self.check('simulation: the baseline', any(figure in said_by['simulation'] for figure in ('19,440,000', '19.44')),
-                   'the report lacks the 19,440,000-gold baseline')
+        self.check('simulation: a verdict with figures', simulated(said_by['simulation'], self.workspace),
+                   'no script in an agent folder, or no verdict with gold figures in the report')
         readme = (self.workspace / 'README.md').read_text(encoding='utf-8')
         self.check('mixed: the small edit', 'short notes and tags' in readme, 'README.md unchanged')
         self.step('off', '/cli off', ('CLI-MODE is off',))
+
+    def tracked(self):
+        """The project as git sees it, less what git ignores (the agents' working folder, caches)."""
+        status = subprocess.run(['git', 'status', '--porcelain'], cwd=self.workspace, capture_output=True, text=True)
+        diff = subprocess.run(['git', 'diff'], cwd=self.workspace, capture_output=True)
+        return status.stdout + hashlib.sha256(diff.stdout).hexdigest()
+
+    def matrix_main(self):
+        """Simple and complex prompts in one AUTO conversation, started the default way: /cli offers the saved AUTO
+        agent as 1. Simple prompts stay with Claude (/d asks Claude itself); complex ones are handed off, each in one
+        call and read in its wake-up; separate files may run on two agents at once; a review goes read-only and
+        changes nothing. Claude's own use is measured per prompt, wake-ups included."""
+        import itertools
+        import auto_mode
+        auto_mode.save(claude_data(), {'agent': {'agent': self.agent, 'model': None, 'effort': None, 'access': None},
+                                       'backup': None, 'strength': 'strong'})
+        self.use_defaults()
+        self.step('/cli: saved agent first', '/cli', ('1 starts your saved AUTO agent.', 'Select AUTO Agent'))
+        self.step('1: AUTO on', '1', ('CLI-MODE Activated', 'AUTO is on: Claude hands work to'), timeout=400)
+        state = self.state()
+        self.check('AUTO is the default', state.get('routingMode') == 'auto' and state.get('active'),
+                   json.dumps(dict(mode=state.get('routingMode'), active=state.get('active'))))
+        self.check('two-hour idle', all(item.get('timeout') == auto_mode.AUTO_TIMEOUT for item in state['owned']),
+                   json.dumps([item.get('timeout') for item in state['owned']]))
+        self.measures, said_by = [], {}
+        for name, kind, prompt in MATRIX:
+            before, mark, count = set(self.auto_requests()), self.host.mark(), len(self.host.results())
+            requests_before = set((self.state().get('requests') or {}))
+            files_before = self.tracked()
+            started = time.monotonic()
+            self.host.send(prompt)
+            if not self.host.wait(count + 1, 900):
+                raise RuntimeError(name + ': no result')
+            self.settle(name, before)
+            records = self.auto_requests()
+            made = [records[key] for key in records if key not in before]
+            tools = self.tool_calls(mark)
+            said = said_by[name] = '\n'.join(self.replies(mark))
+            typed = [command for tool, command in tools if tool in ('Bash', 'PowerShell')]
+            agents = sorted({self.label_of(record) for record in made})
+            measure = dict(name=name, kind=kind, minutes=round((time.monotonic() - started) / 60, 1),
+                           handoffs=len(made), agents=agents, claude=self.claude_use(mark), toolCalls=len(tools),
+                           tools=[(tool, command[-70:]) for tool, command in tools],
+                           files=[(record.get('handoff') or {}).get('files') for record in made],
+                           readOnly=[(record.get('handoff') or {}).get('readOnly') for record in made],
+                           reply=said[-700:])
+            self.measures.append(measure)
+            if kind in ('keep', 'ask'):
+                self.check(name + ': kept by Claude', not made, str(len(made)) + ' handoffs')
+            else:
+                self.check(name + ': handed off', bool(made), 'Claude did it itself')
+            if kind == 'ask':
+                added = set((self.state().get('requests') or {})) - requests_before
+                self.check(name + ': nothing captured', not added, str(len(added)) + ' requests')
+            self.check(name + ': one call per handoff', not any(' follow --request ' in command or
+                                                               ' relay --request ' in command for command in typed),
+                       'Claude typed a follow or relay command')
+            self.check(name + ': read in the wake-up', 'autoWake' not in self.state(), 'a result waits to be read')
+            if kind == 'parallel':
+                writers = [record for record in made if not (record.get('handoff') or {}).get('readOnly')]
+                claims = [(record.get('handoff') or {}).get('files') or [auto_mode.WHOLE] for record in writers]
+                self.check(name + ': two handoffs', len(writers) >= 2, str(len(writers)) + ' writing handoffs')
+                self.check(name + ': each names its files', all(auto_mode.WHOLE not in claim for claim in claims),
+                           json.dumps(claims))
+                self.check(name + ': no file claimed twice', not any(
+                    auto_mode.overlaps(one, other) for a, b in itertools.combinations(claims, 2)
+                    for one in a for other in b), json.dumps(claims))
+                spans = [(record.get('session'), record.get('submittedAt') or 0, record.get('endedAt') or 0)
+                         for record in writers]
+                measure['atOnce'] = any(a[0] != b[0] and a[1] < b[2] and b[1] < a[2]
+                                        for a, b in itertools.combinations(spans, 2))
+                self.check(name + ': two agents at once', measure['atOnce'], json.dumps(agents))
+            if kind == 'review':
+                self.check(name + ': read-only', made and all((record.get('handoff') or {}).get('readOnly')
+                                                              for record in made), json.dumps(measure['readOnly']))
+                self.check(name + ': nothing changed', self.tracked() == files_before, 'project files changed')
+        tests = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider'], cwd=self.workspace,
+                               capture_output=True, text=True, timeout=120)
+        self.check('tests pass', tests.returncode == 0, (tests.stdout or tests.stderr)[-300:])
+        for path in ('app/cli.py', 'app/tags.py', 'app/export.py', 'tests/test_tags.py', 'tests/test_export.py'):
+            self.check('made ' + path, (self.workspace / path).is_file(), 'missing')
+        readme = (self.workspace / 'README.md').read_text(encoding='utf-8')
+        self.check('simple: small edit made', 'short notes and tags' in readme, 'README.md unchanged')
+        self.check('simulation: a verdict with figures', simulated(said_by['complex: simulation'], self.workspace),
+                   'no script in an agent folder, or no verdict with gold figures in the report')
+        self.step('/cli list', '/cli list', ('AUTO handoffs',))
+        self.step('off', '/cli off', ('CLI-MODE is off',))
+        self.check('every agent closed', not self.state().get('owned'), json.dumps(
+            [item.get('alias') for item in self.state().get('owned') or []]))
+
+    def label_of(self, record):
+        from state import agent_label
+        return agent_label(self.state(), record.get('session'), record)
 
     def use_defaults(self):
         """Fill the saved AUTO choice with the agent's own defaults (as the picker's "Yes" would)."""
@@ -492,6 +607,16 @@ class Run:
         self.check('/d in DIRECT', len(rows) == 1, 'pane rows: ' + json.dumps(rows))
 
 
+def simulated(text, workspace):
+    """The simulation prompt held up: the agent saved a script in its working folder, and the report gives a verdict
+    among the options with figures in gold. Not the exact 19,440,000 baseline: a report may give the mean with the
+    price spikes in it instead (live, 2026-09-27: 20.64M)."""
+    scripts = list((Path(workspace) / 'Agent_Working_Folder').glob('*/*.py'))
+    verdict = any(option in text for option in ('Steam', 'Biomass', 'Mana'))
+    figures = re.search(r'\d[\d,.]*\s*(?:M\b|million|gold)', text)
+    return bool(scripts) and verdict and bool(figures)
+
+
 def usage(events):
     """The 5-hour window's use (percent) at the first and the last rate-limit event of the session."""
     values = []
@@ -514,6 +639,7 @@ def main():
     parser.add_argument('--interrupt', action='store_true', help='P7: a mode switch and /cli off during handoffs.')
     parser.add_argument('--compare', choices=['alone', 'auto'], help='P10: one side of Claude alone versus AUTO.')
     parser.add_argument('--complex', action='store_true', help='Light delegation: complex prompts in one conversation.')
+    parser.add_argument('--matrix', action='store_true', help='Simple and complex prompts, AUTO started from /cli.')
     args = parser.parse_args()
     if 'claude' in (args.agent, args.backup):
         raise SystemExit('Use agents other than Claude Code: it shares the sign-in this session uses.')
@@ -528,9 +654,9 @@ def main():
     # P10: both sides may edit files and run commands without asking, so they differ only in who does the work.
     # --complex: Claude makes the mixed request's small edit itself.
     extra = (['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'PowerShell']
-             if args.compare or args.complex else [])
+             if args.compare or args.complex or args.matrix else [])
     run = Run(args.agent, args.backup, args.model,
-              buggy=args.handoff or args.interrupt or bool(args.compare) or args.complex, extra=extra)
+              buggy=args.handoff or args.interrupt or bool(args.compare) or args.complex or args.matrix, extra=extra)
     report = dict(agent=args.agent, backup=args.backup, workspace=str(run.workspace))
     started = time.monotonic()
     try:
@@ -542,6 +668,8 @@ def main():
             run.interrupt_main()
         elif args.complex:
             run.complex_main()
+        elif args.matrix:
+            run.matrix_main()
         else:
             run.handoff_main() if args.handoff else run.main()
     except (RuntimeError, ValueError, KeyError, StopIteration) as exc:

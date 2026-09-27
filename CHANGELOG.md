@@ -23,7 +23,8 @@
   - the result arrives with the wake-up, already read: no relay command to run;
   - the result opens with CLI-MODE's own verdict, `CHECK: ok` or `CHECK: look: …` (tests failed, it stopped to ask,
     errors, files it didn't edit changed, another agent edited the same files, a read-only task changed files, no
-    answer), so Claude looks only at what it names;
+    answer), so Claude looks only at what it names. Files that work running at the same time was allowed to change
+    (its Files claim, or its own edits) are listed as `ALONGSIDE`, expected, and don't count as a reason to look;
   - Claude is given AUTO's rules once, again only when they change, after a compaction or every 30 turns, and
     otherwise only what changed (the agents, work still running or unread), or nothing;
   - results that finish together share one wake-up; a new agent (`--agent new`) starts inside the background row,
