@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_controller import FakeBackend, hook
+from test_controller import PLUGIN, FakeBackend, hook
+from codex_golden import variants
 from controller import Controller
 from state import Store
 
@@ -12,7 +13,8 @@ RELAY = 'post its `markdown` right away'
 MENU = 'X on active Settings or tuning pages runs'
 SETUP = 'Follow pending.onboarding'
 HELP = 'Help is the same framed card'
-# Budgets leave headroom over today's sizes (about 2.7k, 2.5k, 3.2k and 1.6k).
+# Budgets leave headroom over today's sizes, measured with folders as placeholders
+# (about 2.5k, 2.5k, 3.2k and 1.5k).
 BUDGET = {'delegate': 3500, 'menu': 3000, 'setup': 3500, 'help': 1800}
 
 
@@ -32,10 +34,21 @@ class HookContext(unittest.TestCase):
         control.frontend()
         control.activate('gemini-3.8-flash-high', 'allow')
 
+    def measured(self, text):
+        """The context with the plugin and workspace folders as fixed placeholders.
+
+        Budgets cap the rules CLI-MODE adds, not how long the folders it runs from are
+        (a worktree checkout or a long temp folder would otherwise count against them)."""
+        for path, placeholder in sorted(((PLUGIN, '<PLUGIN>'), (self.root, '<ROOT>')),
+                                        key=lambda pair: -len(str(pair[0]))):
+            for form in variants(path):
+                text = text.replace(form, placeholder)
+        return text
+
     def assertGroups(self, text, present, budget):
         for phrase in (RELAY, MENU, SETUP, HELP):
             self.assertEqual(phrase in text, phrase in present, phrase)
-        self.assertLessEqual(len(text), budget)
+        self.assertLessEqual(len(self.measured(text)), budget)
 
     def test_setup_turns_carry_menu_and_setup_rules_only(self):
         self.assertGroups(self.context('/cli'), (MENU, SETUP), BUDGET['setup'])
