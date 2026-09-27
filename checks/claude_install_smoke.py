@@ -38,7 +38,7 @@ PROMPTS = (
     ('/cli help', '/cli reset'),
     ('/cli-mode:cli help', '/cli help'),
     ('/cli', 'Setup CLI Agent.'),
-    ('$cli queue', '/cli to activate.  Say /cli help to see options'),
+    ('$cli queue', 'In AUTO, Claude and CLI-MODE run the agents'),  # AUTO is Claude Code's default; queue is Claude's.
     ('/cli mode', 'DIRECT  You drive the agents with'),  # The Mode page (Claude Code's DIRECT and AUTO).
     # Every `claude -p` is a new session, and a session that has not used CLI-MODE keeps no state at all
     # (the hook's shortcut for events CLI-MODE has no part in).
