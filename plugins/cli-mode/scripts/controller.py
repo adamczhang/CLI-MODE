@@ -101,6 +101,8 @@ def build_parser():
     p.add_argument('--check', action='store_true', help=argparse.SUPPRESS)
     p.add_argument('--request', help=argparse.SUPPRESS); p.add_argument('--follow', action='store_true',
                                                                         help=argparse.SUPPRESS)
+    # Claude Code AUTO: the slow start of an extra agent the approval hook reserved while Claude wrote task files.
+    p = sub.add_parser('warm', help=argparse.SUPPRESS); p.add_argument('--token', required=True)
     p = sub.add_parser('follow'); p.add_argument('--request', required=True)
     p = sub.add_parser('pump', help=argparse.SUPPRESS); p.add_argument('--token', required=True)
     p.add_argument('--session')
@@ -288,6 +290,10 @@ def run(args, control=None):
         if views:
             raise ValueError('AUTO mode is Claude Code only; on Codex only /d reaches an agent.')
         result = control.mode_control(args.action, args.to, args.role, args.agent, args.number)
+    elif command == 'warm':
+        if views:
+            raise ValueError('AUTO mode is Claude Code only; on Codex only /d reaches an agent.')
+        result = control.warm(args.token)
     elif command == 'handoff':
         if views:
             raise ValueError('AUTO mode is Claude Code only; on Codex only /d reaches an agent.')

@@ -446,6 +446,12 @@ def task_file_approval(event, root):
     if len(request.get('content') or '') > auto_mode.TASK_MAX:
         return deny('CLI-MODE AUTO: that task is over ' + str(auto_mode.TASK_MAX // 1024) + ' KB. Keep it to what '
                     'the agent needs; it can read the project itself.')
+    try:  # An agent this task will need, started now so it is ready by its handoff (a head start only).
+        import route
+        from controller import Controller
+        Controller(route.Store(event['session_id'], workspace(event), root)).warm_ahead(target.stem)
+    except Exception:  # noqa: BLE001 - never in the way of the task file itself.
+        pass
     return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
                                    'permissionDecisionReason': 'CLI-MODE AUTO: a task file for the AUTO agent.'}}
 

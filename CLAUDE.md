@@ -108,7 +108,7 @@ lands in one of three zones below; know which before editing.
   running, `relay_for_host` counts a change its edit tools did not name as the agent's own (`running_with`).
   Handoffs captured within `QueueMixin.BATCH_WINDOW` are a batch: a finished follow waits for the rest
   (`_end_with_batch`), `auto_wake` reads the batch's finished results together, and a notification whose results were
-  all read is blocked (no model turn); the batch runs the project's tests once, after its last handoff (`_batch_tests`, `testsDeferred`). Extra agents start side by side (`AutoMixin.start_alongside`: each owns its entry while `starting`, never the menu's pending slot). AUTO's default agent limit is `state.AUTO_AGENT_LIMIT`. AUTO settings rows come from `auto_mode.settings_rows` (effort for agents with a separate
+  all read is blocked (no model turn); the batch runs the project's tests once, after its last handoff (`_batch_tests`, `testsDeferred`). Extra agents start side by side (`AutoMixin.start_alongside`: each owns its entry while `starting`, never the menu's pending slot). AUTO's default agent limit is `state.AUTO_AGENT_LIMIT`. Writing more task files than free agents starts one early (`hooks/claude.py:task_file_approval` -> `warm_ahead`: reserve, then a detached `controller.py warm`), and `handoff --agent new` claims it (`claim_warm`). AUTO settings rows come from `auto_mode.settings_rows` (effort for agents with a separate
   effort, Codex's `fast-mode` via `codex_cli.FAST_MODE_KEY`); `reconfigure` applies them to a running agent in place.
   `--read-only` sends ACPX a deny-by-default
   policy (`dispatch.approval_policy`); in Claude's own turns `AUTO_OWNED_COMMANDS` are refused (`auto_owned`).

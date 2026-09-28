@@ -65,6 +65,8 @@ PROMPTS_KEPT = 20
 WHOLE = '*'
 EVERYTHING = frozenset(('*', '.', 'all', 'any', 'everything', 'project', 'repo', 'repository'))
 AUTO_TIMEOUT = 120  # Minutes an idle AUTO agent keeps running (its ACPX owner TTL); /cli off closes it sooner.
+WARM_WINDOW = 600  # Seconds: task files this recent and not handed off yet count as waiting for an agent.
+WARM_CLAIM_WAIT = 120  # Seconds `--agent new` waits for a warm agent still starting.
 # Normal since 2026-09-27: in every usage test Claude did small and medium work faster itself, so it decides and
 # hands off only what is worth it. Strong was the default before: a saved Strong counts only when it was chosen.
 DEFAULT_STRENGTH = 'normal'
@@ -623,7 +625,9 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         'and CLI-MODE refuses a handoff, or an edit of yours, that would change a file another running task may '
         'change; a result names any edit outside its claim. Work on other files can run in parallel: hand it to an idle agent '
         '(`--agent <name>`), or start another ' + kind + ' like ' + name + ' for it with `--agent new` (15-40 s; at '
-        'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn. A request with three '
+        'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn: with more parts than '
+        'the limit allows, hand the rest to running agents (`--agent <name>`) and end your report with one line '
+        'saying the agent limit was reached. A request with three '
         'or more independent parts that change different files, each several minutes of work, goes out at once, one '
         'task per part on its own agent (`--agent new` beyond the idle ones), each with its own Files line: write every '
         'task file in one message, then run every handoff in the next, so the whole request goes out in two turns; parts '
@@ -940,7 +944,8 @@ class AutoMixin:
             found = files and conflict(state, files)
             if found:
                 raise RuntimeError(conflict_text(state, found, files) + ' No agent was started.')
-            if len(state.get('owned') or []) >= agent_limit(state):
+            warm = any(item.get('warm') and not item.get('claimed') for item in state.get('owned') or [])
+            if len(state.get('owned') or []) >= agent_limit(state) and not warm:  # A warm one is already counted.
                 raise RuntimeError(str(len(state['owned'])) + ' agents are running, the limit, so no agent was started. '
                                    'Hand this to one of them with --agent <name>; it waits its turn there. (The user '
                                    'raises the limit with /cli agents max <n>.)')
@@ -1016,19 +1021,109 @@ class AutoMixin:
         Extras start at the same time: each owns its own entry while it starts (`starting`), never the menu's one
         pending activation (live, 2026-09-28: starts queued one after another, about 20 s each, so the fifth part of
         five waited over a minute to begin)."""
-        state = self.store.read()
-        lead = agent_entry(state, self.handoff_target(state))
-        settings = lead.get('settings') or {}
-        choice = {'agent': lead['backend'], 'model': settings.get('model'), 'access': settings.get('access'),
-                  'effort': settings.get('effortValue'), 'fast': settings.get('fast')}
-        session = self.start_alongside(choice)
+        warm = self.claim_warm()
+        if warm:
+            return warm
+        session = self.start_alongside(self.lead_choice())
         if not agent_entry(self.store.read(), session):
             raise RuntimeError('The new agent did not start, so nothing was handed off.')
         return session
 
+    def lead_choice(self):
+        """Settings for another agent like the running AUTO agent (its kind, model, effort, access, fast mode)."""
+        state = self.store.read()
+        lead = agent_entry(state, self.handoff_target(state))
+        settings = lead.get('settings') or {}
+        return {'agent': lead['backend'], 'model': settings.get('model'), 'access': settings.get('access'),
+                'effort': settings.get('effortValue'), 'fast': settings.get('fast')}
+
+    def claim_warm(self, wait=WARM_CLAIM_WAIT, poll=1.0):
+        """A warm extra (started ahead by `warm`, while Claude wrote the task files) for `--agent new`: a ready one at
+        once, else one still starting, once it is ready. None when there is none, or it failed to start."""
+        with self.store.edit() as state:
+            found = next((item for item in state['owned'] if item.get('warm') and not item.get('claimed')), None)
+            if found is None:
+                return None
+            found['claimed'] = True
+            name = found['name']
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            item = agent_entry(self.store.read(), name)
+            if item is None:
+                return None  # Its start failed: a new one starts instead.
+            if item.get('ready'):
+                with self.store.edit() as state:
+                    for entry in state['owned']:
+                        if entry['name'] == name:
+                            entry.pop('warm', None)
+                            entry.pop('claimed', None)
+                return name
+            time.sleep(poll)
+        return None
+
+    def warm_needed(self, state, adding=None):
+        """Task files written and not handed off yet outnumber the agents free to take them (idle, or warming and
+        unclaimed), and another agent may start: then one starts now, before its handoff (just in time)."""
+        if len(state.get('owned') or []) >= agent_limit(state):
+            return False
+        handed = {(record.get('handoff') or {}).get('task') for _, record in auto_requests(state)}
+        now, folder = time.time(), tasks_dir(self.store.workspace)
+        try:
+            written = {path.stem for path in folder.glob('*.md') if now - path.stat().st_mtime < WARM_WINDOW}
+        except OSError:
+            written = set()
+        pending = (written | ({adding} if adding else set())) - handed
+        busy = {record.get('session') for _, record in auto_requests(state) if record.get('status') in WORKING}
+        free = sum(1 for item in state.get('owned') or [] if not item.get('claimed') and (
+            (item.get('ready') and item['name'] not in busy) or (item.get('warm') and item.get('starting'))))
+        return len(pending) > free
+
+    def warm_ahead(self, task):
+        """The approval hook, as Claude writes task file `task`: when it needs an agent none is free to take, reserve
+        one and start it in a background process, so it is ready by its handoff (live, 2026-09-28: each extra's start
+        took about 40 s after its handoff; Claude writes a batch's task files well before handing them off)."""
+        if not self.warm_needed(self.store.read(), adding=task):
+            return None
+        owned, _ = self.reserve_alongside(self.lead_choice(), warm=True)
+        import os
+        import subprocess
+        import sys
+        from queue_worker import CONTROLLER
+        command = [sys.executable, str(CONTROLLER), '--thread', self.store.thread, '--workspace',
+                   self.store.workspace, '--data-root', str(self.store.root), 'warm', '--token', owned['starting']]
+        options = {'stdin': subprocess.DEVNULL, 'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL,
+                   'close_fds': True}
+        try:
+            if os.name == 'nt':
+                flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+                try:  # Outside the hook's job, which ends its processes with it.
+                    subprocess.Popen(command, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, **options)
+                except OSError:
+                    subprocess.Popen(command, creationflags=flags, **options)
+            else:
+                subprocess.Popen(command, start_new_session=True, **options)
+        except OSError:
+            self.cleanup(owned)  # Not started: its handoff starts one itself.
+            return None
+        return owned['alias']
+
+    def warm(self, token):
+        """`warm --token`: start the reserved warm extra (the slow part, 15-40 s), detached from Claude's turn."""
+        state = self.store.read()
+        owned = next((item for item in state['owned'] if item.get('starting') == token), None)
+        if owned is None:
+            return dict(started=False)
+        self.use(owned['backend'])
+        self.finish_alongside(owned, token, state['generation'])
+        return dict(started=True, agent=owned['alias'])
+
     def start_alongside(self, choice):
         """Start an extra AUTO agent while others start or work: its entry is reserved (name, limit) at once, the slow
         start runs outside the store's lock, and it joins the extras when ready."""
+        owned, generation = self.reserve_alongside(choice)
+        return self.finish_alongside(owned, owned['starting'], generation)
+
+    def reserve_alongside(self, choice, warm=False):
         import uuid
         from state import ACTS_WITHOUT_ASKING
         target = self.use(choice['agent']).ID
@@ -1045,6 +1140,8 @@ class AutoMixin:
                          workspace=self.store.workspace, backend=target, role='main', settings=settings, ready=False,
                          starting=token, alias=auto_name(target, [item.get('alias') for item in state['owned']]),
                          timeout=AUTO_TIMEOUT)
+            if warm:
+                owned['warm'] = True
             if target in ACTS_WITHOUT_ASKING:
                 owned['actsWithoutAsking'] = True
             if getattr(self.backend, 'profile', None):
@@ -1053,6 +1150,10 @@ class AutoMixin:
                 self.backend.prepare(owned)
             state['owned'].append(owned)
             generation = state['generation']
+        return owned, generation
+
+    def finish_alongside(self, owned, token, generation):
+        target, settings = owned['backend'], owned['settings']
         try:
             provider = self.provision(owned, generation, token)
             with self.store.edit() as state:

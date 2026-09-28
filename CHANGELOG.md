@@ -5,6 +5,11 @@
 ### AUTO mode (Claude Code)
 - **New agents start side by side.** Several `--agent new` handoffs at once each start their agent at the same
   time, instead of one after another (about 20 s each); a start never waits for a menu's activation either.
+- **Agents warm up while Claude writes the tasks.** When Claude writes more task files than there are free agents,
+  CLI-MODE starts another in the background at once, and the handoff takes it when ready instead of starting
+  one then (each start took about 40 s). Agents also stay warm between tasks, as before.
+- **AUTO runs up to 5 agents by default** (`/cli agents max <n>` changes it). With more parts than that, Claude
+  queues the rest on running agents and says in its report that the agent limit was reached.
 - **A batch runs the tests once.** A handoff that ends while the rest of its batch still works no longer runs the
   project's tests on half-written files (they had said Tests FAILED); the last one's run covers the whole batch,
   and its TESTS line goes on every result.

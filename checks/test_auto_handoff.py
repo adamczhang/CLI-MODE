@@ -560,6 +560,33 @@ class Handoffs(AutoBase):
         with self.store().edit() as saved:
             saved['requests'][request].update(status='completed', endedAt=time.time())
 
+    def test_an_agent_starts_while_claude_writes_the_tasks(self):
+        """Live, 2026-09-28: each extra started about 40 s after its handoff. Writing more task files than there are
+        free agents now starts one in the background at once, and `--agent new` takes it instead of starting another."""
+        import subprocess as sp
+        state = self.auto()
+        self.write_task('t1', 'Goal: fix parse().\nFiles: app/parser.py')
+        launched = []
+        with patch.object(sp, 'Popen', lambda command, **options: launched.append(command)):
+            allowed = self.pre('Write', file_path=str(auto_mode.task_file(self.project, 't1')), content=TASK)
+            self.assertEqual(allowed['permissionDecision'], 'allow')
+            self.assertEqual(launched, [])  # One task, and the AUTO agent is free: nothing to warm.
+            self.pre('Write', file_path=str(auto_mode.task_file(self.project, 't2')), content=TASK)
+        self.assertEqual(len(launched), 1)
+        self.assertEqual(launched[0][-3:-1], ['warm', '--token'])
+        warming = [item for item in self.store().read()['owned'] if item.get('warm')]
+        self.assertEqual((len(warming), warming[0]['alias'], warming[0]['ready']), (1, 'Antigravity-02', False))
+        self.assertEqual(self.ctl('warm', '--token', launched[0][-1])['agent'], 'Antigravity-02')  # The background start.
+        self.ctl('handoff', '--task', 't1')
+        self.write_task('t2', 'Goal: fix the command line.\nFiles: app/cli.py')
+        result = self.ctl('handoff', '--task', 't2', '--agent', 'new')
+        self.assertEqual(result['agent'], 'Antigravity-02')  # The warm one, not a third.
+        owned = self.store().read()['owned']
+        self.assertEqual(len(owned), 2)
+        self.assertFalse(any(item.get('warm') or item.get('claimed') for item in owned))
+        self.assertIn(owned[1]['name'], self.store().read()['auto']['extras'])
+        self.drain(state['auto']['agent'])
+
     def test_cli_list_says_what_the_agents_did(self):
         state = {'requests': {
             'a': dict(routingMode='auto', handoff={'task': 't1'}, status='completed', session='s1', submittedAt=100,
