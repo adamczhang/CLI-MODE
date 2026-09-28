@@ -347,7 +347,9 @@ class Handoffs(AutoBase):
         self.write_task('t2', 'Goal: add a second parser test.\nFiles: tests/')
         self.ctl('handoff', '--task', 't2')
         self.drain(lead)
-        self.assertNotIn('CLI-MODE:', self.backend.sent[-1])  # Its session has the note already.
+        later = self.backend.sent[-1]
+        self.assertNotIn('Agent_Working_Folder/', later)  # Its session has the folder note already.
+        self.assertIn('REMAINING: none', later)  # Every AUTO task: say whether work is left (the ESCALATE check).
         self.assertFalse(agent_folder.brief_path(self.project).exists())  # AUTO starts no brief.
         self.prompt('/cli off')
         self.assertFalse(agent_folder.brief_path(self.project).exists())
@@ -925,6 +927,204 @@ class Ledger(AutoBase):
         self.assertIn(label + ': finished, Claude has not read it yet.', self.prompt('/cli list')['reason'])
         self.ctl('relay', '--request', request, '--for-host')
         self.assertIn(label + ': finished, read.', self.prompt('/cli list')['reason'])
+
+
+LEVELS = [('Low', 'low'), ('Medium', 'medium'), ('High', 'high'), ('Extra High', 'xhigh'), ('Max', 'max')]
+
+
+class Escalation(AutoBase):
+    """Upgraded Fable mode (2026-09-28): an agent below its highest effort that reports work left gets an ESCALATE
+    line in its result, naming a fresh agent at that effort, with the first agent's answer passed on by reference.
+    Claude still decides. The fake agent (Antigravity) has no effort of its own, so these give it Claude's levels."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = patch.object(auto_mode, 'entry_efforts', return_value=LEVELS)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def effort(self, session, value):
+        with self.store().edit() as state:
+            for item in state['owned']:
+                if item['name'] == session:
+                    item['settings']['effortValue'] = value
+
+    def result(self, answer, effort='medium'):
+        """One handoff whose agent answers with `answer` (the fake echoes its task), read as Claude reads it."""
+        lead = self.auto()['auto']['agent']
+        self.effort(lead, effort)
+        self.write_task('t1', 'Goal: hunt the queue modules.\nFiles: app/\n\n' + answer)
+        request = self.ctl('handoff', '--task', 't1')['requestId']
+        self.drain(lead)
+        return self.ctl('relay', '--request', request, '--for-host')['text']
+
+    def test_the_answer_says_what_is_left(self):
+        import relay_view
+        for answer, left in (
+                ('Fixed two.\nREMAINING: none', ''),
+                ('Fixed two.\n**REMAINING:** routines.ts: the once path looks off at the boundary.',
+                 'routines.ts: the once path looks off at the boundary'),
+                ('REMAINING: a\nmore\nREMAINING: the last one wins', 'the last one wins'),
+                ('Fixed two. Several planted bugs are probably still there.',
+                 'Several planted bugs are probably still there.'),
+                ('Fixed two. All tests pass.', None)):
+            with self.subTest(answer=answer):
+                self.assertEqual(relay_view.remaining(answer), left)
+        long = relay_view.remaining('REMAINING: ' + 'x' * 1000)  # A line, not a paragraph: its answer has the rest.
+        self.assertEqual(len(long), relay_view.REMAINING_MAX)
+        self.assertTrue(long.endswith('…'))
+
+    def test_work_left_below_the_top_effort_escalates_with_what_it_learned(self):
+        text = self.result('REMAINING: room-turn-timeout.ts: a late card may not expire the budget; unsure why.')
+        line = next(item for item in text.split('\n') if item.startswith('ESCALATE: '))
+        self.assertEqual(text.split('\n')[2], line)  # Right under the CHECK line.
+        request = re.search(r'^HANDOFF ([0-9a-f]{32}):', text).group(1)
+        for part in ('worked at Medium effort', 'a late card may not expire the budget', 'at Max effort',
+                     '`--agent new --effort max --escalates ' + request + '`', 'Goal and Files cover only what it names',
+                     'several separate areas: one agent each, all at once',
+                     '(what it fixed, ruled out and suspects)', 'Context: its doubt in one line',
+                     'It works and reports once', 'Skip it only for a trivial leftover'):
+            self.assertIn(part, line)
+        self.assertRegex(line, r'Inputs: (`Agent_Working_Folder/[^`]+/answers/[^`]+`|its answer above)')
+
+    def test_no_escalation_when_done_or_already_at_the_top(self):
+        self.assertNotIn('ESCALATE:', self.result('REMAINING: none'))
+        self.prompt('/cli off')
+        self.assertNotIn('ESCALATE:', self.result('REMAINING: routines.ts still unsure.', effort='max'))
+
+    def test_at_the_agent_limit_it_names_an_idle_agent(self):
+        with self.store().edit() as saved:
+            saved['agentLimit'] = 1
+        text = self.result('REMAINING: routines.ts still unsure.')
+        self.assertIn('`--agent <an idle agent> --effort max --escalates ', text)
+        self.assertIn('(the agent limit is reached', text)
+
+    def escalate(self, parent, effort='max', task='t2', left='REMAINING: none', agent='new'):
+        """The escalation of `parent`, to its agent at `effort` (raised in place: the fake has no effort of its own)."""
+        from controller import Controller
+        self.write_task(task, 'Goal: look again at the budget.\nFiles: app/' + task + '.py\n\n' + left)
+
+        def raised(control, session, effort=None, fast=None):
+            self.effort(session, effort)
+            return 'Antigravity-01 now works with it.'
+        with patch.object(Controller, 'reconfigure', autospec=True, side_effect=raised):
+            return self.ctl('handoff', '--task', task, '--agent', agent, '--effort', effort, '--escalates', parent)
+
+    def test_each_task_escalates_once_and_its_result_is_final(self):
+        from controller import Controller
+        text = self.result('REMAINING: room-turn-timeout.ts: a late card may not expire the budget.')
+        parent = re.search(r'^HANDOFF ([0-9a-f]{32}):', text).group(1)
+        lead = self.store().read()['auto']['agent']
+        child = self.escalate(parent, agent='auto', left='REMAINING: routines.ts: the once path skips its boundary.')
+        state = self.store().read()
+        self.assertEqual(state['requests'][child['requestId']]['handoff']['escalates'], parent)
+        self.assertEqual(state['requests'][parent]['escalatedBy'], [child['requestId']])
+        self.assertEqual(state['requests'][parent]['doubt'],
+                         'room-turn-timeout.ts: a late card may not expire the budget')
+        self.drain(lead)
+        result = self.ctl('relay', '--request', child['requestId'], '--for-host')['text']
+        line = next(item for item in result.split('\n') if item.startswith('FOLLOW-UP: '))
+        for part in ('was the Max-effort look at: "room-turn-timeout.ts: a late card may not expire the budget"',
+                     'It reports: "routines.ts: the once path skips its boundary"',
+                     'Its result is final: do not send this again', 'Only if that names a different issue',
+                     '--escalates ' + child['requestId']):
+            self.assertIn(part, line)
+        self.assertNotIn('ESCALATE:', result)
+        # The same task again after its round: refused. (Several agents of one round go together; see below.)
+        with self.store().edit() as saved:
+            saved['requests'][parent]['escalatedAt'] -= Controller.BATCH_WINDOW + 1
+        with self.assertRaisesRegex(RuntimeError, 'has had its escalation'):
+            self.escalate(parent, task='t3', agent='auto')
+        # Read again, the escalated task shows no second ESCALATE line.
+        self.assertNotIn('ESCALATE:', self.ctl('relay', '--request', parent, '--for-host')['text'])
+
+    def test_a_round_may_send_several_agents_and_other_tasks_still_escalate(self):
+        text = self.result('REMAINING: a.py and b.py both look off.')
+        parent = re.search(r'^HANDOFF ([0-9a-f]{32}):', text).group(1)
+        lead = self.store().read()['auto']['agent']
+        first = self.escalate(parent, agent='auto', task='t2')
+        second = self.escalate(parent, agent='auto', task='t3')  # The same round: both go.
+        self.assertEqual(self.store().read()['requests'][parent]['escalatedBy'],
+                         [first['requestId'], second['requestId']])
+        self.drain(lead)
+        self.effort(lead, 'medium')  # A different task, back at Medium: it can escalate too.
+        self.write_task('t4', 'Goal: other module.\nFiles: app/other.py\n\nREMAINING: other.py unsure.')
+        other = self.ctl('handoff', '--task', 't4')['requestId']
+        self.drain(lead)
+        self.assertIn('ESCALATE: ', self.ctl('relay', '--request', other, '--for-host')['text'])
+
+    def test_an_unknown_task_to_escalate_is_refused(self):
+        self.auto()
+        with self.assertRaisesRegex(RuntimeError, 'No AUTO handoff ' + 'f' * 32 + ' to escalate'):
+            self.escalate('f' * 32)
+
+    def test_the_rule_says_to_follow_it(self):
+        state = self.auto()
+        rule = auto_mode.rule(self.data, state, self.project, 'python controller.py handoff --task <id>')
+        self.assertIn('A result with an ESCALATE line', rule)
+        self.assertIn('Each task escalates once', rule)
+        self.assertIn('its result (a FOLLOW-UP line) is final, and you hand on only a different issue', rule)
+
+    def test_every_auto_task_asks_what_is_left_and_why(self):
+        lead = self.auto()['auto']['agent']
+        for task in ('t1', 't2'):
+            self.write_task(task, 'Goal: ' + task + '.\nFiles: app/' + task + '.py')
+            self.ctl('handoff', '--task', task)
+            self.drain(lead)
+            self.assertIn('`REMAINING: none`', self.backend.sent[-1])
+            self.assertIn('what makes you doubt it', self.backend.sent[-1])
+            self.assertIn('about this task only (not work outside it)', self.backend.sent[-1])
+
+    def test_an_effort_its_model_lacks_is_refused(self):
+        self.auto()
+        self.write_task('t1', 'Goal: x.\nFiles: app/')
+        with self.assertRaisesRegex(RuntimeError, r'No effort "ultra" for this agent\. Its levels: low, medium, high, '
+                                                  r'xhigh, max\.'):
+            self.ctl('handoff', '--task', 't1', '--effort', 'ultra')
+        with patch.object(auto_mode, 'entry_efforts', return_value=[]):
+            with self.assertRaisesRegex(RuntimeError, 'no effort setting of its own'):
+                self.ctl('handoff', '--task', 't1', '--effort', 'max')
+
+    def test_a_new_agent_starts_at_the_effort_and_skips_a_warm_one_at_another(self):
+        from controller import Controller
+        control = Controller(self.store(), self.backend)
+        with patch.object(Controller, 'lead_choice', return_value=dict(agent='claude', model='opus', access='allow',
+                                                                       effort='medium', fast=None)), \
+                patch.object(Controller, 'claim_warm', return_value='WARM') as warm, \
+                patch.object(Controller, 'start_alongside', return_value='NEW') as start,                 patch.object(auto_mode, 'agent_entry', return_value={'name': 'NEW'}):
+            self.assertEqual(control.start_extra(effort='max'), 'NEW')
+            warm.assert_not_called()
+            self.assertEqual(start.call_args.args[0]['effort'], 'max')
+            self.assertEqual(control.start_extra(effort='medium'), 'WARM')  # Its own effort: a warm one will do.
+            self.assertEqual(control.start_extra(), 'WARM')
+
+    def test_an_idle_agent_takes_the_effort_in_place_and_a_busy_one_refuses(self):
+        from controller import Controller
+        lead = self.auto()['auto']['agent']
+        self.effort(lead, 'medium')
+        self.write_task('t1', 'Goal: x.\nFiles: app/x.py')
+
+        def raised(control, session, effort=None, fast=None):
+            self.effort(session, effort)
+            return 'Antigravity-01 now works with it.'
+        with patch.object(Controller, 'reconfigure', autospec=True, side_effect=raised) as reconfigure:
+            result = self.ctl('handoff', '--task', 't1', '--effort', 'max')
+            reconfigure.assert_called_once()
+        state = self.store().read()
+        self.assertEqual(state['requests'][result['requestId']]['handoff']['effort'], 'max')  # Recorded.
+        self.write_task('t2', 'Goal: y.\nFiles: app/y.py')
+        self.effort(lead, 'medium')  # t1 is still waiting for the agent: it is busy.
+        with self.assertRaisesRegex(RuntimeError, 'is working, so its effort cannot change now'):
+            self.ctl('handoff', '--task', 't2', '--effort', 'max')
+
+    def test_the_hook_passes_the_effort_to_the_new_agents_start(self):
+        self.auto()
+        self.write_task('t2', 'Goal: look again at the queues.\nFiles: app/')
+        approved = self.pre('Bash', command=self.command('handoff', '--task', 't2', '--agent', 'new', '--effort', 'max'),
+                            description='x')
+        self.assertEqual(approved['permissionDecision'], 'allow')
+        self.assertRegex(approved['updatedInput']['command'],
+                         r'handoff --task t2 --agent new --request [0-9a-f]{32} --follow --effort max')
 
 
 if __name__ == '__main__':

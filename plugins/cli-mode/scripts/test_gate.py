@@ -16,6 +16,11 @@ import subprocess
 import time
 
 TIMEOUT = 600
+# A command CLI-MODE found on its own (package.json's test, pytest...) may be a whole monorepo's suite: live, 2026-09-28,
+# `npm test` in a large project ran into the 10-minute limit after every handoff, and was reported as a failure. It
+# gets a shorter limit; a command set with /cli test keeps TIMEOUT. Either way a run that hits its limit timed out:
+# it is not a failure.
+DETECTED_TIMEOUT = 180
 SETTINGS = 'project-tests.json'
 _NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # The summary lines of common runners, most specific first; otherwise the output's last line.
@@ -76,6 +81,12 @@ def command(root, workspace):
     if value == OFF:
         return None
     return value or detect(workspace)[0]
+
+
+def timeout_for(root, workspace):
+    """How long this project's test run may take: a command set with /cli test TIMEOUT, a detected one less."""
+    value = saved(root, workspace)
+    return TIMEOUT if value and value != OFF else DETECTED_TIMEOUT
 
 
 def set_command(root, workspace, text):
@@ -144,7 +155,7 @@ def run(root, workspace, text, log, timeout=TIMEOUT):
                                        stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW)
             try:
                 out, err = process.communicate(timeout=timeout)
-                passed, line = process.returncode == 0, None
+                passed, line, timed_out = process.returncode == 0, None, False
             except subprocess.TimeoutExpired:
                 # The shell is only the runner's parent: ending it alone leaves the runner holding the output
                 # pipes, and reading them would then wait forever. End the whole tree, then read what is left.
@@ -153,10 +164,10 @@ def run(root, workspace, text, log, timeout=TIMEOUT):
                     out, err = process.communicate(timeout=30)
                 except subprocess.TimeoutExpired:
                     out, err = b'', b''
-                passed, line = False, 'stopped after ' + str(timeout // 60) + ' minutes'
+                passed, line, timed_out = False, 'stopped after ' + str(timeout // 60) + ' minutes', True
             output = ((out or b'') + b'\n' + (err or b'')).decode('utf-8', errors='replace')
         except OSError as exc:
-            output, passed, line = str(exc), False, 'could not run: ' + str(exc)
+            output, passed, line, timed_out = str(exc), False, 'could not run: ' + str(exc), False
         seconds = round(time.monotonic() - began)
         kept = None
         if log is not None:
@@ -166,7 +177,8 @@ def run(root, workspace, text, log, timeout=TIMEOUT):
                 kept = log.relative_to(workspace).as_posix()
             except (OSError, ValueError):
                 pass
-        return dict(command=text, passed=passed, summary=line or summary(output), seconds=seconds, log=kept)
+        return dict(command=text, passed=passed, summary=line or summary(output), seconds=seconds, log=kept,
+                    **({'timedOut': True} if timed_out else {}))
     finally:
         os.close(handle)
         lock.unlink(missing_ok=True)
@@ -176,6 +188,9 @@ def line(tests):
     """`✓ Tests passed (npm test) · 41 passed · 12 s`, or `✗ Tests failed (...)`, for a receipt."""
     if not tests:
         return None
+    if tests.get('timedOut'):  # Not a result either way: the run did not finish.
+        return ('⏱ Tests timed out (' + tests['command'] + ') · ' + (tests.get('summary') or 'stopped') +
+                ', before finishing: neither passed nor failed · ' + str(tests.get('seconds', 0)) + ' s')
     return (('✓ Tests passed (' if tests['passed'] else '✗ Tests failed (') + tests['command'] + ')' +
             (' · ' + tests['summary'] if tests.get('summary') else '') + ' · ' +
             str(tests.get('seconds', 0)) + ' s')

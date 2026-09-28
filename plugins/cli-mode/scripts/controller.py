@@ -96,6 +96,9 @@ def build_parser():
     p.add_argument('--for-host', action='store_true', help='Claude Code AUTO: a handoff\'s result for Claude to read.')
     p = sub.add_parser('handoff', help='Claude Code AUTO: hand Claude\'s task file to the AUTO agent.')
     p.add_argument('--task', required=True); p.add_argument('--agent'); p.add_argument('--read-only', action='store_true')
+    p.add_argument('--escalates', help='The handoff whose ESCALATE or FOLLOW-UP line this follows (once per task).')
+    p.add_argument('--effort', help='The effort this task runs at (as an ESCALATE line says): a new agent starts at it, '
+                   'an idle one takes it in place.')
     # The approval hook's forms (hooks/claude.py:handoff_approval): the checks alone, or, for a new agent, its
     # start, the handoff under the hook's id and the follow, as one background task.
     p.add_argument('--check', action='store_true', help=argparse.SUPPRESS)
@@ -298,7 +301,8 @@ def run(args, control=None):
         if views:
             raise ValueError('AUTO mode is Claude Code only; on Codex only /d reaches an agent.')
         try:
-            result = control.handoff(args.task, args.agent, args.read_only, request=args.request, check=args.check)
+            result = control.handoff(args.task, args.agent, args.read_only, request=args.request, check=args.check,
+                                     effort=args.effort, escalates=args.escalates)
         except RuntimeError as exc:
             if args.request and args.follow:
                 control.note_handoff_error(args.request, str(exc))  # Its wake-up says why nothing was handed off.

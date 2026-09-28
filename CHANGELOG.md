@@ -3,6 +3,20 @@
 ## Unreleased
 
 ### AUTO mode (Claude Code)
+- **Escalation to the highest effort.** Every AUTO task asks its agent to end with `REMAINING: none` or what is
+  left, where, and why it doubts it. When an agent below its model's highest effort reports work left, its result
+  carries an ESCALATE line: hand that to a fresh agent at the highest effort (`handoff --agent new --effort max`),
+  with the first agent's saved answer as the task's Inputs and its doubt as Context. Claude still decides. Each task
+  escalates once (`--escalates` links them; one round may send one agent per area at once), and the escalated
+  agent's result is final: a FOLLOW-UP line hands on only a different issue it names, as new work.
+  `handoff --effort <level>` also sets an idle agent's effort in place.
+
+### Both hosts
+- **A test run that runs out of time is not a failure.** The test gate says it timed out, and the result's check
+  no longer calls it failed. A test command CLI-MODE found on its own gets 3 minutes (one set with `/cli test`
+  keeps 10), so a whole monorepo's suite no longer holds each turn for 10 minutes.
+- **Searches split across agents.** A bug hunt, audit or review of many files is grouped into sets, one per agent,
+  handed out at once; a shared report file stays Claude's.
 - **New agents start side by side.** Several `--agent new` handoffs at once each start their agent at the same
   time, instead of one after another (about 20 s each); a start never waits for a menu's activation either.
 - **Agents warm up while Claude writes the tasks.** When Claude writes more task files than there are free agents,

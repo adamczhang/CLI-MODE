@@ -340,8 +340,8 @@ def check_line(status, receipt, batch, read_only=False, stopped=None, others=(),
     if status != 'completed':
         reasons.append('it ' + HOST_ENDS.get(status, status))
     tests = receipt.get('tests')
-    if isinstance(tests, dict) and tests.get('passed') is False:
-        reasons.append('tests failed')
+    if isinstance(tests, dict) and tests.get('passed') is False and not tests.get('timedOut'):
+        reasons.append('tests failed')  # A run that timed out is no result; its TESTS line says so.
     if stopped:
         reasons.append('it stopped to ask permission')
     if any(event.get('type') == 'error' for event in batch):
@@ -359,8 +359,33 @@ def check_line(status, receipt, batch, read_only=False, stopped=None, others=(),
     return 'CHECK: ok' if not reasons else 'CHECK: look: ' + '; '.join(reasons) + '.'
 
 
+# An answer without its REMAINING line can still say work is left: these phrases, found in one of its sentences.
+DOUBT = re.compile(r'\b(probably still|still (?:there|remain|left|hidden)|may (?:still )?remain|might (?:still )?remain|'
+                   r'i (?:suspect|missed)|likely missed|not (?:sure|confident)|only moderately|needs? (?:a |another )?'
+                   r'(?:second look|closer look|another pass|more review)|worth (?:a |another )(?:look|pass)|'
+                   r'unfinished|left undone)\b', re.I)
+REMAINING_MAX = 300  # Characters of a REMAINING line carried into the ESCALATE line.
+REMAINING_LINE = re.compile(r'^[\s>*_`#-]*REMAINING[*_`]*\s*:[*_`]*\s*(.*?)[\s*_`.]*$', re.I | re.M)
+
+
+def remaining(answer):
+    """What an AUTO agent says is left, from its answer: the text of its last `REMAINING:` line ('' for `none`), or
+    without that line, the first sentence that says work may remain; None when it says nothing either way."""
+    lines = REMAINING_LINE.findall(answer or '')
+    if lines:
+        text = ' '.join(lines[-1].split())
+        if text.casefold().rstrip('.') in ('none', 'nothing', 'n/a', '-'):
+            return ''
+        # It goes into the ESCALATE line and the next task's Context: a line, not a paragraph (its answer has the rest).
+        return text if len(text) <= REMAINING_MAX else text[:REMAINING_MAX - 1].rstrip() + '…'
+    for sentence in re.split(r'(?<=[.!?])\s+|\n+', answer or ''):
+        if DOUBT.search(sentence):
+            return ' '.join(sentence.split())[:240]
+    return None
+
+
 def host_text(request, label, status, batch, receipt, read_only=False, task=None, stopped=None, access=None,
-              touched=None, answer_max=HOST_ANSWER_MAX, alongside=(), outside=()):
+              touched=None, answer_max=HOST_ANSWER_MAX, alongside=(), outside=(), escalate=None):
     """An AUTO handoff's result as Claude reads it (relay --for-host, or the wake-up itself): plain lines, then the
     agent's answer.
 
@@ -382,6 +407,8 @@ def host_text(request, label, status, batch, receipt, read_only=False, task=None
     lines = ['HANDOFF ' + request + ': ' + label + ' ' + HOST_ENDS.get(status, status) +
              (' (read-only)' if read_only else '') + '.',
              check_line(status, receipt, batch, read_only, stopped, others, outside)]
+    if escalate:  # auto_mode.escalation: ESCALATE (work left, a higher effort to try) or FOLLOW-UP (its result).
+        lines.append(escalate)
     if task:
         lines.append('TASK: ' + task)
     if changes:

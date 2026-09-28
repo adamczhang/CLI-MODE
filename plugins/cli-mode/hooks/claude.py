@@ -703,7 +703,8 @@ def handoff_approval(event, root, rest):
                     '` (with --read-only or --agent <name> if needed).')
     if args.check or args.request or args.follow:
         return None
-    extra = ['--read-only'] if args.read_only else []
+    extra = ((['--read-only'] if args.read_only else []) + (['--effort', args.effort] if args.effort else []) +
+             (['--escalates', args.escalates] if args.escalates else []))
     try:
         if (args.agent or '').casefold() == 'new':
             label = controller(event, root, 'handoff', '--task', args.task, '--agent', 'new', '--check', *extra)['label']

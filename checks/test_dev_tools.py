@@ -263,6 +263,21 @@ class TestGate(Project):
         self.assertLess(time.monotonic() - began, 60)
         self.assertFalse(result['passed'])
         self.assertTrue(result['summary'].startswith('stopped after'))
+        # A run past its limit is no result: it says it timed out, and the CHECK line does not call it a failure.
+        self.assertTrue(result['timedOut'])
+        self.assertTrue(test_gate.line(result).startswith('⏱ Tests timed out ('))
+        self.assertIn('neither passed nor failed', test_gate.line(result))
+        import relay_view
+        self.assertEqual(relay_view.check_line('completed', dict(tests=result), [dict(type='message', text='Done.')]),
+                         'CHECK: ok')
+
+    def test_a_detected_command_gets_a_shorter_limit_than_one_set(self):
+        # Live, 2026-09-28: a detected `npm test` was a whole monorepo's suite, and hit the 10-minute limit each time.
+        state = self.root / 'state'
+        self.assertEqual(test_gate.timeout_for(state, self.project), test_gate.DETECTED_TIMEOUT)
+        test_gate.set_command(state, self.project, 'npm run test:unit')
+        self.assertEqual(test_gate.timeout_for(state, self.project), test_gate.TIMEOUT)
+        self.assertLess(test_gate.DETECTED_TIMEOUT, test_gate.TIMEOUT)
 
     def test_runner_summaries(self):
         self.assertEqual(test_gate.summary('x\n===== 1 failed, 41 passed in 3.2s =====\n'), '1 failed, 41 passed in 3.2s')

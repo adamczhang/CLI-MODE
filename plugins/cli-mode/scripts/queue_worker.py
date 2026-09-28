@@ -561,7 +561,8 @@ class QueueMixin:
         if record.get('saved'):
             end += ' ' + agent_folder.summary('It', record['saved'])
         if record.get('tests'):
-            end += ' Tests ' + ('passed.' if record['tests']['passed'] else 'FAILED.')
+            end += ' Tests ' + ('timed out.' if record['tests'].get('timedOut') else
+                                'passed.' if record['tests']['passed'] else 'FAILED.')
         if record.get('overlaps'):
             end += ' ⚠ Another agent edited the same files.'
         say(end)
@@ -1065,7 +1066,8 @@ class QueueMixin:
                                                  for entry in (logs.glob('*.log') if logs.is_dir() else [])) if match]
             log = logs / ('%03d.log' % ((max(taken) + 1) if taken else 1))
             agent_folder.ensure(workspace, name)
-        return test_gate.run(self.store.root, workspace, text, log)
+        return test_gate.run(self.store.root, workspace, text, log, timeout=test_gate.timeout_for(self.store.root,
+                                                                                                  workspace))
 
     def _note_touched(self, state, request_id, workspace):
         """Record the files this turn's own tools edited, deleted or moved, and any another agent edited too.
