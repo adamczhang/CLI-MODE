@@ -54,6 +54,22 @@ async function recordFunctions(install) {
   return functions;
 }
 
+/** A new session's chosen settings, from CLI-MODE's setting steps (`['set', key, value]`, `['set-mode', mode]`), in
+ * the fields ACPX 0.18.0 keeps a session's settings in and replays onto a session it creates, each applied the way
+ * the same step is applied to a running session (the `control` action below): the model in `session_options.model`
+ * (session/set_model), a `set-mode` in `desired_mode_id` (session/set_mode), and every config option, the access
+ * `mode` and reasoning effort included, in `desired_config_options` (session/set_config_option). */
+function desiredState(steps) {
+  const state = {};
+  for (const [command, key, value] of Array.isArray(steps) ? steps : []) {
+    if (command === 'set-mode' && typeof key === 'string') state.desired_mode_id = key;
+    else if (command !== 'set' || typeof key !== 'string' || typeof value !== 'string') continue;
+    else if (key === 'model') state.session_options = {...state.session_options, model: value};
+    else state.desired_config_options = {...state.desired_config_options, [key]: value};
+  }
+  return state;
+}
+
 async function stamp(path) {
   if (!path) return null;
   try { const info = await stat(path); return [info.mtimeMs, info.size]; }
@@ -239,8 +255,12 @@ async function main(input, cancellation, checkCancellation, progress) {
       const {createInitialSessionRecord, writeSessionRecord} = await recordFunctions(input.install);
       const session = runtime.sessionOptions({agent: input.profile, cwd: input.workspace, sessionKey: input.session});
       const id = randomUUID();
-      await writeSessionRecord(createInitialSessionRecord({recordId: id, sessionId: id, agentCommand:
-        session.agentCommand, agentArgv: session.agentArgv, cwd: session.cwd, name: session.name}));
+      const record = createInitialSessionRecord({recordId: id, sessionId: id, agentCommand: session.agentCommand,
+        agentArgv: session.agentArgv, cwd: session.cwd, name: session.name});
+      // The chosen settings, as ACPX keeps a session's own: it replays them onto the session it creates for the
+      // first prompt, before that prompt. So the readiness prompt runs on the chosen model, effort and access.
+      record.acpx = {...record.acpx, ...desiredState(input.desired)};
+      await writeSessionRecord(record);
       write({reserved: true, recordId: id});
       return;
     }

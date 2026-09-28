@@ -246,6 +246,10 @@ class Tests(unittest.TestCase):
             self.assertEqual(backend.start(owned, ['sessions', 'reserve', '--name', 'cli-mode-s1']), 'bridge')
             self.assertEqual(bridge.call_args.args[1]['action'], 'reserve')
             self.assertEqual(bridge.call_args.args[1]['session'], 'cli-mode-s1')
+            self.assertEqual(bridge.call_args.args[1]['desired'], [])
+            steps = [['set', 'model', 'grok-4.7'], ['set', 'mode', 'agent']]  # Written into the reserved record.
+            backend.start(dict(owned, desiredSettings=steps), ['sessions', 'reserve', '--name', 'cli-mode-s1'])
+            self.assertEqual(bridge.call_args.args[1]['desired'], steps)
             spawn.assert_not_called()
             ensure = ['sessions', 'ensure', '--name', 'cli-mode-s1']
             self.assertEqual(backend.start(owned, ensure), 'spawned')  # Unchanged: ACPX's own command.
@@ -261,6 +265,8 @@ class Tests(unittest.TestCase):
 
             def start(self, owned, args, timeout=60):
                 process = super().start(owned, args, timeout)  # Records the call and makes the fake's session.
+                if args[:2] == ['sessions', 'reserve']:
+                    self.desired = owned.get('desiredSettings')  # The chosen settings, for the reserved record.
                 if args[:2] in (['sessions', 'reserve'], ['sessions', 'ensure']):
                     self.calls[-1] = args + (['reserved' if args[1] == 'reserve' else 'started'])
                     return Process({'reserved': True} if args[1] == 'reserve' else {})
@@ -297,6 +303,10 @@ class Tests(unittest.TestCase):
                 retried = reserves and outcomes[0] is not None and outcomes[0] is not canceled
                 self.assertEqual(ensures, ['reserved', 'started'] if retried else ['reserved' if reserves else 'started'])
                 self.assertEqual(probes, ensures)  # One readiness prompt after each.
+                if reserves:  # The reserved record carries the chosen settings: the agent starts on them.
+                    settings = controller.adapter.selection(controller.store.root, defaults['model'],
+                                                            defaults['access'], defaults.get('effort'))
+                    self.assertEqual(backend.desired, controller.adapter.setting_steps(settings))
                 if retried:
                     self.assertTrue(backend.closed)  # The placeholder is closed before the classic ensure.
 

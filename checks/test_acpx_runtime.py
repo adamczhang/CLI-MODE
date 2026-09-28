@@ -471,14 +471,20 @@ class SharedRuntime(unittest.TestCase):
         # `sessions ensure` started the agent only to create the session, and the readiness prompt's owner started
         # it again (Antigravity: ~25 s each). Reserved, the session is created by that prompt's owner alone.
         starts = self.workspace / 'fixture-starts.log'
+        prompts = self.workspace / 'fixture-prompts.log'
         control = Controller(Store('single-start', self.workspace, self.root / 'single-start'), self.backend)
         try:
             control.frontend()
             starts.unlink(missing_ok=True)  # setUp's own `sessions ensure` started it once.
-            self.assertTrue(control.activate('gemini-3.8-flash-high', 'allow')['active'])
+            prompts.unlink(missing_ok=True)
+            # Not the agent's default model: the readiness prompt must already run on the chosen one (live, Codex's
+            # readiness answered on its config's model, before the chosen settings were applied).
+            self.assertTrue(control.activate('gemini-3.8-flash-low', 'allow')['active'])
             self.assertEqual(starts.read_text().splitlines(), ['start'])
             owned = control.store.read()['owned'][0]
             self.assertTrue(owned['providerSession'])
+            self.assertEqual(prompts.read_text().splitlines(),
+                             ['gemini-3.8-flash-low ' + owned['settings']['mode']])  # Chosen before the first turn.
             # A real session now: a strict prompt through the bridge continues it (readiness was its turn 1).
             prompt = self.root / 'next.txt'
             prompt.write_text('count', encoding='utf-8')
@@ -496,9 +502,12 @@ class SharedRuntime(unittest.TestCase):
                 control.store.signal_cancel(state)
             # Honored: the probe settles as canceled (the fixture ends a held probe only on the agent's cancel),
             # not at dispatch's timeout after a lost cancel, and activation ends with it: a probe retried the
-            # classic way would be held again, past this wait.
-            with self.assertRaisesRegex(ProbeCanceled, r'stop=cancelled\)'):
-                activation.result(timeout=20)
+            # classic way would be held again, past this wait. A cancel that reaches the owner while the probe is
+            # still queued (ACPX creating the session and applying the chosen settings) removes it before its turn
+            # starts: exit 0 with no stop reason, which is the same honored cancel (seen under a loaded parallel
+            # run). The wait allows for such load; a lost cancel runs to dispatch's timeout, far past it.
+            with self.assertRaisesRegex(ProbeCanceled, r'stop=(cancelled|None)\)'):
+                activation.result(timeout=45)
             self.assertFalse(control.store.read()['active'])
         finally:
             (self.workspace / 'hold-readiness').unlink(missing_ok=True)

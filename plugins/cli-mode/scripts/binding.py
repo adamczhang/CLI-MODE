@@ -494,7 +494,12 @@ class BindingMixin:
             # Reserved, the session's record is written without starting the agent; the readiness prompt below
             # starts it once and creates the session. `sessions ensure` would start it here as well.
             reserve = getattr(self.backend, 'reserve_without_start', False)
-            self.control(owned, ['sessions', 'reserve' if reserve else 'ensure', '--name', name], generation, pending)
+            # The reserved record carries the chosen settings: ACPX applies them to the session it creates, before
+            # the readiness prompt, so the agent starts on the chosen model, effort and access and the readiness
+            # answer comes from them (not from the agent's own default, as Codex's config model did, live
+            # 2026-09-27). The steps below then find them already in place.
+            self.control(dict(owned, desiredSettings=steps) if reserve else owned,
+                         ['sessions', 'reserve' if reserve else 'ensure', '--name', name], generation, pending)
             try:
                 self.readiness(dict(owned, bootstrapPrompt=True), generation, pending)
             except RuntimeError as first:
