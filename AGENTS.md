@@ -1,6 +1,6 @@
 # CLI-MODE — agent guide (read this first)
 
-> **Written for CLI-MODE 0.3.9** (tag `v0.3.9`, 2026-09-26).
+> **Written for CLI-MODE 0.4.0** (tag `v0.4.0`, 2026-09-28).
 > If `plugins/cli-mode/.codex-plugin/plugin.json` shows a different version, parts of this file may be
 > out of date. Verify any file, function or rule named here against the code before relying on it; when
 > they disagree, the code wins. Fix this file in the same change. `checks/test_agent_docs.py` fails
@@ -83,8 +83,11 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   writer per file: a task's Files line is its claim (`auto_mode.task_files`, `conflict`; `Files: none` claims no
   project file), and a handoff or an edit of Claude's that would change a claimed file is refused, while a result
   names the agent's own edits outside its claim (`auto_mode.outside_claim`); `handoff --agent new` starts an extra agent like the
-  AUTO agent for work in parallel (`start_extra`). Codex keeps DIRECT only (it has no wake-up), so the
-  Codex golden record does not change.
+  AUTO agent for work in parallel (`start_extra`; a start waits for another under way). The default strength is
+  Normal: Claude works itself and hands off what is worth it (long jobs, saved long messages, big independent
+  parts, reviews). AUTO runs up to `state.AUTO_AGENT_LIMIT` agents, and handoffs sent together wake Claude once
+  (`QueueMixin._end_with_batch`; a notification already reported is blocked). Codex keeps DIRECT only (it has no
+  wake-up), so the Codex golden record does not change.
 - **Codex reply path** (Codex only): `route.codex_output()` returns additionalContext telling the model
   which controller commands to run. Menus and results come back as inline HTML views (`menuView` or
   `messageView` with a `reference` line; `menu_view.py`, `relay_view.render`). A relay loops

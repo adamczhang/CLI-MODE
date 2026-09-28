@@ -1,102 +1,54 @@
-# CLI-MODE v0.3.9 — One brief for every conversation, undo for every agent
+# CLI-MODE v0.4.0 — AUTO: Claude leads, a cheaper engine works
 
 CLI-MODE drives six coding agents (Antigravity, Claude Code, Grok Build, Cursor,
 GitHub Copilot and Codex CLI) from inside **Claude Code** or **Codex**, over ACPX.
 
-This release fixes what a code review of 0.3.8 and a full live validation on both
-hosts found.
+This release brings **AUTO mode** to Claude Code, and makes it Claude Code's default.
 
-**The project brief is shared properly.**
+**Two modes.**
 
-- Text you write in `Agent_Working_Folder/BRIEF.md` yourself now stays: CLI-MODE
-  edits only its own lines, under one lock.
-- A Claude Code conversation and a Codex conversation working in the same folder
-  now both appear in the brief's list of running agents, instead of removing each
-  other's.
-- With `/cli display instant` (Claude Code), an agent's start no longer leaves an
-  unwritten host note behind.
+- **DIRECT** is the pass-through you orchestrate: every `/d` goes to the agent you
+  name, and you decide how many agents run and how the work is split. It keeps
+  Claude's own usage to a minimum. Codex keeps DIRECT only.
+- **AUTO** is a partnership: you talk to Claude only. Claude keeps quick work and
+  anything that needs its judgment, and hands your agent the work worth handing
+  over: long jobs, long pasted messages, big independent parts (each on its own
+  agent) and reviews. It writes each task, the agent works in the background, and
+  Claude reads the result, checks it and tells you how it went.
 
-**`/cli undo` works for every agent.** Copilot and Codex CLI name the file they
-edit only in the edit's diff, so undo thought they had edited nothing; and with
-`/cli progress quiet` no agent's edits were recorded at all. Both are fixed, and
-Copilot's and Codex CLI's work rows now name the files they edit.
+**Pair Claude Opus with a cheaper engine.** AUTO's use case is Claude Opus as the
+lead, planning and checking, with a less expensive model from another provider
+doing most of the work. In usage tests with Gemini Flash (Antigravity) as the
+engine, against Claude alone on the same prompts:
 
-**Approvals ask only when they should.**
+| Prompt | Work moved off Claude | Time, Claude alone → AUTO |
+|---|---|---|
+| 2.5k tokens, 3 independent parts | 36% | 1.7 → 5.5 min |
+| 12.5k tokens, 4 parts | 60% | 5.7 → 7.3 min |
+| 50k tokens, 5 parts | 77% | 16.7 → 6.5 min |
+| 5k tokens, one sequential job | 66% | 2.3 → 3.7 min |
 
-- An agent that asks first is no longer mistaken for one that acts without
-  asking once its approved command runs.
-- After `/cli approve`, an agent that acts without asking (Grok) may run commands
-  and edit files for that turn, as its question says, even when it asks.
-- Claude's commands don't say what kind of tool they are; approving one now covers
-  a reworded retry in the same turn, and "approve always" is no longer offered for
-  them (it would allow every unnamed tool for good).
+Every AUTO run passed its hidden tests, saved every data file byte for byte and
+gave every exact answer; on the 50k prompt, Claude alone re-typed the data and
+got one file wrong. With Claude Code agents instead, AUTO was fastest (2.3 min and
+2.7 min on the two larger prompts), but that work stays on Claude's plan.
 
-**`/cli usage`:** Copilot and Codex CLI report an answer they can't read clearly
-instead of failing.
+**What makes it work.**
 
-## Install
+- One writer per file: each task names the files it may change, so several
+  agents write at once without colliding; up to 6 agents run in AUTO.
+- A handoff is one tool call, and the result arrives with Claude's wake-up,
+  opened by CLI-MODE's own verdict (`CHECK: ok`, or what to look at), a per-file
+  change summary and the test result, so Claude reports without re-checking.
+- Long messages are saved and tasks point to their part of them; parts sent
+  together wake Claude once.
+- Delegation strength (Normal by default, Strong, Max), the AUTO agent's model,
+  effort and Codex's fast mode are set on the Mode page (`/cli mode`).
+- The safety controls stay yours: `/cli cancel`, `/cli list`, `/cli usage`,
+  `/cli view`, `/cli access`, `/cli approve|deny` and `/cli off`.
 
-Pick your host and run its block in PowerShell.
+Also in this release: each agent starts once, on its chosen settings; canceled
+turns show at once; `/cli usage` fixes; and the full check suite runs in about
+75 seconds in parallel.
 
-**Codex** (runs in the Codex desktop app):
-
-```powershell
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.9
-codex plugin add cli-mode@cli-mode
-```
-
-**Claude Code** (2.1.147 or later): download `cli-mode-claude-0.3.9.zip` from this
-release, extract it, and run:
-
-```powershell
-.\install-claude.ps1
-```
-
-Or install it straight from GitHub, then run `/cli-mode:cli shortcuts` once:
-
-```powershell
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.9 --sparse .claude-plugin plugins
-claude plugin install cli-mode@cli-mode
-```
-
-**Using both?** Run both. They share one ACPX installation and each agent's own
-sign-in; conversations and settings stay separate per host.
-
-## Upgrading from an earlier 0.3 release
-
-A GitHub install is pinned to its tag, so updating it in place keeps the old version. Move
-it to the new tag instead; your saved CLI-MODE settings are kept.
-
-**Codex:**
-
-```powershell
-codex plugin marketplace remove cli-mode
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.9
-codex plugin add cli-mode@cli-mode
-```
-
-Coming from v0.3.0, then open **Plugins → CLI-MODE → Hooks** in the Codex
-desktop app and choose **Trust all** (or review the updated definitions); from
-v0.3.1 or later the hooks are unchanged.
-
-**Claude Code from the zip:** run the new zip's `install-claude.ps1`; it updates
-in place and keeps your data.
-
-**Claude Code from GitHub:** uninstall with `--keep-data` first, because removing
-the marketplace otherwise deletes CLI-MODE's saved data:
-
-```powershell
-claude plugin uninstall cli-mode@cli-mode --keep-data
-claude plugin marketplace remove cli-mode
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.9 --sparse .claude-plugin plugins
-claude plugin install cli-mode@cli-mode
-```
-
-## Validation and artifacts
-
-The [v0.3.9 validation report](checks/v0.3.9-validation.md) records this
-release's checks: the full offline suite, both install smokes, and live runs on
-both hosts with five of the six agents.
-
-Both archives and their SHA256 checksums are attached to the GitHub Release:
-`cli-mode-codex-0.3.9.zip` (Codex) and `cli-mode-claude-0.3.9.zip` (Claude Code).
+See the [changelog](CHANGELOG.md) for everything, and the README's "Which to use".
