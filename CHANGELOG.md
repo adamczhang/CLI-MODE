@@ -45,7 +45,7 @@
   Claude's usage, for when that matters more than time. A Strong saved while it was the default now reads as Normal;
   one chosen on the Delegation page stays.
 - **Lighter still, from a usage test** (native Claude against AUTO on tasks of 1k-25k tokens):
-  - a long message (8,000 characters or more) is saved for the agents, and the task points to it in a new Inputs
+  - a long message (4,000 characters or more) is saved for the agents, and the task points to it in a new Inputs
     line: handed off, a 25k-token prompt had cost Claude 7 minutes retyping its data;
   - the result's TESTS line is CLI-MODE's own run of the tests, so Claude doesn't run them again;
   - a request with three or more independent parts that change different files goes to several agents at once;
@@ -73,6 +73,16 @@
     starts a project brief (agents found the one CLI-MODE wrote, which no task named, and read it every task);
   - parallel work goes out only in parts of several minutes each: a new agent starts cold, and a small part stays
     in another task or with Claude;
+  - handoffs sent together wake Claude together: a finished handoff waits for the rest sent with it, one wake-up
+    reads every finished result of the batch, and a notification whose result was already reported never reaches
+    the model. Five parallel parts had woken Claude five times, each wake-up re-reading the whole conversation;
+  - AUTO runs up to 6 agents by default (DIRECT keeps 4; `/cli agents max <n>` sets either): a five-part request
+    had queued its fifth part for up to 2.4 minutes;
+  - a message of 4,000 characters or more is saved (8,000 before), and a task names its part of the saved prompt
+    by heading and markers instead of restating it; independent parts go out in two turns (every task file, then
+    every handoff);
+  - several `--agent new` handoffs at once each get their agent: a start that finds another under way waits for it
+    (up to five minutes) instead of being refused, which had left one part of three queued behind a busy agent;
   - a Files line's paths in brackets count, and a sentence's end is not a file (`...its test file only.` had
     claimed `only`, and `No other files.` the file `files`).
 - In AUTO, `/d` asks Claude itself: nothing from that turn goes to an agent. A plain message lets Claude decide.

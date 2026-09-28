@@ -875,10 +875,25 @@ def auto_wake(event, root, requests, state):
     from controller import Controller
     from queue_worker import request_label
     import relay_view
-    fresh = [key for key in requests if not ((state.get('requests') or {}).get(key) or {}).get('hostRead')]
+    records = state.get('requests') or {}
+    fresh = [key for key in requests if not (records.get(key) or {}).get('hostRead')]
     if not fresh:
+        ids = TOOL_USE_ID.findall(event.get('prompt', ''))
+        if ids and all(item in (state.get('followTasks') or {}) for item in ids):
+            # Only CLI-MODE's follows, their results already reported with the rest of their batch: no turn at all,
+            # which would only re-read the whole conversation to say nothing.
+            return {'decision': 'block', 'suppressOriginalPrompt': True,
+                    'reason': 'CLI-MODE: ' + ' and '.join(request_label(state, key) for key in requests) +
+                              ' finished; reported with the rest of its handoffs.'}
         return context(event, 'CLI-MODE: this notification ends the follow of handoff ' + requests[0] + ', whose '
                        'result you have already read. Nothing more is needed for it.' + COMPLETE)
+    # The rest of their batch that has also finished comes along, so one wake-up reports them all.
+    from queue_worker import QueueMixin
+    captured = [(records.get(key) or {}).get('capturedAt') or 0 for key in fresh]
+    fresh += [key for key, other in records.items() if key not in fresh and other.get('routingMode') == 'auto'
+              and other.get('handoff') and not other.get('hostRead')
+              and other.get('status') not in ('captured', 'submitting')
+              and any(abs((other.get('capturedAt') or 0) - at) <= QueueMixin.BATCH_WINDOW for at in captured)]
     room = min(relay_view.HOST_ANSWER_MAX, max(500, WAKE_ROOM // len(fresh) - WAKE_LINES))
     control = Controller(route.Store(event['session_id'], workspace(event), root))
     done = []

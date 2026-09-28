@@ -19,6 +19,7 @@ REGISTRY = names.REGISTRY
 DEFAULT_ROUTING_MODE = 'direct'  # Codex's only mode; Claude Code starts in AUTO (default_routing_mode).
 MAX_QUEUED_REQUESTS = 32
 DEFAULT_AGENT_LIMIT = 4
+AUTO_AGENT_LIMIT = 6  # AUTO's default (agent_limit); /cli agents max <n> overrides both.
 MAX_AGENT_LIMIT = 8
 # An idle agent's process exits after this long; its next /d starts it again in the same conversation.
 DEFAULT_TIMEOUT = 60
@@ -399,7 +400,10 @@ def save_default_timeout(root, minutes):
 
 
 def agent_limit(state):
-    return state.get('agentLimit') or DEFAULT_AGENT_LIMIT
+    """How many agents may run: the user's `/cli agents max <n>`, or the default. In AUTO (Claude Code) Claude starts
+    agents for parallel parts itself, so its default is higher: a five-part request queued its fifth part for up to
+    2.4 minutes at 4 (live, 2026-09-28), while each agent is mostly waiting on its provider."""
+    return state.get('agentLimit') or (AUTO_AGENT_LIMIT if routing_mode(state) == 'auto' else DEFAULT_AGENT_LIMIT)
 
 
 def agent_label(state, session=None, record=None):

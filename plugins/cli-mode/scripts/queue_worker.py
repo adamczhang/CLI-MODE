@@ -565,7 +565,45 @@ class QueueMixin:
         if record.get('overlaps'):
             end += ' ⚠ Another agent edited the same files.'
         say(end)
+        if record.get('routingMode') == 'auto' and record.get('handoff'):
+            self._end_with_batch(request_id, label, say, poll)
         return dict(requestId=request_id, status=status, done=True)
+
+    BATCH_WINDOW = 120  # Seconds: AUTO handoffs captured this close together were sent as one batch.
+    BATCH_WAIT = 3600  # Seconds a finished handoff's follow waits for the rest of its batch.
+    BATCH_SETTLE = 3.0  # Seconds after the batch's last end at which all its follows end (more than FOLLOW_POLL).
+
+    def batch_working(self, state, request_id):
+        """The other handoffs of `request_id`'s batch (AUTO handoffs captured within BATCH_WINDOW of it) still at work."""
+        records = state.get('requests') or {}
+        at = (records.get(request_id) or {}).get('capturedAt') or 0
+        return [key for key, other in records.items() if key != request_id and other.get('routingMode') == 'auto'
+                and other.get('handoff') and abs((other.get('capturedAt') or 0) - at) <= self.BATCH_WINDOW
+                and other.get('status') in ('captured', 'submitting')]
+
+    def _end_with_batch(self, request_id, label, say, poll=None):
+        """Handoffs sent together wake Claude together: this follow, done, waits for the rest of its batch, then
+        ends when they all do, so their notifications arrive as one wake-up (live, 2026-09-28: five parallel parts
+        woke Claude five times, and each wake-up re-read the whole 50k-token conversation twice)."""
+        deadline, told = time.monotonic() + self.BATCH_WAIT, False
+        while time.monotonic() < deadline:
+            working = self.batch_working(self.store.read(), request_id)
+            if not working:
+                break
+            if not told:
+                told = True
+                say(label + ' is done; its result waits for ' + str(len(working)) + ' more of the handoffs sent with '
+                    'it, so they wake Claude together.')
+            time.sleep(self.FOLLOW_POLL if poll is None else poll)
+        # All of them end at one moment, the batch's last end plus BATCH_SETTLE, whenever each noticed it.
+        records = self.store.read().get('requests') or {}
+        at = (records.get(request_id) or {}).get('capturedAt') or 0
+        batch = [other for key, other in records.items() if key == request_id or (
+            other.get('routingMode') == 'auto' and other.get('handoff')
+            and abs((other.get('capturedAt') or 0) - at) <= self.BATCH_WINDOW)]
+        if len(batch) > 1:  # A handoff on its own ends at once.
+            last = max(other.get('endedAt') or 0 for other in batch)
+            time.sleep(max(0.0, min(self.BATCH_SETTLE, last + self.BATCH_SETTLE - time.time())))
 
     def undo(self, session=None):
         """`/cli undo [name]`: put back the files an agent's last turn changed, if nothing changed them since."""

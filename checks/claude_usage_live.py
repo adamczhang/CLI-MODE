@@ -52,9 +52,39 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from claude_background_live import Session, saved_state  # noqa: E402
+from claude_background_live import Session  # noqa: E402
 from claude_live_relay import DEV, claude_binary, claude_data  # noqa: E402
+
+INSTALLED = False  # --installed: the host runs the CLI-MODE Claude Code has installed, not the dev build.
+
+
+def config_dir():
+    return Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')
+
+
+def plugin_root():
+    """The CLI-MODE the host runs: the dev build, or with --installed the newest installed copy in Claude Code's
+    plugin cache."""
+    if not INSTALLED:
+        return DEV
+    found = sorted((config_dir() / 'plugins' / 'cache' / 'cli-mode' / 'cli-mode').glob('*/scripts'),
+                   key=lambda path: path.stat().st_mtime)
+    if not found:
+        raise SystemExit('CLI-MODE is not installed for Claude Code (no copy in its plugin cache).')
+    return found[-1].parent
+
+
+def data():
+    """That CLI-MODE's data folder: the dev build's (`cli-mode-inline`) or the installed plugin's."""
+    return config_dir() / 'plugins' / 'data' / 'cli-mode-cli-mode' if INSTALLED else claude_data()
+
+
+def saved_state(session, workspace):
+    sys.path.insert(0, str(plugin_root() / 'scripts'))
+    from state import Store
+    return Store(session, workspace, data()).read()
 import claude_usage_fleet as fleet  # noqa: E402
+import claude_usage_multi as multi  # noqa: E402
 
 CODEX_SESSIONS = Path.home() / '.codex' / 'sessions'
 AGY_CONVERSATIONS = Path.home() / '.gemini' / 'antigravity-acp' / 'conversations'
@@ -65,7 +95,7 @@ CENT = Decimal('0.01')
 EXTRA = ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'PowerShell']
 WORKING = ('captured', 'submitting')
 STOP_AT = 90  # Claude's 5-hour window, percent: no new run starts above it.
-TIMEOUT = {'1': 20 * 60, '5': 45 * 60, '15': 75 * 60, '25': 100 * 60}
+TIMEOUT = {'1': 20 * 60, '2': 30 * 60, '5': 45 * 60, '12': 60 * 60, '15': 75 * 60, '25': 100 * 60, '50': 100 * 60}
 QUIET = 30  # Seconds Claude must stay idle before a run counts as finished (a wake-up may follow).
 NO_QUESTIONS = ' Work without asking me questions: make reasonable assumptions and say what they were. Do not commit.'
 
@@ -384,7 +414,8 @@ def tasks():
 
 
 SETS = {'shop': (SEED, tasks), 'fleet': (fleet.SEED, fleet.tasks), 'fleet5': (fleet.SEED, fleet.tasks5),
-        'hot': (fleet.HOT_SEED, fleet.tasks_hot), 'par': (fleet.HOT_SEED, fleet.tasks_par)}
+        'hot': (fleet.HOT_SEED, fleet.tasks_hot), 'par': (fleet.HOT_SEED, fleet.tasks_par),
+        'multi': (fleet.HOT_SEED, multi.tasks)}
 
 
 # ---------------------------------------------------------------- checking the work
@@ -408,6 +439,8 @@ def numbers(text):
 
 
 def check(name, workspace, reply, answers):
+    if name in multi.ALL_NAMES:
+        return multi.check(name, workspace, reply, answers, pytest_counts)
     if name in fleet.NAMES + fleet.NAMES5 + fleet.NAMES_HOT + fleet.NAMES_PAR:
         return fleet.check(name, workspace, reply, answers, pytest_counts)
     tests = pytest_counts(workspace)
@@ -664,7 +697,8 @@ class Run:
         self.workspace = Path(tempfile.mkdtemp(prefix='cli-mode-usage-')).resolve()
         seed(self.workspace, files)
         effort = options.get('hostEffort')
-        self.host = Session(self.workspace, options.get('hostModel'), EXTRA + (['--effort', effort] if effort else []))
+        self.host = Session(self.workspace, options.get('hostModel'), EXTRA + (['--effort', effort] if effort else []),
+                            plugin_dir=None if INSTALLED else DEV)
         self.session = None
 
     def state(self):
@@ -697,18 +731,18 @@ class Run:
         return reply
 
     def start_auto(self):
-        sys.path.insert(0, str(DEV / 'scripts'))
+        sys.path.insert(0, str(plugin_root() / 'scripts'))
         import adapters
         import auto_mode
         agent = self.options['agent']
         adapter = adapters.module(agent)
-        selected = adapter.selection(claude_data(), self.options.get('model') or adapter.DEFAULTS['model'],
+        selected = adapter.selection(data(), self.options.get('model') or adapter.DEFAULTS['model'],
                                      adapter.DEFAULTS['access'], self.options.get('effort') or
                                      adapter.DEFAULTS.get('effort'))
         chosen = auto_mode.entry_of(agent, selected)
         if self.options.get('fast') is not None:
             chosen['fast'] = self.options['fast']
-        auto_mode.save(claude_data(), {'agent': chosen, 'backup': None, 'strength': auto_mode.DEFAULT_STRENGTH})
+        auto_mode.save(data(), {'agent': chosen, 'backup': None, 'strength': auto_mode.DEFAULT_STRENGTH})
         listing = self.control('/cli')
         if '1 starts your saved AUTO agent.' not in listing:
             raise RuntimeError('/cli did not offer the saved AUTO agent: ' + listing[:200])
@@ -791,15 +825,15 @@ class Run:
     def close(self):
         self.host.close()
         if self.session:
-            sys.path.insert(0, str(DEV / 'scripts'))
+            sys.path.insert(0, str(plugin_root() / 'scripts'))
             from controller import Controller
             from state import Store
-            store = Store(self.session, self.workspace, claude_data())
+            store = Store(self.session, self.workspace, data())
             if store.path.exists():
                 if store.read().get('owned'):
                     Controller(store).off()
                 key = hashlib.sha256(self.session.encode()).hexdigest()
-                for path in (claude_data() / 'sessions').glob(key + '*'):
+                for path in (data() / 'sessions').glob(key + '*'):
                     path.unlink(missing_ok=True)
 
         def writable(func, path, exc):
@@ -856,7 +890,8 @@ def report(results, out, options):
         agent += ', fast mode ' + ('on' if options['fast'] else 'off')
     claude_host = ', '.join(str(options.get(key)) for key in ('hostModel', 'hostEffort') if options.get(key))
     lines = ['# CLI-MODE usage test', '', 'AUTO agent: ' + agent, '',
-             'Claude Code (host): ' + (claude_host or 'its configured model and effort'), '',
+             'Claude Code (host): ' + (claude_host or 'its configured model and effort') + '; CLI-MODE: ' +
+             ('installed, ' + plugin_root().name if INSTALLED else 'the dev build'), '',
              '## Claude alone (native)', '',
              '| Task | Output | Cache read | Cache write | Turns | Tool calls | Runs |', '|---|---|---|---|---|---|---|']
     for cell in table:
@@ -933,9 +968,13 @@ def main():
                                              'the configured one). With --agent claude, give both the same model to '
                                              'measure the harness alone.')
     parser.add_argument('--host-effort', help="Claude Code's effort for the host.")
+    parser.add_argument('--installed', action='store_true', help='Run the CLI-MODE Claude Code has installed, as a '
+                                                                 "user's session does, instead of the dev build.")
     parser.add_argument('--out', type=Path)
     parser.add_argument('--dry', action='store_true', help='Write the prompts and answers only.')
     args = parser.parse_args()
+    global INSTALLED
+    INSTALLED = args.installed
     out = args.out or Path(tempfile.gettempdir()) / ('cli-mode-usage-' + time.strftime('%Y%m%d-%H%M%S'))
     out.mkdir(parents=True, exist_ok=True)
     options = dict(agent=args.agent, model=args.model, effort=args.effort,
@@ -946,16 +985,16 @@ def main():
     for name, (prompt, answers) in all_tasks.items():
         (out / (name + '.prompt.txt')).write_text(prompt, encoding='utf-8')
         (out / (name + '.answers.json')).write_text(json.dumps(
-            {key: value for key, value in answers.items() if key != 'csv'}, indent=1), encoding='utf-8')
+            {key: value for key, value in answers.items() if key not in ('csv', 'files', 'test')}, indent=1), encoding='utf-8')
     print(json.dumps({name: dict(chars=len(p), tokensApprox=len(p) // 4) for name, (p, _) in all_tasks.items()}))
     if args.dry:
         print('RESULTS', out)
         return
-    sys.path.insert(0, str(DEV / 'scripts'))
+    sys.path.insert(0, str(plugin_root() / 'scripts'))
     import host
     host.select(host.CLAUDE)
     import auto_mode
-    saved = auto_mode.config_path(claude_data())
+    saved = auto_mode.config_path(data())
     aside = saved.with_suffix('.before-usage-test')
     if saved.exists():
         saved.replace(aside)

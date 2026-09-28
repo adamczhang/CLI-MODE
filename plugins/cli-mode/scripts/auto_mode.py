@@ -55,7 +55,7 @@ TEMPLATE = ('Goal: what to achieve, in one or two lines\n'
 # Pass by reference (usage test, 2026-09-27: handed off, a 25k-token prompt cost Claude 7 minutes and 25-30k output
 # tokens retyping its data for the agent): a prompt this long is saved where the agents can read it, and the task
 # names it in its Inputs line.
-PROMPT_SAVE_MIN = 8000  # Characters.
+PROMPT_SAVE_MIN = 4000  # Characters: a prompt this long is saved, and tasks point to it instead of restating it.
 PROMPTS_KEPT = 20
 # One writer per file: a writing task claims the files and folders its Files line names, and no two running tasks
 # (nor Claude's own edits) may change the same file. A task without that line, and any other request, claims them all;
@@ -64,6 +64,7 @@ PROMPTS_KEPT = 20
 WHOLE = '*'
 EVERYTHING = frozenset(('*', '.', 'all', 'any', 'everything', 'project', 'repo', 'repository'))
 AUTO_TIMEOUT = 120  # Minutes an idle AUTO agent keeps running (its ACPX owner TTL); /cli off closes it sooner.
+START_WAIT = 300  # Seconds an extra agent's start waits for another agent's start to finish.
 # Normal since 2026-09-27: in every usage test Claude did small and medium work faster itself, so it decides and
 # hands off only what is worth it. Strong was the default before: a saved Strong counts only when it was chosen.
 DEFAULT_STRENGTH = 'normal'
@@ -591,8 +592,9 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         'constraints, name the files the request names, and let the agent explore. Do not guess either: name what '
         'you have not checked as something for the agent to find out, not as a fact or a suspect. When the user\'s '
         'message was long, CLI-MODE saves it and says where (Prompt saved: ...): name that file in the task\'s Inputs '
-        'line, with the markers of the part the agent needs, and never copy its data into the task or the project '
-        'yourself.\n'
+        'line, with the heading and markers of the part the agent needs, and leave the part there: Context adds only '
+        'what the saved prompt does not say (decisions, constraints, the other agents\' parts), and you never copy '
+        'its spec or data into the task or the project yourself.\n'
         'One writer per file: a writing task\'s Files line names the only files or folders it may change (without one, '
         'it claims the whole project; `none` claims no project file, for work that writes only in its working folder), '
         'and CLI-MODE refuses a handoff, or an edit of yours, that would change a file another running task may '
@@ -600,7 +602,8 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         '(`--agent <name>`), or start another ' + kind + ' like ' + name + ' for it with `--agent new` (15-40 s; at '
         'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn. A request with three '
         'or more independent parts that change different files, each several minutes of work, goes out at once, one '
-        'task per part on its own agent (`--agent new` beyond the idle ones), each with its own Files line; parts '
+        'task per part on its own agent (`--agent new` beyond the idle ones), each with its own Files line: write every '
+        'task file in one message, then run every handoff in the next, so the whole request goes out in two turns; parts '
         'that share files stay in one task, and a part of a minute or two stays in another part\'s task or is yours: '
         'a new agent starts cold, and costs more than such a part.\n'
         'To hand off, all in one message: (1) a line that opens with this attribution, exactly as written but with the '
@@ -985,17 +988,33 @@ class AutoMixin:
 
     def start_extra(self):
         """Start another agent like the running AUTO agent (its kind, model, effort and access), named after it:
-        `Codex-02`. It joins this conversation's extras, closes with the others, and idles out like them."""
-        state = self.store.read()
-        lead = agent_entry(state, self.handoff_target(state))
-        if len(state.get('owned') or []) >= agent_limit(state):
-            raise RuntimeError(str(len(state['owned'])) + ' agents are running, the limit, so no agent was started. '
-                               'Hand this to one of them with --agent <name>; it waits its turn there. (The user '
-                               'raises the limit with /cli agents max <n>.)')
-        settings = lead.get('settings') or {}
-        choice = {'agent': lead['backend'], 'model': settings.get('model'), 'access': settings.get('access'),
-                  'effort': settings.get('effortValue'), 'fast': settings.get('fast')}
-        result = self.start_role('extra', choice)
+        `Codex-02`. It joins this conversation's extras, closes with the others, and idles out like them.
+
+        One agent starts at a time (a conversation has one pending activation), so a start that finds another under
+        way waits for it, in this handoff's background task, and then starts its own (live, 2026-09-27: three parts
+        handed out at once, and the third start was refused, so its part queued behind a busy agent)."""
+        deadline = time.monotonic() + START_WAIT
+        while True:
+            state = self.store.read()
+            lead = agent_entry(state, self.handoff_target(state))
+            if len(state.get('owned') or []) >= agent_limit(state):
+                raise RuntimeError(str(len(state['owned'])) + ' agents are running, the limit, so no agent was '
+                                   'started. Hand this to one of them with --agent <name>; it waits its turn there. '
+                                   '(The user raises the limit with /cli agents max <n>.)')
+            if (state.get('pending') or {}).get('stage') != 'verifying':
+                settings = lead.get('settings') or {}
+                choice = {'agent': lead['backend'], 'model': settings.get('model'), 'access': settings.get('access'),
+                          'effort': settings.get('effortValue'), 'fast': settings.get('fast')}
+                try:
+                    result = self.start_role('extra', choice)
+                    break
+                except RuntimeError as exc:
+                    if 'already being verified' not in str(exc):
+                        raise  # Another start took the slot first: wait for it, as below.
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Another agent was still starting after ' + str(START_WAIT) + ' s, so no agent '
+                                   'was started. Hand this to a running agent with --agent <name>.')
+            time.sleep(1)
         session = result.get('activated')
         if not session or not agent_entry(self.store.read(), session):
             raise RuntimeError('The new agent did not start, so nothing was handed off.')
