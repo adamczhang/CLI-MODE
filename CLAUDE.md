@@ -100,7 +100,12 @@ lands in one of three zones below; know which before editing.
   `outside_claim` names the agent's own edits beyond its claim in the result, OUTSIDE ITS CLAIM), `handoff --agent new` starts an extra agent like the AUTO agent
   (`start_extra`, roster `extras`), and AUTO agents idle out after `AUTO_TIMEOUT`. A prompt of `PROMPT_SAVE_MIN`
   characters or more is saved under `auto_mode.prompts_dir` and Claude is told its path (`hooks/claude.py:saved_prompt`)
-  for the task's Inputs line. AUTO settings rows come from `auto_mode.settings_rows` (effort for agents with a separate
+  for the task's Inputs line. An AUTO task names the agent's working folder with its first task only (owned
+  `folderNamed`, set by `dispatch._send`, cleared with a new provider conversation), and AUTO never starts a project
+  brief (`agent_folder.write_team(..., create=False)`). A Files line's paths are found by `auto_mode.path_like`, in
+  brackets too. The default strength is Normal (`DEFAULT_STRENGTH`): Claude works itself and hands off only what
+  the rule lists; a saved Strong counts only with `strengthChosen` (set on the Delegation page). With no other work
+  running, `relay_for_host` counts a change its edit tools did not name as the agent's own (`running_with`). AUTO settings rows come from `auto_mode.settings_rows` (effort for agents with a separate
   effort, Codex's `fast-mode` via `codex_cli.FAST_MODE_KEY`); `reconfigure` applies them to a running agent in place.
   `--read-only` sends ACPX a deny-by-default
   policy (`dispatch.approval_policy`); in Claude's own turns `AUTO_OWNED_COMMANDS` are refused (`auto_owned`).

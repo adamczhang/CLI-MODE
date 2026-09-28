@@ -382,13 +382,16 @@ class DispatchMixin:
             raise RuntimeError('No ready owned session matches this dispatch.')
         # A task names the agent's working folder (agent_folder); an agent's own slash command goes as typed.
         workspace = owned.get('workspace') or self.store.workspace
+        auto = (record or {}).get('routingMode') == 'auto'
+        named = False  # In AUTO, the working folder is named with an agent's first task only.
         if working_folder and not provider_command and agent_folder.ensure(workspace, owned.get('alias')) is not None:
-            # The brief's list of running agents, current as this task leaves (one closed since is gone).
-            agent_folder.write_team(workspace, self.store.key, *team_of(state))
-            # In AUTO the task Claude wrote is the agent's brief: the project brief is not named.
-            text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file()
-                                             and (record or {}).get('routingMode') != 'auto',
-                                             label=agent_label(state, session))
+            # The brief's list of running agents, current as this task leaves (one closed since is gone). In AUTO the
+            # task Claude wrote is the agent's brief: the project brief is not named, nor started.
+            agent_folder.write_team(workspace, self.store.key, *team_of(state), create=not auto)
+            if not (auto and owned.get('folderNamed')):
+                text += agent_folder.instruction(owned['alias'], brief=agent_folder.brief_path(workspace).is_file()
+                                                 and not auto, label=agent_label(state, session), auto=auto)
+                named = auto
             text += agent_folder.attachments_note(record.get('attachments'))
         if hasattr(self.backend, 'validate_prompt'):
             self.backend.validate_prompt(owned)
@@ -421,6 +424,11 @@ class DispatchMixin:
         provider = self.adapter.provider_identity(before) if before is not None else owned.get('providerSession')
         result = self.prompt(owned, text, state['generation'], output=output, timeout=timeout,
                              routing_policy=policy, request_id=request_id)
+        if named:  # Its session has it now: later AUTO tasks leave it out.
+            with self.store.edit() as latest:
+                for item in latest['owned']:
+                    if item['name'] == owned['name']:
+                        item['folderNamed'] = True
         current_provider = result.pop('providerSession', None)
         if current_provider is None:
             try:
@@ -439,6 +447,8 @@ class DispatchMixin:
                 for item in latest['owned']:
                     if item['name'] == owned['name']:
                         item['providerSession'] = current_provider
+                        if current_provider != owned.get('providerSession'):
+                            item.pop('folderNamed', None)  # A new conversation: its next task names the folder.
         return result
 
     def native_handoff(self, owned, generation, output, routing_policy=None, request_id=None):

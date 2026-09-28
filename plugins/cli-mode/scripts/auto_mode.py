@@ -64,9 +64,11 @@ PROMPTS_KEPT = 20
 WHOLE = '*'
 EVERYTHING = frozenset(('*', '.', 'all', 'any', 'everything', 'project', 'repo', 'repository'))
 AUTO_TIMEOUT = 120  # Minutes an idle AUTO agent keeps running (its ACPX owner TTL); /cli off closes it sooner.
-DEFAULT_STRENGTH = 'strong'
+# Normal since 2026-09-27: in every usage test Claude did small and medium work faster itself, so it decides and
+# hands off only what is worth it. Strong was the default before: a saved Strong counts only when it was chosen.
+DEFAULT_STRENGTH = 'normal'
 STRENGTH_LINES = {
-    'normal': ('Claude decides what to hand off.',),
+    'normal': ('Claude works itself; long jobs', 'go to the agent.'),
     'strong': ('Claude fixes small things itself;', 'bigger work goes to the agent.'),
     'max': ('Every change goes to the agent;', 'Claude plans and checks.'),
 }
@@ -100,9 +102,13 @@ def load(root):
     except (OSError, ValueError):
         value = {}
     value = value if isinstance(value, dict) else {}
-    strength = value.get('strength')
-    return {'agent': entry(value.get('agent')), 'backup': entry(value.get('backup')),
-            'strength': strength if strength in STRENGTHS else DEFAULT_STRENGTH}
+    strength, chosen = value.get('strength'), value.get('strengthChosen') is True
+    if strength not in STRENGTHS or (strength == 'strong' and not chosen):
+        strength = DEFAULT_STRENGTH  # The old default, saved with the agent, is not a choice.
+    config = {'agent': entry(value.get('agent')), 'backup': entry(value.get('backup')), 'strength': strength}
+    if chosen:
+        config['strengthChosen'] = True
+    return config
 
 
 def save(root, config):
@@ -206,7 +212,8 @@ def page_text(page, root, state):
     else:
         lines = ['Delegation', '', 'Now: ' + config['strength'].title(), '']
         for number, strength in enumerate(STRENGTHS, 1):
-            lines += [str(number) + '. ' + strength.title(), *('   ' + line for line in STRENGTH_LINES[strength])]
+            lines += [str(number) + '. ' + strength.title() + (' (default)' if strength == DEFAULT_STRENGTH else ''),
+                      *('   ' + line for line in STRENGTH_LINES[strength])]
         lines.append('B. Back')
     return menu_block('\n'.join(lines))
 
@@ -335,30 +342,49 @@ def file_key(word, workspace=None):
     return None if word.startswith('../') or word == '..' else word.casefold()
 
 
+NOT_PATHS = frozenset(('e.g', 'i.e', 'etc', 'vs'))
+
+
+def path_like(word, workspace=None):
+    """True for a word of a Files line that names a file or folder: it has a slash or a wildcard, ends in an
+    extension (`README.md`, `.gitignore`), or is there in the project (`Makefile`). `only`, `files` and `v1.2` are
+    words, not files."""
+    if word.casefold() in NOT_PATHS:
+        return False
+    if re.search(r'[/\\*]', word) or re.search(r'\.[A-Za-z][\w-]*$', word):
+        return True
+    return bool(workspace and exists(Path(workspace) / word))
+
+
 def task_files(text, workspace=None):
     """The claims of a writing task's Files line: [WHOLE] without one, or when it names no path (prose); [] (no project
     file) when it says `none` (or `nothing`, `no files`), or names only the agents' working folder, never the
-    project's (its own notes, scripts and outputs go there)."""
+    project's (its own notes, scripts and outputs go there).
+
+    Every path in the line counts, in brackets too ("the report tests (tests/test_report.py)"); the rest is prose,
+    whose sentence ends are not files (live, 2026-09-27: `...its test file only.` claimed `only`, and `No other
+    files.` claimed `files`). A word for the whole project (`everything`) claims it only when no path is named."""
     line = next((row.split(':', 1)[1] for row in text.splitlines() if re.match(r'\s*files\s*:', row, re.I)), None)
     if line is None:
         return [WHOLE]
-    words = re.sub(r'\([^)]*\)', ' ', line).replace(',', ' ').replace(';', ' ').split()
-    plain = ' '.join(word.strip('`"\'.:!').casefold() for word in words)
-    nothing = bool(re.match(r'(none|nothing|no (project )?files?)\b', plain))
-    keys = []
+    words = [word.strip('`"\'').rstrip('.:!?') for word in re.split(r'[\s,;()\[\]{}]+', line)]
+    words = [word for word in words if word]
+    nothing = bool(re.match(r'(none|nothing|no (project )?files?)\b', ' '.join(words).casefold()))
+    keys, everything = [], False
     for word in words:
-        everything = word.casefold() in EVERYTHING and not nothing  # `no project files` names no project.
-        if (not re.search(r'[/.*\\]', word) and not everything
-                and not (workspace and exists(Path(workspace) / word))):
-            continue  # Not a path: `and`, `the`, `new`; a file such as `Makefile` counts when it is there.
-        key = file_key(word.rstrip('.:'), workspace)
+        if word.casefold() in EVERYTHING:
+            everything = everything or not nothing  # `no project files` names no project.
+            continue
+        if not path_like(word, workspace):
+            continue  # Prose: `and`, `the`, `new`, `only`.
+        key = file_key(word, workspace)
         if key == WHOLE:
             return [WHOLE]
         if key and working_folder(key):
             nothing = True  # The working folder: no project file.
         elif key and key not in keys:
             keys.append(key)
-    return keys or ([] if nothing else [WHOLE])
+    return keys or ([] if nothing and not everything else [WHOLE])
 
 
 def working_folder(key):
@@ -402,20 +428,24 @@ def claims(state, exclude=None):
     return found
 
 
+def running_with(state, request_id):
+    """The other requests that ran while `request_id` did: they had started, and had not ended before it started
+    (work still queued never ran)."""
+    records = state.get('requests') or {}
+    mine = records.get(request_id) or {}
+    start = mine.get('submittedAt') or mine.get('capturedAt') or 0
+    end = mine.get('endedAt') or time.time()
+    return [record for key, record in records.items() if key != request_id and record.get('submittedAt')
+            and record['submittedAt'] <= end and (record.get('endedAt') is None or record['endedAt'] >= start)]
+
+
 def alongside(state, request_id):
     """What other work could change while `request_id` ran: the Files claims (short of the whole project) and the
     edited files of every other request that was running at the same time (it had started, and had not ended before
     this one started). Such changes in its receipt are expected, not a CHECK: look (live: two writers on
     separate claims flagged each other's files, and Claude spent a call on git to confirm it)."""
-    records = state.get('requests') or {}
-    mine = records.get(request_id) or {}
-    start = mine.get('submittedAt') or mine.get('capturedAt') or 0
-    end = mine.get('endedAt') or time.time()
     keys = set()
-    for key, record in records.items():
-        begin, finish = record.get('submittedAt'), record.get('endedAt')
-        if key == request_id or not begin or begin > end or (finish is not None and finish < start):
-            continue  # Itself, work still queued (never started), or work that did not overlap it.
+    for record in running_with(state, request_id):
         keys.update(claim for claim in (record.get('handoff') or {}).get('files') or [] if claim != WHOLE)
         keys.update(found for found in (file_key(path) for path in record.get('touched') or [])
                     if found and found != WHOLE)
@@ -532,7 +562,8 @@ def status(state, relay_command=None):
 def rule(root, state, workspace, handoff_command, style=lambda text: text):
     """The AUTO rule (lever A), from P0's tested wording (2026-09-27: 19 of 20 prompts routed as intended), made
     light (levers L2, L3, L6-L8): one call hands off, the result comes with the wake-up, a CHECK line says what to
-    look at. None while the AUTO agent is not running. `handoff_command` is the handoff command with `<id>` for the
+    look at. Claude works itself by default and hands off only what is worth it (the usage tests of 2026-09-27:
+    native was faster on every small and medium job, and each handoff cost about half a minute of Claude's turns). None while the AUTO agent is not running. `handoff_command` is the handoff command with `<id>` for the
     task id; `style` marks CLI-MODE's attribution lines as DIRECT's are (green bold, or plain bold with color off)."""
     config = load(root)
     roster = state.get('auto') or {}
@@ -546,16 +577,19 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
                    'or is out of usage') if backup and agent_entry(state, backup) else ''
     kind = adapters.module(agent_entry(state, lead)['backend']).LABEL
     return (
-        'CLI-MODE AUTO is on. The user turned it on: that is their explicit request that you hand coding work to '
-        'their CLI agent. You lead; their AUTO agent, ' + name + (' (' + detail[1] + ')' if len(detail) > 1 else '') +
-        ', does the work in this same project folder' + backup_text + '. ' + STRENGTH_RULES[config['strength']] + '\n'
-        'Hand off: self-contained work such as implementing a feature to a spec, writing tests, fixing failing tests '
-        'until they pass, ports and refactors, code reviews and second opinions (read-only), and wide research. A '
-        'handoff costs you about three steps (hand off, end the turn, report) and the agent several minutes, so keep '
-        'for yourself work you can finish in about five tool calls (a bug fix with its test, a small function, a '
-        'quick answer from a short read) and anything that depends on this conversation. Do not read the code just '
-        'to write a task: give the goal and constraints and let the agent explore. Do not guess either: name what you '
-        'have not checked as something for the agent to find out, not as a fact or a suspect. When the user\'s '
+        'CLI-MODE AUTO is on: the user\'s AUTO agent, ' + name + (' (' + detail[1] + ')' if len(detail) > 1 else '') +
+        ', works in this same project folder' + backup_text + ', for the work worth handing to it. You lead. ' +
+        STRENGTH_RULES[config['strength']] + '\n'
+        'Work as you would without CLI-MODE, and decide from the request alone, before any tool call, whether to hand '
+        'it off. Hand off only: a long job (several minutes of work or more, such as a feature built to a spec, a '
+        'port or refactor across files, many tests to write or fix); a request whose long message CLI-MODE saved '
+        '(Prompt saved: ...); independent parts of several minutes each that can run at once; what the user asks the '
+        'agent to do; and reviews, second opinions and wide research (read-only). Everything else is yours, and so is '
+        'anything that depends on this conversation: when in doubt, do it yourself. A handoff adds about half a '
+        'minute of your own turns and the agent is slower than you, so a needless handoff costs more than doing a '
+        'job yourself. Do not read the code to decide, nor to write a task or its Files line: give the goal and '
+        'constraints, name the files the request names, and let the agent explore. Do not guess either: name what '
+        'you have not checked as something for the agent to find out, not as a fact or a suspect. When the user\'s '
         'message was long, CLI-MODE saves it and says where (Prompt saved: ...): name that file in the task\'s Inputs '
         'line, with the markers of the part the agent needs, and never copy its data into the task or the project '
         'yourself.\n'
@@ -565,8 +599,10 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         'change; a result names any edit outside its claim. Work on other files can run in parallel: hand it to an idle agent '
         '(`--agent <name>`), or start another ' + kind + ' like ' + name + ' for it with `--agent new` (15-40 s; at '
         'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn. A request with three '
-        'or more independent parts that change different files goes out at once, one task per part on its own agent '
-        '(`--agent new` beyond the idle ones), each with its own Files line; parts that share files stay in one task.\n'
+        'or more independent parts that change different files, each several minutes of work, goes out at once, one '
+        'task per part on its own agent (`--agent new` beyond the idle ones), each with its own Files line; parts '
+        'that share files stay in one task, and a part of a minute or two stays in another part\'s task or is yours: '
+        'a new agent starts cold, and costs more than such a part.\n'
         'To hand off, all in one message: (1) a line that opens with this attribution, exactly as written but with the '
         'name of the agent you hand it to, then says in plain words what you pass on:\n' +
         style('Passing to ' + name + ':') + '\n(2) the task, written with the Write tool to ' +
@@ -577,9 +613,11 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         'follow of the agent\'s work: there is nothing else to run, and a refusal comes back as the call\'s error. '
         'Then end your turn with one short line that opens with this attribution, the same way:\n' +
         style(name + ' is working.') + '\nThe agent\'s finish wakes you with its result, already read for you, and '
-        'a CHECK line: CHECK: ok means tell the user in a few lines what was done, from the result alone; CHECK: look '
-        'names the only things to check first. Its TESTS line is CLI-MODE\'s own run of the project\'s tests after '
-        'the agent finished: do not run them again. Never poll or wait for it.\n'
+        'a CHECK line: CHECK: ok means tell the user in a few lines what was done, from the result alone, with no '
+        'tool call; CHECK: look names the only things to check first. Its CHANGES line is CLI-MODE\'s own git '
+        'status and diff of the project across the agent\'s turn, new files included, and its TESTS line CLI-MODE\'s '
+        'own run of the project\'s tests after it: do not run git, the tests or read the changed files again to '
+        'confirm them. Never poll or wait for it.\n'
         'The user switches back to driving the agents with /cli mode direct.')
 
 
@@ -730,7 +768,7 @@ class AutoMixin:
         if to not in STRENGTHS:
             raise ValueError('Choose normal, strong or max.')
         config = load(self.store.root)
-        config['strength'] = to
+        config.update(strength=to, strengthChosen=True)
         save(self.store.root, config)
         return self.mode_page('auto-settings', message='Delegation: ' + to.title() + '.')
 
@@ -998,11 +1036,16 @@ class AutoMixin:
                         if (item.get('approval') or {}).get('requestId') == request_id), None)
         handoff = record.get('handoff') or {}
         task = handoff.get('task')
-        own = None if finished.get('unlocated') else finished.get('touched')
-        near = alongside(latest, request_id) if own is not None else []
-        mine = {path.casefold() for path in own or []}
         changed = [(item['path'], file_key(item['path'])) for item in
                    ((view['receipt'] or {}).get('changes') or {}).get('paths') or []]
+        own = None if finished.get('unlocated') else finished.get('touched')
+        if own is not None and not running_with(latest, request_id):
+            # Alone, a change its edit tools did not name came from a command it ran: its own too (live, 2026-09-27:
+            # a Claude agent writing through shell heredocs got CHECK: look on every result, and Claude ran git).
+            named = {path.casefold() for path in own}
+            own = list(own) + [path for path, _ in changed if path.casefold() not in named]
+        near = alongside(latest, request_id) if own is not None else []
+        mine = {path.casefold() for path in own or []}
         expected = [path for path, key in changed if path.casefold() not in mine and key and key != WHOLE
                     and any(overlaps(key, claim) for claim in near)]
         claim = None if handoff.get('readOnly') else handoff.get('files')

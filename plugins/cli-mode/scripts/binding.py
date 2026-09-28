@@ -127,7 +127,8 @@ class BindingMixin:
         # Its attached-file copies go with it (agent_folder.attach); its own files and saved answers stay.
         workspace = owned.get('workspace') or self.store.workspace
         agent_folder.clear_attachments(workspace, owned.get('alias'))
-        agent_folder.write_team(workspace, self.store.key, *team_of(self.store.read()))  # The brief no longer lists it.
+        latest = self.store.read()  # The brief no longer lists it (and AUTO never starts one).
+        agent_folder.write_team(workspace, self.store.key, *team_of(latest), create=routing_mode(latest) != 'auto')
         return None
 
     def off(self):
@@ -706,8 +707,9 @@ class BindingMixin:
             # has been working on, which the host writes as it shows this activation (hostNote). Not in AUTO,
             # where each task Claude writes is its agent's brief.
             workspace = owned.get('workspace') or self.store.workspace
-            agent_folder.write_team(workspace, self.store.key, *team_of(latest))
-            if purpose or routing_mode(latest) == 'auto':
+            auto = bool(purpose) or routing_mode(latest) == 'auto'
+            agent_folder.write_team(workspace, self.store.key, *team_of(latest), create=not auto)
+            if auto:
                 return dict(latest, activated=owned['name'])
             note = agent_folder.add_host_note(workspace, time.strftime('%Y-%m-%d %H:%M'),
                                               agent_label(latest, owned['name']))

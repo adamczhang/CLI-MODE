@@ -36,10 +36,14 @@
   `handoff --agent new` starts another agent like the AUTO agent (`Codex-02`), up to the agent limit, and it
   closes with the others. Reviews and research go read-only, and their agent's writes are refused. Claude's copy
   of a result names the files changed meanwhile that were not the agent's own edits.
-- **Delegation strength** Normal, Strong (default) or Max: how much Claude may edit itself before a change goes
-  to the agent, and whether its own coding subagents are sent to the agent instead. Strong keeps a small piece of
-  work whole with Claude (about 40 lines an edit, three files a turn: a bug fix with its test): handed off, the
-  smallest task of a usage test cost Claude nearly as much as doing it, and took four times as long.
+- **Delegation strength** Normal (default), Strong or Max: how much Claude may edit itself before a change goes
+  to the agent, and whether its own coding subagents are sent to the agent instead. At Normal Claude works as it
+  would without CLI-MODE and hands off only what is worth it: a long job, a long pasted message, big independent
+  parts to run at once, what you ask the agent to do, and reviews; when in doubt it does the work itself. In every
+  usage test Claude was faster on small and medium work, and each handoff cost about half a minute of its turns.
+  Strong (about 40 lines an edit, three files a turn for Claude) and Max (every change to the agent) save more of
+  Claude's usage, for when that matters more than time. A Strong saved while it was the default now reads as Normal;
+  one chosen on the Delegation page stays.
 - **Lighter still, from a usage test** (native Claude against AUTO on tasks of 1k-25k tokens):
   - a long message (8,000 characters or more) is saved for the agents, and the task points to it in a new Inputs
     line: handed off, a 25k-token prompt had cost Claude 7 minutes retyping its data;
@@ -52,7 +56,25 @@
     time to completion and whether the work is right. A second project (`--set fleet`, `fleet5`) checks the work
     with hidden tests the agents never see; the agent's tokens are read for Codex, Antigravity and Claude Code, and
     with Claude Code as the agent on the host's model (`--host-model`, `--host-effort`) the difference from native
-    is AUTO's own cost.
+    is AUTO's own cost. `--session` sends a set's prompts one after another to one conversation, its AUTO agent
+    kept warm (`--set hot`), and `--set par` asks for parallel work, with a control that should stay one task; the
+    report gives each prompt's handoffs, agents and how much their working time overlapped.
+- **From a hot-session test** (one conversation, three small prompts in a row, the agent kept warm): with the same
+  model on both sides a handoff adds about half a minute to every prompt, almost all of it Claude's own turn before
+  it and the one after, so:
+  - Claude does itself any job it expects to finish in about a minute (before: about five tool calls), and does not
+    read the code only to write a task's Files line;
+  - the result's CHANGES line gives each file's own lines, as `git diff --stat` does, and Claude is told it is
+    CLI-MODE's own git status and diff: a result that says `CHECK: ok` is reported with no tool call;
+  - an agent working alone that writes files through commands (a Claude agent's shell heredocs) no longer gets
+    `CHECK: look: files it did not edit changed`: with no other work running, those changes are its own. That false
+    look was why Claude ran git after every wake-up;
+  - an agent is told about its working folder with its first task only, in a shorter note, and AUTO no longer
+    starts a project brief (agents found the one CLI-MODE wrote, which no task named, and read it every task);
+  - parallel work goes out only in parts of several minutes each: a new agent starts cold, and a small part stays
+    in another task or with Claude;
+  - a Files line's paths in brackets count, and a sentence's end is not a file (`...its test file only.` had
+    claimed `only`, and `No other files.` the file `files`).
 - In AUTO, `/d` asks Claude itself: nothing from that turn goes to an agent. A plain message lets Claude decide.
   AUTO agents are named after their kind and numbered: Codex-01, Codex-02, Grok-01. The commands that change which
   agent does what are refused, and so are the ones that act on one agent's piece of the work (`undo`, `diff`,

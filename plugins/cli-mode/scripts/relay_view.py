@@ -323,6 +323,16 @@ HOST_ENDS = {'completed': 'finished', 'canceled': 'was canceled', 'superseded': 
              'rejected': 'was not sent', 'uncertain': 'could not be confirmed (check /cli queue)'}
 
 
+def file_stat(item):
+    """One changed file of a receipt: `app.py +3 -1`, `logo.png (binary)`, or the bare path when its lines were
+    not counted."""
+    if 'added' not in item:
+        return item['path']
+    if item['added'] is None:
+        return item['path'] + ' (binary)'
+    return item['path'] + ' +' + str(item['added']) + ' -' + str(item.get('removed') or 0)
+
+
 def check_line(status, receipt, batch, read_only=False, stopped=None, others=(), outside=()):
     """The result's verdict, worked out by CLI-MODE so Claude doesn't have to (lever L4): `CHECK: ok`, or
     `CHECK: look: <what>` naming only what needs a look. Every input is already in the settled request."""
@@ -376,7 +386,8 @@ def host_text(request, label, status, batch, receipt, read_only=False, task=None
         lines.append('TASK: ' + task)
     if changes:
         count = changes.get('files') or 0
-        paths = [item['path'] for item in (changes.get('paths') or [])[:RECEIPT_PATHS]]
+        # Each file with its own lines, as `git diff --stat` gives them, so Claude has nothing to ask git.
+        paths = [file_stat(item) for item in (changes.get('paths') or [])[:RECEIPT_PATHS]]
         lines.append('CHANGES: ' + ('none' if not count else str(count) + (' file' if count == 1 else ' files') +
                                     ', +' + str(changes.get('added', 0)) + ' -' + str(changes.get('removed', 0)) +
                                     ': ' + ', '.join(paths) + (' and ' + str(count - len(paths)) + ' more'

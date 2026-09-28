@@ -34,8 +34,11 @@ class AutoBase(ClaudeHook):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def auto(self, backup=False):
-        auto_mode.save(self.data, {'agent': agy(), 'backup': agy() if backup else None, 'strength': 'strong'})
+    def auto(self, backup=False, strength=None):
+        """AUTO on, at the default strength or at `strength` as the user chose it."""
+        auto_mode.save(self.data, dict({'agent': agy(), 'backup': agy() if backup else None,
+                                        'strength': strength or auto_mode.DEFAULT_STRENGTH},
+                                       **({'strengthChosen': True} if strength else {})))
         self.prompt('/cli mode auto')
         state = self.store().read()
         self.assertEqual(state['routingMode'], 'auto')
@@ -207,6 +210,38 @@ class Handoffs(AutoBase):
         self.assertEqual(text.split('\n')[1], 'CHECK: look: files it did not edit changed while it worked.')
         self.assertNotIn('app/two.py changed while it worked', text)
 
+    def test_alone_its_command_writes_are_its_own(self):
+        """Hot session, 2026-09-27: a Claude agent wrote its files through shell heredocs, its edit tools named
+        none of them, and every result said CHECK: look (files it did not edit changed), so Claude ran git after
+        each wake-up. With no other work running, a change its tools did not name came from a command it ran."""
+        for name in ('app/one.py', 'app/two.py'):
+            (self.project / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.project / name).write_text('original\n', encoding='utf-8')
+        for words in (['init', '-q'], ['add', '-A'], ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm',
+                                                      'base']):
+            subprocess.run(['git'] + words, cwd=self.project, check=True, capture_output=True)
+        state = self.auto()
+        one, two = self.project / 'app/one.py', self.project / 'app/two.py'
+        original = self.backend.start
+
+        def start(owned, args, timeout=60):
+            process = original(owned, args, timeout)
+            if '--file' not in args:
+                return process
+            one.write_text('changed by its edit tool\n', encoding='utf-8')
+            two.write_text('changed by a command it ran\n', encoding='utf-8')
+            return runtime_process([dict(type='touched', toolCallId='call-1', kind='edit',
+                                         locations=[dict(path=str(one))]),
+                                    dict(type='message', text='Done.'), runtime_result()])
+        self.backend.start = start
+        self.write_task('t1', 'Goal: fix both.\nFiles: app/')
+        mine = self.ctl('handoff', '--task', 't1')['requestId']
+        self.drain(state['auto']['agent'])
+        text = self.ctl('relay', '--request', mine, '--for-host')['text']
+        self.assertEqual(text.split('\n')[1], 'CHECK: ok')
+        self.assertNotIn('NOT ITS OWN EDITS', text)
+        self.assertIn('app/two.py', text.split('CHANGES:')[1].split('\n')[0])  # Still in its changes.
+
     def test_files_none_claims_no_project_file(self):
         """Work that writes only in the agent's working folder (the live matrix's simulation claimed the whole project
         and would have held every parallel writer back) says `Files: none` and blocks nobody."""
@@ -294,6 +329,27 @@ class Handoffs(AutoBase):
         sent = self.backend.sent[-1]
         self.assertNotIn('BRIEF', sent)
         self.assertIn('Agent_Working_Folder/', sent)  # Its working folder is still named.
+        self.assertIn('# Project brief', brief.read_text(encoding='utf-8'))  # A brief that is there stays current.
+
+    def test_the_working_folder_is_named_once_and_no_brief_is_started_in_auto(self):
+        """Live (2026-09-27 hot session): agents read the brief CLI-MODE wrote for AUTO, which no task names, and
+        the working-folder note on every task sent them to save extra files. A later task leaves it out."""
+        state = self.auto()
+        import agent_folder
+        lead = state['auto']['agent']
+        self.write_task('t1')
+        self.ctl('handoff', '--task', 't1')
+        self.drain(lead)
+        first = self.backend.sent[-1]
+        self.assertIn('Agent_Working_Folder/', first)
+        self.assertNotIn('name the files you saved', first)  # AUTO's short note: the task says the rest.
+        self.write_task('t2', 'Goal: add a second parser test.\nFiles: tests/')
+        self.ctl('handoff', '--task', 't2')
+        self.drain(lead)
+        self.assertNotIn('CLI-MODE:', self.backend.sent[-1])  # Its session has the note already.
+        self.assertFalse(agent_folder.brief_path(self.project).exists())  # AUTO starts no brief.
+        self.prompt('/cli off')
+        self.assertFalse(agent_folder.brief_path(self.project).exists())
 
     def test_a_task_file_elsewhere_is_refused_with_the_right_path(self):
         self.auto()
@@ -406,6 +462,18 @@ class Handoffs(AutoBase):
             'Files: app/parser.py, tests/ (new tests)': ['app/parser.py', 'tests'],
             'files: `src/*.py`; README.md.': ['src', 'readme.md'],
             'Files: ./app/../lib/x.py and Makefile': ['lib/x.py', 'makefile'],
+            # Lines Claude wrote (live, 2026-09-27): a sentence's end is not a file, and paths in brackets count.
+            'Files: the stats module and its test file only.': ['*'],
+            'Files: the alerts module (fleetlog/alerts.py, or wherever it lives) and its test file '
+            '(tests/test_alerts.py, created if it does not exist). No other files.':
+                ['fleetlog/alerts.py', 'tests/test_alerts.py'],
+            'Files: fleetlog/report.py, the report test file (tests/test_report.py, created if it does not exist), '
+            'README.md. No other files.': ['fleetlog/report.py', 'tests/test_report.py', 'readme.md'],
+            'Files: tests/test_alerts.py (new), fleetlog/alerts.py (only for the `long_stops` function)':
+                ['tests/test_alerts.py', 'fleetlog/alerts.py'],
+            # A word for the whole project claims it only when no path is named; version numbers are not files.
+            'Files: src/a.py only; nothing else in the project': ['src/a.py'],
+            'Files: .gitignore and app.py (e.g. the entry point), as in v1.2': ['.gitignore', 'app.py'],
         }
         for text, expected in cases.items():
             self.assertEqual(auto_mode.task_files(text, self.project), expected, text)
@@ -472,6 +540,12 @@ class Handoffs(AutoBase):
                        overlaps=[dict(agent='Codex COD-1', path='a.py')])
         text = relay_view.host_text('r1', 'Antigravity AGY-1', 'completed', batch, receipt, read_only=True,
                                     stopped=dict(kind='execute', title='npm install'), access={'access': 'prompt'})
+        counted = relay_view.host_text('r2', 'Codex COD-1', 'completed', [dict(type='message', text='done')], dict(
+            changes=dict(files=3, added=12, removed=1, paths=[dict(path='app.py', added=10, removed=1),
+                                                              dict(path='new.py', added=2, removed=0),
+                                                              dict(path='logo.png', added=None, removed=None)])))
+        # Each file with its own lines, as git diff --stat gives them: nothing left for Claude to ask git.
+        self.assertIn('CHANGES: 3 files, +12 -1: app.py +10 -1, new.py +2 -0, logo.png (binary)', counted)
         for line in ('HANDOFF r1: Antigravity AGY-1 finished (read-only).', 'CHANGES: 2 files, +10 -1: a.py, b.py',
                      'TESTS: ✗ Tests failed (pytest -q) · 1 failed · 3 s', 'OVERLAP: ⚠ Also edited by Codex COD-1',
                      'STOPPED: Antigravity AGY-1 asks to', 'ERROR: Tool failed',
@@ -524,10 +598,12 @@ class Levers(AutoBase):
         self.assertEqual(self.prompt('hello'), {})  # No agent running yet: nothing added.
         self.auto()
         text = self.context(self.prompt('please make the parser keep the last word'))
-        for part in ('CLI-MODE AUTO is on. The user turned it on', self.name(), 'Delegation is Strong',
+        for part in ('CLI-MODE AUTO is on: the user\'s AUTO agent', self.name(), 'Delegation is Normal',
+                     'decide from the request alone, before any tool call', 'when in doubt, do it yourself',
                      '`' + claude.handoff_command({}, self.data) + '`', auto_mode.TEMPLATE,
                      auto_mode.tasks_dir(self.project).as_posix() + '/<id>.md', 'Do not guess', 'One writer per file',
-                     '`--agent new`', 'about five tool calls', 'Goal and Done when are enough', 'Inputs:', 'do not run them again',
+                     '`--agent new`', 'Goal and Done when are enough', 'Inputs:',
+                     'with no tool call', 'do not run git, the tests or read the changed files again',
                      'there is nothing else to run', 'CHECK: ok', 'Agents now: ' + self.name() + ' (AUTO agent): idle.'):
             self.assertIn(part, text)
         self.assertNotIn('AUTO ledger', text)  # Nothing working or unread (L5).
@@ -598,7 +674,7 @@ class Levers(AutoBase):
                                   description='x')['permissionDecision'], 'allow')
 
     def test_strong_lets_claude_make_small_fixes_only(self):
-        self.auto()
+        self.auto(strength='strong')
         self.prompt('fix the typo')
         source = self.project / 'src' / 'a.py'
         self.assertEqual(self.edit(source), {})
@@ -632,7 +708,7 @@ class Levers(AutoBase):
         self.assertIn('one writer per file', refused['permissionDecisionReason'])
 
     def test_coding_subagents_go_to_the_agent_at_strong(self):
-        self.auto()
+        self.auto(strength='strong')
         refused = self.pre('Agent', subagent_type='general-purpose', prompt='implement it')
         self.assertEqual(refused['permissionDecision'], 'deny')
         self.assertEqual(self.pre('Agent', subagent_type='Explore', prompt='find the parser'), {})

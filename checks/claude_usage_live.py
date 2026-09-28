@@ -10,7 +10,11 @@ Two task sets (--set):
          hidden acceptance tests the agents never see check the work;
   fleet5 five 5k tasks of different kinds on the same library: S5 a feature, H5 pasted shift data with exact
          answers, V5 exact validation rules, C5 a refactor to a class that keeps the old functions, Q5 test-writing
-         that must find the bugs itself.
+         that must find the bugs itself;
+  hot    three 1k prompts that build on each other, for --session (one conversation, the AUTO agent kept warm);
+  par    parallel work: X15, three independent 5k parts in new files of their own (AUTO should hand them out at
+         once), and Y5, three parts in one module, the control that should stay one task. The report's Parallel
+         work table gives each prompt's handoffs, agents, and how much their working time overlapped.
 With --agent claude and the same --model and --host-model, both sides run one model, so AUTO's extra tokens (Claude
 plus the agent, against native) are the harness's own cost. Two Claude Code processes then share one sign-in: the
 test checks it before each run and stops at the first run that finds it signed out.
@@ -25,7 +29,8 @@ build, dist/claude-dev), one at a time. Measured:
   - handoffs, tool calls, subagents, and whether the work is right (tests, files, the exact answers).
 
     python scripts/package_plugin.py
-    python checks/claude_usage_live.py [--set shop|fleet|fleet5] [--only W1,P1] [--modes native,auto] [--repeat 2]
+    python checks/claude_usage_live.py [--set shop|fleet|fleet5|hot|par] [--only W1,P1] [--modes native,auto]
+        [--repeat 2] [--session]
         [--agent codex] [--model gpt-6-sol] [--effort high] [--fast on|off] [--host-model <id>] [--host-effort <level>]
         [--out <folder>] [--dry]
 
@@ -378,7 +383,8 @@ def tasks():
             'W25': (W_TASKS['W25'], {}), 'P25': (p25, a25)}
 
 
-SETS = {'shop': (SEED, tasks), 'fleet': (fleet.SEED, fleet.tasks), 'fleet5': (fleet.SEED, fleet.tasks5)}
+SETS = {'shop': (SEED, tasks), 'fleet': (fleet.SEED, fleet.tasks), 'fleet5': (fleet.SEED, fleet.tasks5),
+        'hot': (fleet.HOT_SEED, fleet.tasks_hot), 'par': (fleet.HOT_SEED, fleet.tasks_par)}
 
 
 # ---------------------------------------------------------------- checking the work
@@ -402,7 +408,7 @@ def numbers(text):
 
 
 def check(name, workspace, reply, answers):
-    if name in fleet.NAMES + fleet.NAMES5:
+    if name in fleet.NAMES + fleet.NAMES5 + fleet.NAMES_HOT + fleet.NAMES_PAR:
         return fleet.check(name, workspace, reply, answers, pytest_counts)
     tests = pytest_counts(workspace)
     checks = {'tests pass': tests['ok']}
@@ -615,6 +621,23 @@ AGENT_USE = {'codex': codex_use, 'agy': agy_use, 'claude': claude_agent_use}
 SIGNED_OUT = ('Failed to authenticate', 'OAuth session expired', 'Not logged in', 'Please run /login')
 
 
+def parallel_work(records):
+    """How a prompt's handoffs shared the time, from CLI-MODE's own request records (wall clock): the agents used,
+    each handoff's working time summed (`serial`), the span from the first start to the last end, their ratio
+    (`parallelism`: 1 is one after another, 3 is three at once), and the time tasks waited for a busy agent."""
+    spans = [(r['submittedAt'], r['endedAt'], r.get('session'), r.get('capturedAt'), (r.get('handoff') or {}).get('files'))
+             for r in records if r.get('submittedAt') is not None and r.get('endedAt') is not None]
+    if not spans:
+        return None
+    span = max(end for _, end, _, _, _ in spans) - min(start for start, _, _, _, _ in spans)
+    serial = sum(end - start for start, end, _, _, _ in spans)
+    return dict(handoffs=len(spans), agents=len({agent for _, _, agent, _, _ in spans}), serial=round(serial, 1),
+                span=round(span, 1), parallelism=round(serial / span, 2) if span else None,
+                waited=round(sum(max(0, start - captured) for start, _, _, captured, _ in spans
+                                 if captured is not None), 1),
+                claims=[files for _, _, _, _, files in spans])
+
+
 # ---------------------------------------------------------------- one run
 
 class SignedOut(RuntimeError):
@@ -685,7 +708,7 @@ class Run:
         chosen = auto_mode.entry_of(agent, selected)
         if self.options.get('fast') is not None:
             chosen['fast'] = self.options['fast']
-        auto_mode.save(claude_data(), {'agent': chosen, 'backup': None, 'strength': 'strong'})
+        auto_mode.save(claude_data(), {'agent': chosen, 'backup': None, 'strength': auto_mode.DEFAULT_STRENGTH})
         listing = self.control('/cli')
         if '1 starts your saved AUTO agent.' not in listing:
             raise RuntimeError('/cli did not offer the saved AUTO agent: ' + listing[:200])
@@ -693,15 +716,36 @@ class Run:
         if 'AUTO is on' not in card:
             raise RuntimeError('AUTO did not start: ' + card[:300])
 
-    def go(self, timeout):
-        started = time.time()
+    def prepare(self):
+        """Opens the session: the AUTO agent started (AUTO) or a first reply (native); the agent's tokens so far."""
+        self.started = time.time()
         if self.mode == 'auto':
             self.start_auto()
         else:
             self.control('Reply with the single word ready.', timeout=120)  # The session exists; nothing else.
+        self.reader = AGENT_USE.get(self.options['agent']) if self.mode == 'auto' else None
+        self.agent_before = self.agent_use()
+        self.seen = set()
+
+    def agent_use(self):
+        return self.reader(self.workspace, self.started - 5) if self.reader else None
+
+    def finish(self):
+        if self.mode == 'auto':
+            self.control('/cli off', timeout=120)
+
+    def go(self, timeout):
+        self.prepare()
+        result = self.ask(self.name, self.prompt, self.answers, timeout)
+        self.finish()
+        return result
+
+    def ask(self, name, prompt, answers, timeout):
+        """One prompt in this session, to its settled end: its time, Claude's and the agent's tokens (the agent's
+        since the last prompt, so a session's later prompts count only their own), handoffs and checks."""
         mark, count = self.host.mark(), len(self.host.results())
         clock = time.monotonic()
-        self.host.send(self.prompt)
+        self.host.send(prompt)
         if not self.host.wait(count + 1, timeout):
             raise RuntimeError('no result within ' + str(timeout) + ' s')
         until = clock + timeout
@@ -724,18 +768,24 @@ class Run:
         tools = [block.get('name') for block in blocks]
         written = sum(len(str((block.get('input') or {}).get('content') or (block.get('input') or {}).get('new_string')
                               or '')) for block in blocks if block.get('name') in ('Write', 'Edit', 'MultiEdit'))
-        records = [r for r in (self.state().get('requests') or {}).values() if r.get('routingMode') == 'auto']
-        if self.mode == 'auto':
-            self.control('/cli off', timeout=120)
-        tests, checks = check(self.name, self.workspace, '\n'.join(replies), self.answers)
-        reader = AGENT_USE.get(self.options['agent']) if self.mode == 'auto' else None
-        return dict(task=self.name, mode=self.mode, promptChars=len(self.prompt), promptTokensApprox=len(self.prompt) // 4,
+        requests = {key: r for key, r in (self.state().get('requests') or {}).items() if r.get('routingMode') == 'auto'}
+        records = [r for key, r in requests.items() if key not in self.seen]
+        self.seen |= set(requests)
+        tests, checks = check(name, self.workspace, '\n'.join(replies), answers)
+        if not tests['ok'] or checks.get('hiddenOutput'):  # Kept as it was, to see why (the run's folder goes).
+            shutil.copytree(self.workspace, self.out / ('%s-%s-project' % (name, self.mode)), dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns('.git', '__pycache__', '.pytest_cache'))
+        now = self.agent_use()
+        spent = {key: value - (self.agent_before or {}).get(key, 0) if isinstance(value, (int, float)) and
+                 key != 'sessions' else value for key, value in now.items()} if now else None
+        self.agent_before = now
+        return dict(task=name, mode=self.mode, promptChars=len(prompt), promptTokensApprox=len(prompt) // 4,
                     minutes=times['total'], time=times, claude=claude_use(events), claudeFiveHour=five_hour(everything),
-                    agent=self.options['agent'] if self.mode == 'auto' else None,
-                    agentTokens=reader(self.workspace, started - 5) if reader else None,
+                    agent=self.options['agent'] if self.mode == 'auto' else None, agentTokens=spent,
                     tools=len(tools), claudeWroteChars=written,
                     toolNames=sorted(set(tools)), subagents=tools.count('Agent') + tools.count('Task'),
                     handoffs=len(records), handoffFiles=[(r.get('handoff') or {}).get('files') for r in records],
+                    parallel=parallel_work(records),
                     tests=tests, checks=checks, reply=replies[-1][-1500:] if replies else '', events=everything)
 
     def close(self):
@@ -848,6 +898,17 @@ def report(results, out, options):
         lines.append('| %s | %s | %s | %s | %s | %s |' % (
             cell['task'], cell['mode'], cell.get('tests', '-'), cell.get('passed', '-'),
             json.dumps(cell.get('checks', ''))[:160], '; '.join(error[:80] for error in cell['errors']) or '-'))
+    shared = [r for r in results if r.get('parallel')]
+    if shared:
+        lines += ['', '## Parallel work (AUTO)', '', 'Parallelism is the handoffs\' working time summed over the span '
+                  'from the first start to the last end: 1 is one after another, 3 is three agents at once.', '',
+                  '| Task | Prompt | Handoffs | Agents | Agent time summed (s) | Span (s) | Parallelism | Waited for '
+                  'a busy agent (s) | Claims |', '|---|---|---|---|---|---|---|---|---|']
+        for r in shared:
+            p = r['parallel']
+            lines.append('| %s | %s | %s | %s | %s | %s | %s | %s | %s |' % (
+                r['task'], r.get('position') or r.get('repeat'), p['handoffs'], p['agents'], p['serial'], p['span'],
+                p['parallelism'], p['waited'], json.dumps(p['claims'])[:120]))
     windows = [(r['task'], r['mode'], (r.get('claudeFiveHour') or [])[:1] + (r.get('claudeFiveHour') or [])[-1:],
                 (r.get('agentTokens') or {}).get('weeklyPercent')) for r in results if 'error' not in r]
     lines += ['', 'Plan windows (Claude 5-hour %, agent weekly %, first and last seen): ' + json.dumps(windows), '']
@@ -862,6 +923,8 @@ def main():
     parser.add_argument('--only', help='Tasks, such as W1,P1 (default: all of the set).')
     parser.add_argument('--modes', default='native,auto')
     parser.add_argument('--repeat', type=int, default=1)
+    parser.add_argument('--session', action='store_true', help='One session per mode: the tasks in order in the same '
+                                                               'conversation, the AUTO agent started once and kept.')
     parser.add_argument('--agent', default='codex', help='The AUTO agent.')
     parser.add_argument('--model')
     parser.add_argument('--effort')
@@ -898,8 +961,52 @@ def main():
         saved.replace(aside)
     names = args.only.split(',') if args.only else list(all_tasks)
     results, stopped = [], None
+
+    def record(result, name, mode, repeat):
+        result['repeat'] = repeat
+        events = result.pop('events', [])
+        (out / ('%s-%s-%d.events.jsonl' % (name, mode, repeat))).write_text(
+            '\n'.join(json.dumps(event) for event in events), encoding='utf-8')
+        results.append(result)
+        (out / 'results.json').write_text(json.dumps(results, indent=1, default=str), encoding='utf-8')
+        print(time.strftime('%I:%M:%S %p'), 'done', name, mode, repeat, json.dumps(
+            {k: result.get(k) for k in ('minutes', 'handoffs', 'checks', 'error')}, default=str)[:400], flush=True)
+
     try:
-        for name in names:
+        for mode in args.modes.split(',') if args.session else ():
+            # One session per mode: the tasks in order, one after another, the AUTO agent started once.
+            if not claude_signed_in():
+                stopped = 'Claude Code is signed out'
+                break
+            print(time.strftime('%I:%M:%S %p'), 'session', mode, flush=True)
+            run = Run(names[0], mode, *all_tasks[names[0]], out, options, files)
+            try:
+                run.prepare()
+                for position, name in enumerate(names, 1):
+                    prompt, answers = all_tasks[name]
+                    print(time.strftime('%I:%M:%S %p'), 'start', name, mode, position, flush=True)
+                    try:
+                        result = run.ask(name, prompt, answers, TIMEOUT.get(name[1:], 20 * 60))
+                    except (RuntimeError, ValueError, KeyError, StopIteration, OSError) as exc:
+                        stopped = str(exc) if isinstance(exc, SignedOut) else stopped
+                        with run.host.lock:
+                            events = list(run.host.events)
+                        record(dict(task=name, mode=mode, error=str(exc)[:500], events=events,
+                                    claudeFiveHour=five_hour(events), position=position), name, mode, 1)
+                        break
+                    result['position'] = position
+                    record(result, name, mode, 1)
+                run.finish()
+            except (RuntimeError, ValueError, KeyError, StopIteration, OSError) as exc:
+                print(time.strftime('%I:%M:%S %p'), 'session failed', mode, str(exc)[:300], flush=True)
+            finally:
+                try:
+                    run.close()
+                except OSError as exc:
+                    print('cleanup failed:', exc, flush=True)
+            if stopped:
+                break
+        for name in names if not args.session else ():
             prompt, answers = all_tasks[name]
             for mode in args.modes.split(','):
                 for repeat in range(1, args.repeat + 1):
@@ -914,7 +1021,7 @@ def main():
                     print(time.strftime('%I:%M:%S %p'), 'start', name, mode, repeat, flush=True)
                     run = Run(name, mode, prompt, answers, out, options, files)
                     try:
-                        result = run.go(TIMEOUT[name[1:]])
+                        result = run.go(TIMEOUT.get(name[1:], 45 * 60))
                     except SignedOut as exc:
                         stopped = str(exc)
                         result = dict(task=name, mode=mode, error=str(exc), events=list(run.host.events))
@@ -928,15 +1035,7 @@ def main():
                             run.close()
                         except OSError as exc:
                             print('cleanup failed:', exc, flush=True)
-                    result['repeat'] = repeat
-                    events = result.pop('events', [])
-                    (out / ('%s-%s-%d.events.jsonl' % (name, mode, repeat))).write_text(
-                        '\n'.join(json.dumps(event) for event in events), encoding='utf-8')
-                    results.append(result)
-                    (out / 'results.json').write_text(json.dumps(results, indent=1, default=str), encoding='utf-8')
-                    print(time.strftime('%I:%M:%S %p'), 'done', name, mode, repeat, json.dumps(
-                        {k: result.get(k) for k in ('minutes', 'handoffs', 'checks', 'error')}, default=str)[:400],
-                        flush=True)
+                    record(result, name, mode, repeat)
     finally:
         if aside.exists():
             aside.replace(saved)

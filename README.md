@@ -29,8 +29,8 @@ Then, in a Claude Code session in your project folder:
 ```
 
 The first line adds `/cli` and `/d` to autocomplete; `/cli` picks your AUTO agent and runs its setup. Then just
-talk to Claude: in AUTO, Claude Code's default, it hands the work to your agent. `/cli mode direct` lets you
-send work yourself with `/d <your task>` instead. The
+talk to Claude: in AUTO, Claude Code's default, it works with your agent and hands it the work worth handing
+over. `/cli mode direct` lets you send every task yourself with `/d <your task>` instead. The
 [release zip](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.9) has an installer that also checks
 Python, Node and Claude Code; Codex installs are under [Codex](#codex).
 
@@ -60,7 +60,7 @@ decides what to hand to your agents, writes the task, checks the result and tell
 | Feature | What it unlocks |
 |---|---|
 | **Six agents, one chat** | Use Antigravity, Claude Code, Grok Build, Cursor, GitHub Copilot and Codex CLI from Claude Code, each on its own plan. |
-| **AUTO mode** (Claude Code's default) | Claude plans and checks; your other subscription does the heavy work, which saves Claude usage. |
+| **AUTO mode** (Claude Code's default) | Claude and your agent as partners: Claude works itself and hands over long jobs, parallel parts and reviews, then checks the result. |
 | **Several named agents at once** | A builder, a reviewer and a researcher working side by side; one prompt to several agents to compare answers. |
 | **Change receipts, diff and undo** | Every turn ends with what changed; `/cli undo` puts an agent's turn back. |
 | **Your tests after every change** | The answer says whether your tests still pass. |
@@ -95,13 +95,27 @@ against it. Development toward the first release focuses on Claude Code.
 you name. `/cli mode` opens the Mode page, which switches between them; DIRECT, once chosen in a conversation,
 stays until you switch back.
 
+**Which to use.** The two modes are built for different goals:
+
+- **DIRECT is the pass-through, and you orchestrate.** Every `/d` goes to the agent as you wrote it, with none of
+  AUTO's planning and checking in between. You decide how many agents run and how the work is split. Use it when
+  you want your CLI agent's subscription to do all the work, with Claude's usage kept to a minimum.
+- **AUTO is a partnership, not a pass-through.** Claude works on your request itself, as it would without
+  CLI-MODE, and hands work to your agent only when a handoff is worth it: a long job, a long message full of data,
+  independent parts that can run at once, a second opinion or review, or when you ask for the agent. Each
+  handoff costs about half a minute of Claude's own turns, and in usage tests Claude finished small and medium work
+  faster than any agent. Sending everything through AUTO would be slower than either mode.
+- **Pick an AUTO agent that brings something Claude doesn't:** a different model that is at least as capable, such
+  as Codex on GPT-6 Sol or Astra next to Claude Opus. A second model's view, and long work carried on another
+  subscription, are worth a handoff. Passing work from Opus to a much smaller model is not.
+
 1. Run **`/cli`**. The first time, pick your **AUTO agent** and its model, the usual way; the choice is
    remembered for every conversation, and afterwards `/cli` offers it as **1**. Any other agent you start from
    that list (or with `/cli <agent>`) becomes your AUTO agent. The AUTO agent (and backup, if you set one) starts
    at once and waits, so a handoff never waits for an agent to start.
-2. Ask Claude for what you want. For a feature, a bug to fix, tests or a review, Claude posts
-   `Passing to Codex-01: …`, and the agent's work shows as a row in background tasks. Small edits and quick
-   questions Claude handles itself.
+2. Ask Claude for what you want. Work it can finish quickly, Claude does itself. For a long job (a feature built
+   to a spec, a refactor across files, many tests), big independent parts or a review, Claude posts
+   `Passing to Codex-01: …`, and the agent's work shows as a row in background tasks.
 3. When the agent finishes, its result wakes Claude: what changed, the test result, the agent's report, and
    CLI-MODE's own check of it. Claude looks only at what that check names and tells you what was done and anything
    left open.
@@ -133,10 +147,11 @@ What to know about AUTO:
   which refuse writes. Change receipts and overlap warnings work as in DIRECT, and an undo (ask Claude) puts back
   only the agent's own edits.
 - **Agents stay loaded.** AUTO's agents wait between tasks, and close after two hours idle or with `/cli off`.
-- **Delegation strength** (`/cli mode strength normal|strong|max`, or the AUTO settings page): at **Normal**
-  Claude decides; at **Strong** (the default) Claude keeps small pieces of work itself (about 40 lines an edit,
-  three files a turn: a bug fix with its test, a small function) and hands off anything bigger; at **Max** every
-  project change goes to the agent. It steers Claude's own edit tools; it is not a sandbox.
+- **Delegation strength** (`/cli mode strength normal|strong|max`, or the AUTO settings page): at **Normal** (the
+  default) Claude works itself and hands off only what is worth it; at **Strong** Claude keeps only small pieces of
+  work (about 40 lines an edit, three files a turn: a bug fix with its test) and hands off anything bigger, which
+  saves more of Claude's usage and takes longer; at **Max** every project change goes to the agent. It steers
+  Claude's own edit tools; it is not a sandbox.
 - **Settings:** `/cli mode agent [<agent> [<model>]]` changes the AUTO agent; `/cli mode backup <agent>|none`
   sets a backup, used when the AUTO agent fails or is out of usage.
   Choosing an AUTO agent, from the Mode page or by command, always turns AUTO on and starts it (and the backup).
@@ -241,8 +256,8 @@ Release **0.3.9** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.
    task with **Full Access**).
 2. Run **`/cli`** and choose an agent. Setup checks its dependencies and guides installation and sign-in.
 3. Accept the defaults or choose the model, effort and access.
-4. On Claude Code, that agent is now your AUTO agent: ask Claude for what you want, and it hands the work over
-   (see [DIRECT and AUTO modes](#direct-and-auto-modes)).
+4. On Claude Code, that agent is now your AUTO agent: ask Claude for what you want, and it hands over the work
+   worth handing over (see [DIRECT and AUTO modes](#direct-and-auto-modes), and which mode suits you).
 5. To drive an agent yourself (DIRECT, and always on Codex), send your prompt with `/d`. CLI-MODE announces
    `Passing to Claude CLA-4F...`, for example, and relays the answer under `Claude CLA-4F says...`. `CLA-4F` is
    the agent's name. On Claude Code, `/cli mode direct` switches to DIRECT.

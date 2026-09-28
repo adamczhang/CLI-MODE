@@ -15,7 +15,7 @@ import changes
 import host
 import menu_view
 import relay_view
-from state import agent_entry, agent_label, passing_line, team_of
+from state import agent_entry, agent_label, passing_line, routing_mode, team_of
 
 
 def request_label(state, request_id):
@@ -934,7 +934,7 @@ class QueueMixin:
                 self._note_touched(state, request_id, workspace)
                 state['inflight'].pop(op, None)
             self._keep_answer(request_id, workspace, name, text)
-            agent_folder.write_team(workspace, self.store.key, *team_of(self.store.read()))  # Idle now, with its answer.
+            self._write_team(workspace)  # Idle now, with its answer.
             return dict(requestId=request_id, **result)
         except BaseException as exc:
             done = receipt() if not isinstance(exc, KeyboardInterrupt) else None
@@ -964,7 +964,7 @@ class QueueMixin:
                     state['inflight'].pop(op, None)
             if not isinstance(exc, KeyboardInterrupt) and status != 'rejected':
                 self._keep_answer(request_id, workspace, name, text)  # A failed turn may still have answered.
-                agent_folder.write_team(workspace, self.store.key, *team_of(self.store.read()))
+                self._write_team(workspace)
             raise
         finally:
             path.unlink(missing_ok=True)
@@ -1037,6 +1037,11 @@ class QueueMixin:
                 if other_id != request_id and other.get('session') != record.get('session')
                 and (other.get('touched') or not edited)
                 and other.get('endedAt') and other['endedAt'] >= start and (other.get('submittedAt') or 0) <= end]
+
+    def _write_team(self, workspace):
+        """The brief's list of this conversation's agents, current after a turn; AUTO never starts a brief."""
+        state = self.store.read()
+        agent_folder.write_team(workspace, self.store.key, *team_of(state), create=routing_mode(state) != 'auto')
 
     def _keep_answer(self, request_id, workspace, name, text):
         """Save the turn's full answer in the agent's folder and record the reference box: that file, then the

@@ -902,8 +902,9 @@ def auto_wake(event, root, requests, state):
                 '\n'.join(attribution(label + ' finished.') for label in labels) + '\nThen tell the user in a few '
                 'lines, in your own words, what was done, whether it held up, and anything unresolved or waiting on '
                 'them; do not post the result as is. CHECK: ok means CLI-MODE found nothing to look into: report from '
-                'the result alone, with no files to open and no commands to run unless the user asked. A TESTS line '
-                'is CLI-MODE\'s own run of the project\'s tests after the agent finished: never run them again. '
+                'the result alone, with no files to open and no commands to run unless the user asked. The CHANGES '
+                'line is CLI-MODE\'s own git status and diff across the agent\'s turn (new files included) and a TESTS '
+                'line its own run of the project\'s tests after it: never run git or the tests again to confirm them. '
                 'CHECK: look '
                 'names what to check: check only that. If it needs more work, hand a follow-up task to the agent the '
                 'same way. The CLI-MODE skill and its guides are not needed.\n\n' +

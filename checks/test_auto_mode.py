@@ -131,10 +131,24 @@ class Config(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name)
 
-    def test_nothing_saved_means_no_agent_and_strong(self):
-        self.assertEqual(auto_mode.load(self.root), {'agent': None, 'backup': None, 'strength': 'strong'})
+    def test_nothing_saved_means_no_agent_and_normal(self):
+        self.assertEqual(auto_mode.load(self.root), {'agent': None, 'backup': None, 'strength': 'normal'})
         auto_mode.config_path(self.root).write_text('not json', encoding='utf-8')
+        self.assertEqual(auto_mode.load(self.root)['strength'], 'normal')
+
+    def test_strong_saved_as_the_old_default_is_normal_but_a_choice_stays(self):
+        """Strong was the default until 2026-09-27 and was saved with the agent: only a choice of it counts."""
+        auto_mode.save(self.root, {'agent': agy_choice(), 'backup': None, 'strength': 'strong'})
+        self.assertEqual(auto_mode.load(self.root)['strength'], 'normal')
+        auto_mode.save(self.root, {'agent': agy_choice(), 'backup': None, 'strength': 'max'})
+        self.assertEqual(auto_mode.load(self.root)['strength'], 'max')  # Never a default: a choice.
+        auto_mode.save(self.root, {'agent': agy_choice(), 'backup': None, 'strength': 'strong',
+                                   'strengthChosen': True})
+        loaded = auto_mode.load(self.root)
+        self.assertEqual((loaded['strength'], loaded['strengthChosen']), ('strong', True))
+        auto_mode.save(self.root, dict(loaded, agent=agy_choice()))  # Kept through a later save.
         self.assertEqual(auto_mode.load(self.root)['strength'], 'strong')
+        self.assertIn('1. Normal (default)', auto_mode.page_text('auto-strength', self.root, {}))
 
     def test_round_trip_and_unknown_agents_are_dropped(self):
         auto_mode.save(self.root, {'agent': agy_choice(), 'backup': {'agent': 'nobody'}, 'strength': 'max'})

@@ -4,10 +4,12 @@ feature, D15 pastes about 15k tokens of data with exact answers computed in adva
 refactors. Hidden acceptance tests, never shown to the agents, check each task's work afterwards."""
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 import random
 import re
 import subprocess
 import sys
+import tempfile
 
 NO_QUESTIONS = ' Work without asking me questions: make reasonable assumptions and say what they were. Do not commit.'
 
@@ -17,7 +19,7 @@ NO_QUESTIONS = ' Work without asking me questions: make reasonable assumptions a
 SEED = {
     'README.md': '# fleetlog\n\nReads vehicle telemetry (CSV) and reports on it.\n',
     'conftest.py': '',
-    '.gitignore': '__pycache__/\n.pytest_cache/\nAgent_Working_Folder/\n_acceptance/\n',
+    '.gitignore': '__pycache__/\n.pytest_cache/\nAgent_Working_Folder/\n',
     'fleetlog/__init__.py': '',
     'fleetlog/records.py': (
         'from dataclasses import dataclass\nfrom datetime import datetime\n\n\n@dataclass\nclass Reading:\n'
@@ -394,6 +396,131 @@ def tasks5():
     }
 
 
+# ---------------------------------------------------------------- the `hot` set: three 1k prompts in one session
+
+NAMES_HOT = ('K1', 'K2', 'K3')
+
+# The project's own tests pass from the start, so the first prompt carries no bug fixing of its own.
+HOT_SEED = dict(SEED, **{'fleetlog/stats.py': (
+    'def in_time_order(readings):\n    return sorted(readings, key=lambda r: r.ts)\n\n\n'
+    'def trip_distance(readings):\n    readings = in_time_order(readings)\n'
+    '    return readings[-1].odometer_km - readings[0].odometer_km\n\n\n'
+    'def average_speed(readings):\n    speeds = [r.speed_kmh for r in readings if r.speed_kmh > 0]\n'
+    '    return sum(speeds) / len(speeds) if speeds else 0.0\n\n\n'
+    'def fuel_per_100km(readings):\n    readings = in_time_order(readings)\n'
+    '    used = readings[0].fuel_l - readings[-1].fuel_l\n    return used / trip_distance(readings) * 100\n')})
+
+ACCEPT.update({
+    'K1': (
+        'def test_total_fuel_used():\n    from fleetlog import stats\n    assert stats.total_fuel_used([]) == 0.0\n'
+        '    assert stats.total_fuel_used([r("V", 0, 10, 1, fuel=40.0)]) == 0.0\n'
+        '    assert stats.total_fuel_used([r("V", 5, 10, 2, fuel=40.0), r("V", 0, 10, 1, fuel=45.5)]) == '
+        'pytest.approx(5.5)\n'),
+    'K2': (
+        'def at(minute):\n    return datetime(2026, 9, 1, 8, 0) + timedelta(minutes=minute)\n\n\n'
+        'ROWS = [r("V", 0, 10, 1), r("V", 1, 0, 1), r("V", 20, 0, 1), r("V", 21, 30, 2), r("V", 22, 0, 2),\n'
+        '        r("V", 27, 40, 3), r("V", 30, 0, 3), r("V", 50, 0, 3)]\n\n\n'
+        'def test_long_stops():\n    from fleetlog import alerts\n'
+        '    want = [(at(1), at(21)), (at(30), at(50))]\n'
+        '    assert [tuple(pair) for pair in alerts.long_stops(ROWS, minutes=15)] == want\n'
+        '    assert [tuple(pair) for pair in alerts.long_stops(ROWS)] == want\n'
+        '    assert [tuple(pair) for pair in alerts.long_stops(ROWS, minutes=5)][1] == (at(22), at(27))\n'),
+    'K3': (
+        'def test_daily():\n    from datetime import date\n    from fleetlog import report\n'
+        '    out = report.daily([r("A", 0, 1, 1), r("B", 5, 1, 1), r("A", 10, 1, 2), r("A", 24 * 60, 1, 3)])\n'
+        '    assert (out[date(2026, 9, 1)]["vehicles"], out[date(2026, 9, 1)]["readings"]) == (2, 3)\n'
+        '    assert (out[date(2026, 9, 2)]["vehicles"], out[date(2026, 9, 2)]["readings"]) == (1, 1)\n\n\n'
+        'def test_the_readme_documents_all_three():\n    text = open("README.md", encoding="utf-8").read()\n'
+        '    assert all(name in text for name in ("total_fuel_used", "long_stops", "daily"))\n'),
+})
+
+
+def tasks_hot():
+    return {
+        'K1': ('Add stats.total_fuel_used(readings): the fuel used over the readings, first minus last fuel_l in time '
+               'order, and 0.0 when there are fewer than two readings. Add tests for it. All tests must pass.' +
+               NO_QUESTIONS, {}),
+        'K2': ('Add alerts.long_stops(readings, minutes=15) for one vehicle\'s readings. A stop is a run of readings at '
+               '0 km/h; it lasts from its first reading to the next moving reading, or to the last reading if the '
+               'vehicle is still stopped then. Return (start, end) timestamp pairs, in time order, for the stops '
+               'lasting at least `minutes`. Add tests. All tests must pass.' + NO_QUESTIONS, {}),
+        'K3': ('Add report.daily(readings), returning for each date (a datetime.date) a dict with vehicles (how many '
+               'different vehicles reported that day) and readings (how many readings). Then add an "API" section to '
+               'README.md documenting stats.total_fuel_used, alerts.long_stops and report.daily with one example '
+               'each. Add tests. All tests must pass.' + NO_QUESTIONS, {}),
+    }
+
+
+# ---------------------------------------------------------------- the `par` set: parallel work, and its control
+
+# X15: three independent parts, each in new files of its own, about 5k tokens of work each: AUTO should hand them
+# out at once, one agent each. Y5: three parts in one module and one test file: they share files, so one task.
+NAMES_PAR = ('X15', 'Y5')
+
+ACCEPT.update({
+    'X15': (
+        'from datetime import date\nfrom decimal import Decimal\n\n\n'
+        'def test_geo():\n    from fleetlog import geo\n'
+        '    assert geo.haversine_km(51.5074, -0.1278, 48.8566, 2.3522) == pytest.approx(343.5, abs=1.0)\n'
+        '    assert geo.bearing_deg(0, 0, 0, 1) == pytest.approx(90, abs=0.01)\n'
+        '    assert geo.bearing_deg(0, 0, 1, 0) == pytest.approx(0, abs=0.01)\n'
+        '    lat, lon = geo.destination(0, 0, 90, 111.195)\n'
+        '    assert (lat, lon) == (pytest.approx(0, abs=0.01), pytest.approx(1.0, abs=0.01))\n'
+        '    assert tuple(geo.bounding_box([(1, 2), (3, -1), (0, 5)])) == (0, -1, 3, 5)\n\n\n'
+        'def test_units():\n    from fleetlog import units\n'
+        '    assert units.km_to_miles(1.609344) == pytest.approx(1)\n'
+        '    assert units.l100km_to_mpg_us(10) == pytest.approx(23.5215, abs=0.001)\n'
+        '    assert units.l100km_to_mpg_uk(10) == pytest.approx(28.2481, abs=0.001)\n'
+        '    assert units.kmh_to_mph(100) == pytest.approx(62.1371, abs=0.001)\n'
+        '    assert units.parse_quantity("12.5 mi") == pytest.approx(20.1168, abs=0.001)\n'
+        '    assert units.parse_quantity("3 km") == pytest.approx(3)\n'
+        '    with pytest.raises(ValueError):\n        units.parse_quantity("5 furlongs")\n\n\n'
+        'def test_costs():\n    from fleetlog import costs\n'
+        '    day = lambda d, h, fuel: Reading("V", datetime(2026, 9, d, h, 0), 10, fuel, 100, 0, 0)\n'
+        '    rows = [day(1, 8, 50), day(1, 9, 48), day(2, 8, 47), day(2, 9, 60), day(2, 10, 59)]\n'
+        '    prices = [(date(2026, 9, 1), Decimal("1.50")), (date(2026, 9, 2), Decimal("2.00"))]\n'
+        '    assert costs.fuel_cost(rows, prices)["V"] == Decimal("6.50")\n'),
+    'Y5': (
+        'def test_percentile_speed():\n    from fleetlog import stats\n'
+        '    rows = [r("V", m, s, m) for m, s in enumerate([10, 20, 30, 40, 50])]\n'
+        '    assert stats.percentile_speed(rows, 50) == 30 and stats.percentile_speed(rows, 100) == 50\n'
+        '    assert stats.percentile_speed(rows, 0) == 10\n\n\n'
+        'def test_moving_minutes():\n    from fleetlog import stats\n'
+        '    rows = [r("V", 0, 10, 1), r("V", 5, 0, 2), r("V", 9, 20, 3), r("V", 10, 20, 4)]\n'
+        '    assert stats.moving_minutes(rows) == 6\n\n\n'
+        'def test_longest_run_above():\n    from fleetlog import stats\n'
+        '    rows = [r("V", m, s, m) for m, s in enumerate([50, 95, 96, 40, 91, 92, 93, 20])]\n'
+        '    assert stats.longest_run_above(rows, 90) == 3\n'),
+})
+
+
+def tasks_par():
+    return {
+        'X15': ('Three independent pieces of work for fleetlog. Each goes in new files of its own and changes no '
+                'other file.\n'
+                '1. fleetlog/geo.py with tests/test_geo.py: haversine_km(lat1, lon1, lat2, lon2) (earth radius 6371 '
+                'km); bearing_deg(lat1, lon1, lat2, lon2), the initial bearing from 0 to 360; destination(lat, lon, '
+                'bearing_deg, km) returning (lat, lon); bounding_box(points) returning (min_lat, min_lon, max_lat, '
+                'max_lon) for (lat, lon) points; tests for each, with edge cases (the poles, crossing longitude 180, '
+                'one point).\n'
+                '2. fleetlog/units.py with tests/test_units.py: km_to_miles, miles_to_km, kmh_to_mph, '
+                'l100km_to_mpg_us, mpg_us_to_l100km, l100km_to_mpg_uk, mpg_uk_to_l100km, and parse_quantity(text), '
+                'which reads a distance such as "12.5 mi", "3 km" or "800 m" and returns kilometres, raising '
+                'ValueError for an unknown unit or a malformed text; tests for each.\n'
+                '3. fleetlog/costs.py with tests/test_costs.py: fuel_cost(readings, prices), where prices is a list of '
+                '(date, price per litre as a Decimal), each in effect from its date on. For each vehicle, in time '
+                'order, the fuel used between two consecutive readings (a drop; a rise is a refuel and costs nothing) '
+                'costs the price in effect on the earlier reading\'s date. Return {vehicle: total} as Decimals rounded '
+                'half-up to cents; tests including a refuel, a price change and a vehicle with one reading.\n'
+                'All tests must pass.' + NO_QUESTIONS, {}),
+        'Y5': ('Add three functions to fleetlog/stats.py, with tests for each in tests/test_stats.py: '
+               'percentile_speed(readings, p), the speed at percentile p (0 to 100) by the nearest-rank method; '
+               'moving_minutes(readings), the minutes from each reading above 0 km/h to the next reading, in time '
+               'order; and longest_run_above(readings, limit), the most consecutive readings above limit km/h. All '
+               'tests must pass.' + NO_QUESTIONS, {}),
+    }
+
+
 def numbers(text):
     """Every number in the text, as a Decimal (so 12.0 and 12 are the same answer)."""
     return {Decimal(found.replace(',', '')) for found in re.findall(r'\d[\d,]*(?:\.\d+)?', text or '')}
@@ -405,15 +532,19 @@ def check(name, workspace, reply, answers, pytest_counts):
     tests = pytest_counts(workspace)
     checks = {'tests pass': tests['ok']}
     if name in ACCEPT:
-        hidden = workspace / '_acceptance' / ('test_accept_' + name.lower() + '.py')
-        hidden.parent.mkdir(exist_ok=True)
-        hidden.write_text(HELPER + ACCEPT[name], encoding='utf-8')
-        run = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', str(hidden)],
-                             cwd=workspace, capture_output=True, text=True, timeout=300)
+        # Outside the project, so an agent working on a later prompt of the same session never sees them; run from
+        # the project, so it imports.
+        with tempfile.TemporaryDirectory(prefix='cli-mode-hidden-') as folder:
+            hidden = Path(folder) / ('test_accept_' + name.lower() + '.py')
+            hidden.write_text(HELPER + ACCEPT[name], encoding='utf-8')
+            run = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', str(hidden)],
+                                 cwd=workspace, capture_output=True, text=True, timeout=300)
         tail = (run.stdout or run.stderr).strip().splitlines()[-1:] or ['']
         passed = int((re.search(r'(\d+) passed', tail[0]) or [0, 0])[1])
         failed = int((re.search(r'(\d+) (?:failed|error)', tail[0]) or [0, 0])[1])
         checks['hidden'] = '%d/%d' % (passed, passed + failed)
+        if failed or run.returncode:  # What failed, for the report (the project is kept too: Run.ask).
+            checks['hiddenOutput'] = '\n'.join((run.stdout + run.stderr).strip().splitlines()[-25:])
     if answers:
         saved = workspace / answers.get('csvPath', 'data/fleet.csv')
         checks['data saved exactly'] = saved.exists() and saved.read_text(encoding='utf-8').strip() == \
