@@ -914,9 +914,9 @@ def auto_wake(event, root, requests, state):
                 (' has' if one else ' have') + ' finished. ' + ('Its result is' if one else 'Their results are') +
                 ' below, already read for you (there is no relay to run); it is for you, not the user. Open your '
                 'report with ' + ('this attribution' if one else 'these attributions') + ', exactly as written:\n' +
-                '\n'.join(attribution(label + ' finished.') for label in labels) + '\nThen tell the user in a few '
-                'lines, in your own words, what was done, whether it held up, and anything unresolved or waiting on '
-                'them; do not post the result as is. CHECK: ok means CLI-MODE found nothing to look into: report from '
+                '\n'.join(attribution(label + ' finished.') for label in labels) + '\nThen tell the user briefly, in '
+                'your own words (a line or two for each result that says CHECK: ok), what was done, whether it held '
+                'up, and anything unresolved or waiting on them; do not post the result as is. CHECK: ok means CLI-MODE found nothing to look into: report from '
                 'the result alone, with no files to open and no commands to run unless the user asked. The CHANGES '
                 'line is CLI-MODE\'s own git status and diff across the agent\'s turn (new files included) and a TESTS '
                 'line its own run of the project\'s tests after it: never run git or the tests again to confirm them. '

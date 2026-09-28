@@ -573,13 +573,47 @@ class QueueMixin:
     BATCH_WAIT = 3600  # Seconds a finished handoff's follow waits for the rest of its batch.
     BATCH_SETTLE = 3.0  # Seconds after the batch's last end at which all its follows end (more than FOLLOW_POLL).
 
-    def batch_working(self, state, request_id):
-        """The other handoffs of `request_id`'s batch (AUTO handoffs captured within BATCH_WINDOW of it) still at work."""
+    def batch_members(self, state, request_id):
+        """`request_id`'s batch: the AUTO handoffs captured within BATCH_WINDOW of it, itself included."""
         records = state.get('requests') or {}
         at = (records.get(request_id) or {}).get('capturedAt') or 0
-        return [key for key, other in records.items() if key != request_id and other.get('routingMode') == 'auto'
-                and other.get('handoff') and abs((other.get('capturedAt') or 0) - at) <= self.BATCH_WINDOW
-                and other.get('status') in ('captured', 'submitting')]
+        return [key for key, other in records.items() if key == request_id or (
+            other.get('routingMode') == 'auto' and other.get('handoff')
+            and abs((other.get('capturedAt') or 0) - at) <= self.BATCH_WINDOW)]
+
+    def batch_working(self, state, request_id):
+        """The other handoffs of `request_id`'s batch still at work, or still waiting for the batch's test run."""
+        records = state.get('requests') or {}
+        return [key for key in self.batch_members(state, request_id) if key != request_id and (
+            records[key].get('status') in ('captured', 'submitting')
+            or (records[key].get('testsDeferred') and not records[key].get('tests')))]
+
+    def _batch_tests(self, request_id, workspace, name, tests):
+        """The batch's one test run, once none of it still works: this turn's own run if it had one (it came last),
+        else one run now; every member that deferred its own gets it."""
+        with self.store.edit() as state:
+            records = state['requests']
+            members = self.batch_members(state, request_id)
+            if any(records[key].get('status') in ('captured', 'submitting') for key in members):
+                return  # Another member finishes later and runs them.
+            waiting = [key for key in members if records[key].get('testsDeferred') and not records[key].get('tests')
+                       and not records[key].get('testsClaimed')]
+            for key in waiting:
+                records[key]['testsClaimed'] = True  # Two members ending together run them once.
+        if not waiting:
+            return
+        result = None
+        try:
+            result = tests or self._run_tests(workspace, name, dict(files=1))
+        finally:
+            with self.store.edit() as state:
+                for key in waiting:
+                    record = state['requests'].get(key)
+                    if record is not None:
+                        record.pop('testsClaimed', None)
+                        record.pop('testsDeferred', None)  # Never left waiting, even if the run failed.
+                        if result:
+                            record['tests'] = dict(result, batch=True)
 
     def _end_with_batch(self, request_id, label, say, poll=None):
         """Handoffs sent together wake Claude together: this follow, done, waits for the rest of its batch, then
@@ -960,7 +994,13 @@ class QueueMixin:
             result = self._send(text, output=output, timeout=timeout, request_id=request_id,
                                 working_folder=folder is not None)
             done, stored = receipt(), saved()
-            tests = self._run_tests(workspace, name, done)  # Before completion, so the relay always has it.
+            latest = self.store.read()
+            record = (latest.get('requests') or {}).get(request_id) or {}
+            batch = record.get('routingMode') == 'auto' and bool(record.get('handoff'))
+            # While the rest of its batch still writes, a test run sees their work half done: it runs once, after
+            # the last of them (_batch_tests).
+            defer = batch and bool(self.batch_working(latest, request_id)) and bool(done and done.get('files'))
+            tests = None if defer else self._run_tests(workspace, name, done)  # Before completion: the relay has it.
             with self.store.edit() as state:
                 state['requests'][request_id].update(status='completed', result=result)
                 if done:
@@ -969,8 +1009,12 @@ class QueueMixin:
                     state['requests'][request_id]['saved'] = stored
                 if tests:
                     state['requests'][request_id]['tests'] = tests
+                if defer:
+                    state['requests'][request_id]['testsDeferred'] = True
                 self._note_touched(state, request_id, workspace)
                 state['inflight'].pop(op, None)
+            if batch:
+                self._batch_tests(request_id, workspace, name, tests)
             self._keep_answer(request_id, workspace, name, text)
             self._write_team(workspace)  # Idle now, with its answer.
             return dict(requestId=request_id, **result)

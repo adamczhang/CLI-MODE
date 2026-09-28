@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### AUTO mode (Claude Code)
+- **New agents start side by side.** Several `--agent new` handoffs at once each start their agent at the same
+  time, instead of one after another (about 20 s each); a start never waits for a menu's activation either.
+- **A batch runs the tests once.** A handoff that ends while the rest of its batch still works no longer runs the
+  project's tests on half-written files (they had said Tests FAILED); the last one's run covers the whole batch,
+  and its TESTS line goes on every result.
+- **Tasks tell the agent what Claude already knows**: the test command, the files involved and the project's
+  layout and conventions go in the task's Context, so a cheaper agent spends less time finding its way.
+- **Small requests cost Claude less.** A short request stays with Claude even when it has parts, unless each part
+  is several minutes of work, and a result that says `CHECK: ok` gets a line or two in Claude's report.
+- **`/cli list` shows what the agents did** in the conversation: their tasks, the files and lines they changed,
+  and their minutes of work.
+
 ## 0.4.0 — AUTO: Claude leads, a cheaper engine works — 2026-09-28
 
 ### AUTO mode (Claude Code)

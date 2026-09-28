@@ -4,6 +4,7 @@ fallback). The result never reaches the user's own relays."""
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -450,31 +451,73 @@ class Handoffs(AutoBase):
         self.prompt('/cli off')  # The extras close with the rest.
         self.assertEqual(self.store().read()['owned'], [])
 
-    def test_a_new_agent_waits_for_another_start_instead_of_failing(self):
-        """Live, 2026-09-27: three parts went out at once with --agent new; the third start found the second one
-        under way and was refused, so its part queued behind a busy agent. Now it waits, then starts its own."""
+    def test_new_agents_start_at_the_same_time(self):
+        """Live, 2026-09-27/28: three parts went out at once with --agent new; the third start was refused while the
+        second ran, and later waited for it, about 20 s a start. Extras now start side by side, each on its own entry,
+        and a menu's activation in progress does not hold them."""
         import threading
+        from controller import Controller
         self.auto()
-        with self.store().edit() as saved:  # Another agent's start, under way.
+        with self.store().edit() as saved:  # The user's own activation, under way in a menu.
             saved['pending'] = dict(id='x' * 32, stage='verifying', phase='activation')
+        original = Controller.provision
 
-        def finish():
-            with self.store().edit() as saved:
-                saved.pop('pending', None)
-        timer = threading.Timer(1.5, finish)
-        timer.start()
-        self.write_task('t2', 'Goal: fix the command line.\nFiles: app/cli.py')
-        began = time.monotonic()
-        result = self.ctl('handoff', '--task', 't2', '--agent', 'new')
-        timer.join()
-        self.assertGreaterEqual(time.monotonic() - began, 1.0)  # It waited for the other start.
-        self.assertEqual(result['agent'], 'Antigravity-02')
-        with self.store().edit() as saved:  # A start that never ends: it gives up, and says what to do.
-            saved['pending'] = dict(id='y' * 32, stage='verifying', phase='activation')
-        self.write_task('t3', 'Goal: write the docs.\nFiles: docs/')
-        with patch.object(auto_mode, 'START_WAIT', 1):
-            with self.assertRaisesRegex(RuntimeError, 'still starting after 1 s'):
-                self.ctl('handoff', '--task', 't3', '--agent', 'new')
+        def slow(control, owned, generation, pending=None):
+            time.sleep(2.0)  # A real start takes 15-40 s.
+            return original(control, owned, generation, pending)
+        for task, where in (('t2', 'app/cli.py'), ('t3', 'docs/')):
+            self.write_task(task, 'Goal: work on ' + where + '.\nFiles: ' + where)
+        results, began = {}, time.monotonic()
+        with patch.object(Controller, 'provision', slow):
+            threads = [threading.Thread(target=lambda task=task: results.__setitem__(
+                task, self.ctl('handoff', '--task', task, '--agent', 'new'))) for task in ('t2', 't3')]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertLess(time.monotonic() - began, 3.5)  # Side by side: one after the other takes 4 s or more.
+        self.assertEqual({results['t2']['agent'], results['t3']['agent']}, {'Antigravity-02', 'Antigravity-03'})
+        state = self.store().read()
+        self.assertEqual(state['pending']['id'], 'x' * 32)  # The menu's activation is untouched.
+        self.assertTrue(all(item['ready'] and 'starting' not in item for item in state['owned']))
+        self.assertEqual(len(state['auto']['extras']), 2)
+
+    def test_a_batch_runs_the_tests_once_after_its_last_handoff(self):
+        """Live, 2026-09-27: an agent's test run saw its siblings' files half written and said Tests FAILED. A handoff
+        that ends while the rest of its batch still works defers its run; the last one's run covers them all."""
+        import test_gate
+        (self.project / 'app').mkdir(parents=True, exist_ok=True)
+        for name in ('one.py', 'two.py'):
+            (self.project / 'app' / name).write_text('original\n', encoding='utf-8')
+        for words in (['init', '-q'], ['add', '-A'], ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm',
+                                                      'base']):
+            subprocess.run(['git'] + words, cwd=self.project, check=True, capture_output=True)
+        runs = Path(self.data) / 'test-runs.txt'
+        test_gate.set_command(self.data, self.project, '"' + sys.executable + '" -c "open(r\'' + str(runs) +
+                              '\', \'a\').write(\'x\')"')
+        state = self.auto()
+        original, edits = self.backend.start, iter(('one.py', 'two.py'))
+
+        def start(owned, args, timeout=60):
+            process = original(owned, args, timeout)
+            if '--file' not in args:
+                return process
+            target = self.project / 'app' / next(edits)
+            target.write_text('changed\n', encoding='utf-8')
+            return runtime_process([dict(type='touched', toolCallId='call-1', kind='edit',
+                                         locations=[dict(path=str(target))]),
+                                    dict(type='message', text='Done.'), runtime_result()])
+        self.backend.start = start
+        self.write_task('t1', 'Goal: fix one.\nFiles: app/one.py')
+        first = self.ctl('handoff', '--task', 't1')['requestId']
+        self.write_task('t2', 'Goal: fix two.\nFiles: app/two.py')
+        second = self.ctl('handoff', '--task', 't2')['requestId']  # Queued: still at work when the first ends.
+        self.drain(state['auto']['agent'])
+        records = self.store().read()['requests']
+        self.assertEqual(runs.read_text(encoding='utf-8'), 'x')  # One run for the batch, after the last handoff.
+        self.assertTrue(records[first]['tests']['passed'] and records[first]['tests'].get('batch'))
+        self.assertTrue(records[second]['tests']['passed'])
+        self.assertFalse(any(records[key].get('testsDeferred') for key in (first, second)))
 
     def test_handoffs_sent_together_wake_claude_once(self):
         """Live, 2026-09-28: five parallel parts woke Claude five times, each wake-up re-reading the whole 50k-token
@@ -516,6 +559,18 @@ class Handoffs(AutoBase):
     def _settle(self, request):
         with self.store().edit() as saved:
             saved['requests'][request].update(status='completed', endedAt=time.time())
+
+    def test_cli_list_says_what_the_agents_did(self):
+        state = {'requests': {
+            'a': dict(routingMode='auto', handoff={'task': 't1'}, status='completed', session='s1', submittedAt=100,
+                      endedAt=220, changes=dict(files=2, added=30, removed=4)),
+            'b': dict(routingMode='auto', handoff={'task': 't2'}, status='completed', session='s2', submittedAt=100,
+                      endedAt=160, changes=dict(files=1, added=10, removed=0)),
+            'c': dict(routingMode='auto', handoff={'task': 't3'}, status='submitting', session='s1', submittedAt=300),
+            'd': dict(routingMode='direct', status='completed', session='s1')}}
+        self.assertEqual(auto_mode.work_summary(state), 'Agents did 2 tasks for Claude on 2 agents: 3 files changed '
+                                                        '(+40 -4), 3.0 min of their work.')
+        self.assertIsNone(auto_mode.work_summary({'requests': {}}))
 
     def test_auto_starts_more_agents_by_default(self):
         from state import AUTO_AGENT_LIMIT, DEFAULT_AGENT_LIMIT, agent_limit

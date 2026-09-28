@@ -242,7 +242,9 @@ class BindingMixin:
         message = frontends.agents_text(state, self.agent_activity(state))
         if routing_mode(state) == 'auto':  # Claude Code's AUTO: what Claude handed to which agent.
             import auto_mode
-            message += '\n\nAUTO handoffs:\n' + '\n'.join('- ' + line for line in auto_mode.ledger_lines(state, limit=10))
+            summary = auto_mode.work_summary(state)  # The work AUTO moved off Claude so far.
+            message += (('\n\n' + summary) if summary else '') + '\n\nAUTO handoffs:\n' + '\n'.join(
+                '- ' + line for line in auto_mode.ledger_lines(state, limit=10))
         if limit is not None:
             message = 'Up to ' + str(limit) + ' agents can run at once.\n' + message
         return dict(state, message=message)
@@ -429,7 +431,11 @@ class BindingMixin:
     def valid(self, state, generation, pending=None):
         if state['generation'] != generation:
             return False
-        return (state['pending'] or {}).get('id') == pending if pending else state['active']
+        if not pending:
+            return state['active']
+        # A menu activation owns the one pending slot; an extra AUTO agent's start owns its own entry (`starting`).
+        return ((state['pending'] or {}).get('id') == pending
+                or any(item.get('starting') == pending for item in state['owned']))
 
     def control(self, owned, args, generation, pending=None):
         op = uuid.uuid4().hex
@@ -607,7 +613,8 @@ class BindingMixin:
             if old is not None and pending_work(state, session=session):
                 raise RuntimeError('Settle current work before changing settings.')
             if ((not state['active'] and state['owned']) or any(
-                    not item['ready'] or item['role'] != 'main' for item in state['owned'])):
+                    (not item['ready'] and not item.get('starting')) or item['role'] != 'main'
+                    for item in state['owned'])):  # An extra AUTO agent still starting is not left over.
                 raise RuntimeError('Unfinished session cleanup remains. Run off successfully before activating.')
             if old is None and len(state['owned']) >= agent_limit(state):
                 raise RuntimeError(str(len(state['owned'])) + ' agents are running, the limit. Close one first '

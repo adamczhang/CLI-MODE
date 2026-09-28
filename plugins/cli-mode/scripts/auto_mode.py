@@ -44,7 +44,8 @@ STRENGTH_RULES = {
             'files, and CLI-MODE refuses your own project edits.'),
 }
 TEMPLATE = ('Goal: what to achieve, in one or two lines\n'
-            'Context: files, decisions and constraints the task needs\n'
+            'Context: what you already know that saves exploring (the test command, the files involved, the '
+            'layout and conventions to follow), then decisions and constraints\n'
             'Inputs: files to read first, such as the user\'s saved prompt (the part it needs, by its markers)\n'
             'Files: the only files or folders it may change (other agents may be changing the rest), or none when it '
             'writes only in its own working folder\n'
@@ -64,7 +65,6 @@ PROMPTS_KEPT = 20
 WHOLE = '*'
 EVERYTHING = frozenset(('*', '.', 'all', 'any', 'everything', 'project', 'repo', 'repository'))
 AUTO_TIMEOUT = 120  # Minutes an idle AUTO agent keeps running (its ACPX owner TTL); /cli off closes it sooner.
-START_WAIT = 300  # Seconds an extra agent's start waits for another agent's start to finish.
 # Normal since 2026-09-27: in every usage test Claude did small and medium work faster itself, so it decides and
 # hands off only what is worth it. Strong was the default before: a saved Strong counts only when it was chosen.
 DEFAULT_STRENGTH = 'normal'
@@ -482,6 +482,24 @@ def unread(state):
             and not record.get('hostRead')]
 
 
+def work_summary(state):
+    """What the agents have done in this conversation, from CLI-MODE's own records, for the user's /cli list: the
+    work AUTO moved off Claude. None before the first finished handoff."""
+    done = [record for _, record in auto_requests(state) if record.get('status') == 'completed']
+    if not done:
+        return None
+    files = sum(((record.get('changes') or {}).get('files') or 0) for record in done)
+    added = sum(((record.get('changes') or {}).get('added') or 0) for record in done)
+    removed = sum(((record.get('changes') or {}).get('removed') or 0) for record in done)
+    minutes = sum(max(0.0, (record.get('endedAt') or 0) - (record.get('submittedAt') or 0)) for record in done
+                  if record.get('endedAt') and record.get('submittedAt')) / 60
+    agents = len({record.get('session') for record in done})
+    return ('Agents did ' + str(len(done)) + (' task' if len(done) == 1 else ' tasks') + ' for Claude on ' +
+            str(agents) + (' agent' if agents == 1 else ' agents') + ': ' + str(files) +
+            (' file' if files == 1 else ' files') + ' changed (+' + str(added) + ' -' + str(removed) + '), ' +
+            ('%.1f' % minutes) + ' min of their work.')
+
+
 def ledger_lines(state, relay_command=None, limit=LEDGER_SHOWN, active=False):
     """The AUTO ledger: unread results first, then the newest. With `relay_command(request)` (Claude's copy), an
     unread result names its exact relay; without it (the user's /cli list), it says Claude has not read it yet.
@@ -586,10 +604,15 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         'port or refactor across files, many tests to write or fix); a request whose long message CLI-MODE saved '
         '(Prompt saved: ...); independent parts of several minutes each that can run at once; what the user asks the '
         'agent to do; and reviews, second opinions and wide research (read-only). Everything else is yours, and so is '
-        'anything that depends on this conversation: when in doubt, do it yourself. A handoff adds about half a '
+        'anything that depends on this conversation: when in doubt, do it yourself. A short request (a few '
+        'paragraphs, no pasted data) is yours even when it has several parts, unless each part is several minutes of '
+        'work: on small requests a handoff\'s fixed cost outweighs the work it moves. A handoff adds about half a '
         'minute of your own turns and the agent is slower than you, so a needless handoff costs more than doing a '
         'job yourself. Do not read the code to decide, nor to write a task or its Files line: give the goal and '
-        'constraints, name the files the request names, and let the agent explore. Do not guess either: name what '
+        'constraints, name the files the request names, and let the agent explore. What you already know from this '
+        'conversation that would save it exploring goes in Context in a line or two (the test command, the files '
+        'involved, the layout and conventions): a cheaper agent spends most of its time finding its way. Do not '
+        'guess either: name what '
         'you have not checked as something for the agent to find out, not as a fact or a suspect. When the user\'s '
         'message was long, CLI-MODE saves it and says where (Prompt saved: ...): name that file in the task\'s Inputs '
         'line, with the heading and markers of the part the agent needs, and leave the part there: Context adds only '
@@ -990,35 +1013,61 @@ class AutoMixin:
         """Start another agent like the running AUTO agent (its kind, model, effort and access), named after it:
         `Codex-02`. It joins this conversation's extras, closes with the others, and idles out like them.
 
-        One agent starts at a time (a conversation has one pending activation), so a start that finds another under
-        way waits for it, in this handoff's background task, and then starts its own (live, 2026-09-27: three parts
-        handed out at once, and the third start was refused, so its part queued behind a busy agent)."""
-        deadline = time.monotonic() + START_WAIT
-        while True:
-            state = self.store.read()
-            lead = agent_entry(state, self.handoff_target(state))
-            if len(state.get('owned') or []) >= agent_limit(state):
+        Extras start at the same time: each owns its own entry while it starts (`starting`), never the menu's one
+        pending activation (live, 2026-09-28: starts queued one after another, about 20 s each, so the fifth part of
+        five waited over a minute to begin)."""
+        state = self.store.read()
+        lead = agent_entry(state, self.handoff_target(state))
+        settings = lead.get('settings') or {}
+        choice = {'agent': lead['backend'], 'model': settings.get('model'), 'access': settings.get('access'),
+                  'effort': settings.get('effortValue'), 'fast': settings.get('fast')}
+        session = self.start_alongside(choice)
+        if not agent_entry(self.store.read(), session):
+            raise RuntimeError('The new agent did not start, so nothing was handed off.')
+        return session
+
+    def start_alongside(self, choice):
+        """Start an extra AUTO agent while others start or work: its entry is reserved (name, limit) at once, the slow
+        start runs outside the store's lock, and it joins the extras when ready."""
+        import uuid
+        from state import ACTS_WITHOUT_ASKING
+        target = self.use(choice['agent']).ID
+        settings = self.adapter.selection(self.store.root, choice['model'], choice['access'], choice.get('effort'))
+        if choice.get('fast') is not None and getattr(self.adapter, 'FAST_MODE_KEY', None):
+            settings['fast'] = bool(choice['fast'])
+        token = uuid.uuid4().hex
+        with self.store.edit() as state:
+            if len(state['owned']) >= agent_limit(state):
                 raise RuntimeError(str(len(state['owned'])) + ' agents are running, the limit, so no agent was '
                                    'started. Hand this to one of them with --agent <name>; it waits its turn there. '
                                    '(The user raises the limit with /cli agents max <n>.)')
-            if (state.get('pending') or {}).get('stage') != 'verifying':
-                settings = lead.get('settings') or {}
-                choice = {'agent': lead['backend'], 'model': settings.get('model'), 'access': settings.get('access'),
-                          'effort': settings.get('effortValue'), 'fast': settings.get('fast')}
-                try:
-                    result = self.start_role('extra', choice)
-                    break
-                except RuntimeError as exc:
-                    if 'already being verified' not in str(exc):
-                        raise  # Another start took the slot first: wait for it, as below.
-            if time.monotonic() >= deadline:
-                raise RuntimeError('Another agent was still starting after ' + str(START_WAIT) + ' s, so no agent '
-                                   'was started. Hand this to a running agent with --agent <name>.')
-            time.sleep(1)
-        session = result.get('activated')
-        if not session or not agent_entry(self.store.read(), session):
-            raise RuntimeError('The new agent did not start, so nothing was handed off.')
-        return session
+            owned = dict(name='cli-mode-' + self.store.key[:12] + '-' + uuid.uuid4().hex[:12],
+                         workspace=self.store.workspace, backend=target, role='main', settings=settings, ready=False,
+                         starting=token, alias=auto_name(target, [item.get('alias') for item in state['owned']]),
+                         timeout=AUTO_TIMEOUT)
+            if target in ACTS_WITHOUT_ASKING:
+                owned['actsWithoutAsking'] = True
+            if getattr(self.backend, 'profile', None):
+                owned['acpxProfile'] = self.backend.profile
+            if hasattr(self.backend, 'prepare'):
+                self.backend.prepare(owned)
+            state['owned'].append(owned)
+            generation = state['generation']
+        try:
+            provider = self.provision(owned, generation, token)
+            with self.store.edit() as state:
+                if not self.valid(state, generation, token):
+                    raise RuntimeError('The start was canceled (/cli off), so nothing was handed off.')
+                for item in state['owned']:
+                    if item.get('starting') == token:
+                        item.pop('starting')
+                        item.update(ready=True, providerSession=provider, lastUsedAt=time.time())
+                state['active'] = True
+                adopt(state, 'auto-extra', owned['name'], target, settings, self.store.root)
+        except BaseException:
+            self.cleanup(owned)
+            raise
+        return owned['name']
 
     def relay_for_host(self, request_id, wait=25.0, poll=.25, answer_max=None):
         """A handoff's result for Claude to read (not to post): plain lines, then the agent's answer. It marks the
