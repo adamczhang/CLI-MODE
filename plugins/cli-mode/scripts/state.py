@@ -304,13 +304,14 @@ NAMESPACE = '/cli-mode:'
 ROUTING_MODES = ('direct', 'auto')
 MODE_REMOVED = ('Prompts reach the agent only through /d <prompt>; every other message stays with {host}. '
                 'Passthrough mode was removed.')
-MODE_PAGES = ('mode', 'auto-settings', 'auto-strength')  # The Mode page and its sub-pages (pending phases).
+MODE_PAGES = ('mode', 'auto-settings', 'auto-strength', 'auto-effort')  # The Mode page and its sub-pages (pending phases).
 STRENGTHS = ('normal', 'strong', 'max')  # How strongly Claude hands work off in AUTO.
 AUTO_D = ('Add a question after /d: in AUTO, /d asks Claude itself, and nothing goes to an agent. Nothing was sent.')
 AUTO_OWNED = ('In AUTO, Claude and CLI-MODE run the agents. Ask Claude, change the AUTO agent with /cli mode, '
               'or switch to DIRECT with /cli mode direct.')
 MODE_USAGE = ('Use /cli mode, /cli mode auto|direct, /cli mode agent [<agent> [<model>]], /cli mode backup '
-              '[<agent>|none], or /cli mode strength normal|strong|max.')
+              '[<agent>|none], /cli mode strength normal|strong|max, /cli mode effort <level>, or /cli mode fast '
+              'on|off.')
 # Controls that change which agent does what, or act on one agent's piece of the work (its last turn, queue,
 # folder, relay or tests): the user's in DIRECT, Claude's and CLI-MODE's in AUTO. Claude still runs them in AUTO
 # (hooks/claude.py ALLOWED); the user asks Claude ("undo that", "show me the diff").
@@ -783,6 +784,14 @@ def mode_route(choice):
         if len(words) == 2 and words[1].casefold() in STRENGTHS:
             return {'route': 'mode-strength', 'strength': words[1].casefold()}
         return {'route': 'hint', 'text': 'Use /cli mode strength normal, strong or max.'}
+    if first == 'effort':
+        if len(words) == 2:
+            return {'route': 'mode-effort', 'effort': words[1].casefold()}
+        return {'route': 'hint', 'text': 'Use /cli mode effort <level>, such as low, medium or high.'}
+    if first == 'fast':
+        if len(words) == 2 and words[1].casefold() in ('on', 'off'):
+            return {'route': 'mode-fast', 'fast': words[1].casefold()}
+        return {'route': 'hint', 'text': 'Use /cli mode fast on or /cli mode fast off.'}
     return {'route': 'hint', 'text': MODE_USAGE}
 
 

@@ -292,16 +292,24 @@ def _every_team(folder, conversation, team, hold):
     return [line for _, line in newest.values()]
 
 
-def write_team(workspace, conversation, team, hold):
+def write_team(workspace, conversation, team, hold, create=True):
     """Keep this conversation's running agents (state.team_lines) in the brief, beside other conversations'.
 
     Several conversations (Claude Code's and Codex's alike) can run agents in one project, and the brief is the
     project's: each keeps its own list in `Agent_Working_Folder/.cli-mode/`, and the brief lists them all.
-    `conversation` names this one's list (Store.key); `hold` is how long it stays without an update.
+    `conversation` names this one's list (Store.key); `hold` is how long it stays without an update. Without
+    `create` (AUTO, where each task is its agent's brief) a brief that is not there yet is not started: only the
+    list is kept, for a brief another conversation starts; agents that found one read it every task (live, 2026-09-27).
     """
     folder = Path(workspace) / ROOT / OWN
     if not team and not folder.is_dir():
         return  # No list anywhere: the project is left as it is.
+    if not create and not brief_path(workspace).is_file():
+        try:
+            _every_team(folder, conversation, team, hold)
+        except OSError:
+            pass
+        return
     try:
         _edit(workspace, lambda lines: _set_list(lines, TEAM, _every_team(folder, conversation, team, hold)))
     except (OSError, RuntimeError):
@@ -317,10 +325,15 @@ def ensure_root(workspace):
     return root
 
 
-def instruction(name, brief=False, label=None):
+def instruction(name, brief=False, label=None, auto=False):
     """The line added to a task when it is sent. The sender skips it for an agent's own slash command, which must
     go exactly as typed (dispatch's `provider_command`). With a project brief, it asks the agent to read it; the
-    agent's own label tells it which of the agents the brief lists it is."""
+    agent's own label tells it which of the agents the brief lists it is. In AUTO it is shorter and goes with an
+    agent's first task only: the task Claude wrote says the rest, and the agent's session keeps it."""
+    if auto:
+        return ('\n\n---\nCLI-MODE: ' + ('you are ' + label + '. ' if label else '') + ('Y' if label else 'y') +
+                'our working folder is `' + relative(name) + '/`: a file you make that is not a change the task asks '
+                'for (a scratch script, notes) goes there, never elsewhere in the project.')
     return ('\n\n---\nCLI-MODE: ' + ('you are ' + label + '. ' if label else '') +
             (('F' if label else 'f') + 'irst read `' + ROOT + '/' + BRIEF + '`, the brief every agent on this '
              'project follows: your team and the host\'s notes are in it. Y' if brief else ('Y' if label else 'y')) +

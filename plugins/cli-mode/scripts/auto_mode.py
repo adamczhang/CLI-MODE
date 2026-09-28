@@ -26,11 +26,14 @@ from state import (MODE_PAGES, STRENGTHS, agent_entry, agent_label, agent_limit,
 ROLES = ('agent', 'backup')
 # Handoffs: Claude writes each task to a file here (git-ignored, CLI-MODE's own), then runs `handoff --task <id>`.
 TASK_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,39}')
-TASK_MAX = 100 * 1024  # Characters.
+TASK_MAX = 800 * 1024  # Characters: about 200k tokens, most of Codex's 258k-token window.
 WORKING = ('captured', 'submitting')  # A request still with its agent.
 LEDGER_SHOWN = 5
-SMALL_EDIT = 20  # Strong: lines one edit of Claude's may change.
-TURN_FILES = 2  # Strong: project files Claude may edit itself in one turn.
+# Strong: what Claude may change itself. Room for a small piece of work kept whole (a bug fix with its test, a small
+# function): the 2026-09-27 usage test's smallest task (3 files, about 5 tool calls) cost Claude 92% as much handed
+# off as done alone, and took 4x as long.
+SMALL_EDIT = 40  # Lines one edit of Claude's may change.
+TURN_FILES = 3  # Project files Claude may edit itself in one turn.
 KEPT_SUBAGENTS = ('Explore', 'Plan', 'claude-code-guide', 'statusline-setup')  # Read-only helpers stay Claude's.
 STRENGTH_RULES = {
     'normal': 'Delegation is Normal: you decide what to hand off.',
@@ -42,18 +45,30 @@ STRENGTH_RULES = {
 }
 TEMPLATE = ('Goal: what to achieve, in one or two lines\n'
             'Context: files, decisions and constraints the task needs\n'
-            'Files: the only files or folders it may change (other agents may be changing the rest)\n'
+            'Inputs: files to read first, such as the user\'s saved prompt (the part it needs, by its markers)\n'
+            'Files: the only files or folders it may change (other agents may be changing the rest), or none when it '
+            'writes only in its own working folder\n'
             'Do not: anything else to avoid; never commit or push\n'
-            'Done when: the check that proves it (tests, a command, behaviour)\n'
+            'Done when: the check that proves it (tests, a command, behaviour); new code comes with tests for each '
+            'new function and its edge cases\n'
             'Report: what changed, what you ran, anything unresolved')
+# Pass by reference (usage test, 2026-09-27: handed off, a 25k-token prompt cost Claude 7 minutes and 25-30k output
+# tokens retyping its data for the agent): a prompt this long is saved where the agents can read it, and the task
+# names it in its Inputs line.
+PROMPT_SAVE_MIN = 8000  # Characters.
+PROMPTS_KEPT = 20
 # One writer per file: a writing task claims the files and folders its Files line names, and no two running tasks
-# (nor Claude's own edits) may change the same file. A task without that line, and any other request, claims them all.
+# (nor Claude's own edits) may change the same file. A task without that line, and any other request, claims them all;
+# `Files: none` claims no project file (work that writes only in the agent's working folder). Its result then names
+# any edit of its own outside that claim (relay_view.host_text's OUTSIDE ITS CLAIM, a CHECK: look).
 WHOLE = '*'
 EVERYTHING = frozenset(('*', '.', 'all', 'any', 'everything', 'project', 'repo', 'repository'))
 AUTO_TIMEOUT = 120  # Minutes an idle AUTO agent keeps running (its ACPX owner TTL); /cli off closes it sooner.
-DEFAULT_STRENGTH = 'strong'
+# Normal since 2026-09-27: in every usage test Claude did small and medium work faster itself, so it decides and
+# hands off only what is worth it. Strong was the default before: a saved Strong counts only when it was chosen.
+DEFAULT_STRENGTH = 'normal'
 STRENGTH_LINES = {
-    'normal': ('Claude decides what to hand off.',),
+    'normal': ('Claude works itself; long jobs', 'go to the agent.'),
     'strong': ('Claude fixes small things itself;', 'bigger work goes to the agent.'),
     'max': ('Every change goes to the agent;', 'Claude plans and checks.'),
 }
@@ -74,7 +89,10 @@ def entry(value):
         adapters.module(value['agent'])
     except ValueError:
         return None
-    return {key: value.get(key) for key in ('agent', 'model', 'effort', 'access')}
+    saved = {key: value.get(key) for key in ('agent', 'model', 'effort', 'access')}
+    if isinstance(value.get('fast'), bool):
+        saved['fast'] = value['fast']  # The agent's own fast mode (Codex), when chosen.
+    return saved
 
 
 def load(root):
@@ -84,9 +102,13 @@ def load(root):
     except (OSError, ValueError):
         value = {}
     value = value if isinstance(value, dict) else {}
-    strength = value.get('strength')
-    return {'agent': entry(value.get('agent')), 'backup': entry(value.get('backup')),
-            'strength': strength if strength in STRENGTHS else DEFAULT_STRENGTH}
+    strength, chosen = value.get('strength'), value.get('strengthChosen') is True
+    if strength not in STRENGTHS or (strength == 'strong' and not chosen):
+        strength = DEFAULT_STRENGTH  # The old default, saved with the agent, is not a choice.
+    config = {'agent': entry(value.get('agent')), 'backup': entry(value.get('backup')), 'strength': strength}
+    if chosen:
+        config['strengthChosen'] = True
+    return config
 
 
 def save(root, config):
@@ -99,8 +121,11 @@ def save(root, config):
 
 def entry_of(agent, settings):
     """The entry for an agent that just started with `settings` (an adapter selection)."""
-    return {'agent': agent, 'model': settings.get('model'), 'effort': settings.get('effortValue'),
-            'access': settings.get('access')}
+    saved = {'agent': agent, 'model': settings.get('model'), 'effort': settings.get('effortValue'),
+             'access': settings.get('access')}
+    if isinstance(settings.get('fast'), bool):
+        saved['fast'] = settings['fast']
+    return saved
 
 
 def describe(root, choice, effort=True):
@@ -124,6 +149,45 @@ def short(root, choice):
     return adapters.module(choice['agent']).LABEL + (', ' + detail[1] if len(detail) > 1 else '')
 
 
+def effort_options(root, choice):
+    """The AUTO agent's effort levels as (label, value), when effort is a setting of its own (Codex, Claude, Grok);
+    none when it is part of the model (Antigravity's) or the agent has none."""
+    if not choice or adapters.descriptor(choice['agent']).get('effortRepresentation') != 'separate':
+        return []
+    adapter = adapters.module(choice['agent'])
+    try:
+        settings = adapter.selection(root, choice['model'], choice['access'], choice.get('effort'))
+        return list(frontends.phase_options(root, choice['agent'], 'effort', settings, adapter.catalog(root)))
+    except (ValueError, KeyError, OSError, TypeError):
+        return []
+
+
+def effort_name(root, choice):
+    value = (choice or {}).get('effort')
+    return next((label for label, option in effort_options(root, choice) if option == value), value or 'default')
+
+
+def has_fast(choice):
+    """True when the AUTO agent has a fast mode of its own (Codex's `fast-mode`)."""
+    return bool(choice) and bool(getattr(adapters.module(choice['agent']), 'FAST_MODE_KEY', None))
+
+
+def settings_rows(root, config):
+    """AUTO settings, row by row: (lines, action), numbered in this order on the page and in mode_choose alike."""
+    agent = config['agent']
+    rows = [(['AUTO agent', '   ' + (describe(root, agent) if agent else 'not chosen yet')], 'agent'),
+            (['Backup agent', '   ' + describe(root, config['backup'])], 'backup'),
+            (['Delegation: ' + config['strength'].title(), *('   ' + line for line in STRENGTH_LINES[config['strength']])],
+             'strength')]
+    if effort_options(root, agent):
+        rows.append((['Effort: ' + effort_name(root, agent)], 'effort'))
+    if has_fast(agent):
+        rows.append((['Fast mode: ' + ('On' if agent.get('fast') else 'Off')], 'fast'))
+    if config['backup']:
+        rows.append((['Remove backup'], 'clear-backup'))
+    return rows
+
+
 def page_text(page, root, state):
     """One page as framed menu text (menu_block adds X. Exit)."""
     config = load(root)
@@ -135,16 +199,21 @@ def page_text(page, root, state):
                                        'not chosen yet'),
                  '', '1. DIRECT', '2. AUTO (default)', '3. AUTO settings', 'B. Back']
     elif page == 'auto-settings':
-        lines = ['AUTO settings', '', '1. AUTO agent', '   ' + (describe(root, config['agent']) if config['agent']
-                                                              else 'not chosen yet'),
-                 '2. Backup agent', '   ' + describe(root, config['backup']),
-                 '3. Delegation: ' + config['strength'].title(),
-                 *('   ' + line for line in STRENGTH_LINES[config['strength']])]
-        lines += (['4. Remove backup'] if config['backup'] else []) + ['B. Back']
+        lines = ['AUTO settings', '']
+        for number, (row, _) in enumerate(settings_rows(root, config), 1):
+            lines += [str(number) + '. ' + row[0], *row[1:]]
+        lines.append('B. Back')
+    elif page == 'auto-effort':
+        agent = config['agent']
+        lines = ['Effort', '', describe(root, agent, effort=False) if agent else 'No AUTO agent chosen yet',
+                 'Now: ' + effort_name(root, agent), '']
+        lines += [str(number) + '. ' + label for number, (label, _) in enumerate(effort_options(root, agent), 1)]
+        lines.append('B. Back')
     else:
         lines = ['Delegation', '', 'Now: ' + config['strength'].title(), '']
         for number, strength in enumerate(STRENGTHS, 1):
-            lines += [str(number) + '. ' + strength.title(), *('   ' + line for line in STRENGTH_LINES[strength])]
+            lines += [str(number) + '. ' + strength.title() + (' (default)' if strength == DEFAULT_STRENGTH else ''),
+                      *('   ' + line for line in STRENGTH_LINES[strength])]
         lines.append('B. Back')
     return menu_block('\n'.join(lines))
 
@@ -216,6 +285,30 @@ def tasks_dir(workspace):
     return Path(workspace) / agent_folder.ROOT / agent_folder.OWN / 'tasks'
 
 
+def prompts_dir(workspace):
+    return Path(workspace) / agent_folder.ROOT / agent_folder.OWN / 'prompts'
+
+
+def save_prompt(workspace, text):
+    """Keep a long AUTO prompt where the agents can read it (git-ignored, with the tasks), exactly as the user sent
+    it, so a task can name it instead of Claude retyping its data. The newest PROMPTS_KEPT stay."""
+    folder = prompts_dir(workspace)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:6] + '.md')
+    path.write_bytes(text.encode('utf-8'))
+    for old in sorted(folder.glob('*.md'))[:-PROMPTS_KEPT]:
+        old.unlink(missing_ok=True)
+    return path
+
+
+def prompt_note(path, text):
+    """What Claude is told on the turn a long prompt was saved."""
+    return ('Prompt saved: ' + Path(path).as_posix() + ' (' + str(len(text)) + ' characters: the user\'s message this '
+            'turn, exactly as sent). If a task needs its data, name this file in the task\'s Inputs line with the '
+            'markers of the part it needs (a heading or the line before the data); do not copy the data into the task '
+            'or into project files yourself.')
+
+
 def task_file(workspace, task):
     if not isinstance(task, str) or not TASK_ID.fullmatch(task):
         raise ValueError('A task id is 1-40 letters, digits, _ or -, starting with a letter or digit (such as t1).')
@@ -249,23 +342,66 @@ def file_key(word, workspace=None):
     return None if word.startswith('../') or word == '..' else word.casefold()
 
 
+NOT_PATHS = frozenset(('e.g', 'i.e', 'etc', 'vs'))
+
+
+def path_like(word, workspace=None):
+    """True for a word of a Files line that names a file or folder: it has a slash or a wildcard, ends in an
+    extension (`README.md`, `.gitignore`), or is there in the project (`Makefile`). `only`, `files` and `v1.2` are
+    words, not files."""
+    if word.casefold() in NOT_PATHS:
+        return False
+    if re.search(r'[/\\*]', word) or re.search(r'\.[A-Za-z][\w-]*$', word):
+        return True
+    return bool(workspace and exists(Path(workspace) / word))
+
+
 def task_files(text, workspace=None):
-    """The claims of a writing task's Files line: [WHOLE] without one, or when it names no path (prose, `none`)."""
+    """The claims of a writing task's Files line: [WHOLE] without one, or when it names no path (prose); [] (no project
+    file) when it says `none` (or `nothing`, `no files`), or names only the agents' working folder, never the
+    project's (its own notes, scripts and outputs go there).
+
+    Every path in the line counts, in brackets too ("the report tests (tests/test_report.py)"); the rest is prose,
+    whose sentence ends are not files (live, 2026-09-27: `...its test file only.` claimed `only`, and `No other
+    files.` claimed `files`). A word for the whole project (`everything`) claims it only when no path is named."""
     line = next((row.split(':', 1)[1] for row in text.splitlines() if re.match(r'\s*files\s*:', row, re.I)), None)
     if line is None:
         return [WHOLE]
-    words = re.sub(r'\([^)]*\)', ' ', line).replace(',', ' ').replace(';', ' ').split()
-    keys = []
+    words = [word.strip('`"\'').rstrip('.:!?') for word in re.split(r'[\s,;()\[\]{}]+', line)]
+    words = [word for word in words if word]
+    nothing = bool(re.match(r'(none|nothing|no (project )?files?)\b', ' '.join(words).casefold()))
+    keys, everything = [], False
     for word in words:
-        if (not re.search(r'[/.*\\]', word) and word.casefold() not in EVERYTHING
-                and not (workspace and exists(Path(workspace) / word))):
-            continue  # Not a path: `and`, `the`, `new`; a file such as `Makefile` counts when it is there.
-        key = file_key(word.rstrip('.:'), workspace)
+        if word.casefold() in EVERYTHING:
+            everything = everything or not nothing  # `no project files` names no project.
+            continue
+        if not path_like(word, workspace):
+            continue  # Prose: `and`, `the`, `new`, `only`.
+        key = file_key(word, workspace)
         if key == WHOLE:
             return [WHOLE]
-        if key and key not in keys:
+        if key and working_folder(key):
+            nothing = True  # The working folder: no project file.
+        elif key and key not in keys:
             keys.append(key)
-    return keys or [WHOLE]
+    return keys or ([] if nothing and not everything else [WHOLE])
+
+
+def working_folder(key):
+    """True for a claim key inside the agents' working folder (Agent_Working_Folder/…): never a project file."""
+    root = agent_folder.ROOT.casefold()
+    return key == root or key.startswith(root + '/')
+
+
+def outside_claim(paths, claim, workspace=None):
+    """The files among `paths` (an agent's own edits) that its writing task's `claim` does not cover: a project file
+    it was not given. The working folder is always the agent's own; files outside the project are not counted."""
+    found = []
+    for path in paths or []:
+        key = file_key(path, workspace)
+        if key and key != WHOLE and not working_folder(key) and not any(overlaps(key, mine) for mine in claim):
+            found.append(path)
+    return found
 
 
 def exists(path):
@@ -287,8 +423,20 @@ def claims(state, exclude=None):
     for key, record in (state.get('requests') or {}).items():
         handoff = record.get('handoff') or {}
         if record.get('status') in WORKING and record.get('session') != exclude and not handoff.get('readOnly'):
-            found.append((record.get('session'), key, list(handoff.get('files') or [WHOLE])))
+            files = handoff.get('files')  # [] (Files: none) claims no project file; missing claims them all.
+            found.append((record.get('session'), key, [WHOLE] if files is None else list(files)))
     return found
+
+
+def running_with(state, request_id):
+    """The other requests that ran while `request_id` did: they had started, and had not ended before it started
+    (work still queued never ran)."""
+    records = state.get('requests') or {}
+    mine = records.get(request_id) or {}
+    start = mine.get('submittedAt') or mine.get('capturedAt') or 0
+    end = mine.get('endedAt') or time.time()
+    return [record for key, record in records.items() if key != request_id and record.get('submittedAt')
+            and record['submittedAt'] <= end and (record.get('endedAt') is None or record['endedAt'] >= start)]
 
 
 def alongside(state, request_id):
@@ -296,15 +444,8 @@ def alongside(state, request_id):
     edited files of every other request that was running at the same time (it had started, and had not ended before
     this one started). Such changes in its receipt are expected, not a CHECK: look (live: two writers on
     separate claims flagged each other's files, and Claude spent a call on git to confirm it)."""
-    records = state.get('requests') or {}
-    mine = records.get(request_id) or {}
-    start = mine.get('submittedAt') or mine.get('capturedAt') or 0
-    end = mine.get('endedAt') or time.time()
     keys = set()
-    for key, record in records.items():
-        begin, finish = record.get('submittedAt'), record.get('endedAt')
-        if key == request_id or not begin or begin > end or (finish is not None and finish < start):
-            continue  # Itself, work still queued (never started), or work that did not overlap it.
+    for record in running_with(state, request_id):
         keys.update(claim for claim in (record.get('handoff') or {}).get('files') or [] if claim != WHOLE)
         keys.update(found for found in (file_key(path) for path in record.get('touched') or [])
                     if found and found != WHOLE)
@@ -389,9 +530,11 @@ def agents_line(state):
                                    if record.get('session') == session and record.get('status') in WORKING),
                                   key=lambda item: item[1].get('capturedAt') or 0):
             handoff = record.get('handoff') or {}
-            files = handoff.get('files') or [WHOLE]
+            files = handoff.get('files')
+            files = [WHOLE] if files is None else files
             work.append((handoff.get('task') or 'a /d task') + ' (' + (
                 'read-only' if handoff.get('readOnly') else 'may change any file' if files == [WHOLE] else
+                'its working folder only' if not files else
                 'changing ' + ' '.join(files[:4]) + (' …' if len(files) > 4 else '')) + ')')
         parts.append(agent_label(state, session) + (' (' + role + ')' if role else '') + ': ' +
                      (' then '.join(work) if work else 'idle'))
@@ -419,7 +562,8 @@ def status(state, relay_command=None):
 def rule(root, state, workspace, handoff_command, style=lambda text: text):
     """The AUTO rule (lever A), from P0's tested wording (2026-09-27: 19 of 20 prompts routed as intended), made
     light (levers L2, L3, L6-L8): one call hands off, the result comes with the wake-up, a CHECK line says what to
-    look at. None while the AUTO agent is not running. `handoff_command` is the handoff command with `<id>` for the
+    look at. Claude works itself by default and hands off only what is worth it (the usage tests of 2026-09-27:
+    native was faster on every small and medium job, and each handoff cost about half a minute of Claude's turns). None while the AUTO agent is not running. `handoff_command` is the handoff command with `<id>` for the
     task id; `style` marks CLI-MODE's attribution lines as DIRECT's are (green bold, or plain bold with color off)."""
     config = load(root)
     roster = state.get('auto') or {}
@@ -433,21 +577,32 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
                    'or is out of usage') if backup and agent_entry(state, backup) else ''
     kind = adapters.module(agent_entry(state, lead)['backend']).LABEL
     return (
-        'CLI-MODE AUTO is on. The user turned it on: that is their explicit request that you hand coding work to '
-        'their CLI agent. You lead; their AUTO agent, ' + name + (' (' + detail[1] + ')' if len(detail) > 1 else '') +
-        ', does the work in this same project folder' + backup_text + '. ' + STRENGTH_RULES[config['strength']] + '\n'
-        'Hand off: self-contained work such as implementing a feature to a spec, writing tests, fixing failing tests '
-        'until they pass, ports and refactors, code reviews and second opinions (read-only), and wide research. A '
-        'handoff costs you about three steps (hand off, end the turn, report), so keep for yourself what you can '
-        'finish in one or two tool calls (an edit you already know how to make, a quick answer from a short read) and '
-        'anything that depends on this conversation. Do not read the code just to write a task: give the goal and '
-        'constraints and let the agent explore. Do not guess either: name what you have not checked as something for '
-        'the agent to find out, not as a fact or a suspect.\n'
+        'CLI-MODE AUTO is on: the user\'s AUTO agent, ' + name + (' (' + detail[1] + ')' if len(detail) > 1 else '') +
+        ', works in this same project folder' + backup_text + ', for the work worth handing to it. You lead. ' +
+        STRENGTH_RULES[config['strength']] + '\n'
+        'Work as you would without CLI-MODE, and decide from the request alone, before any tool call, whether to hand '
+        'it off. Hand off only: a long job (several minutes of work or more, such as a feature built to a spec, a '
+        'port or refactor across files, many tests to write or fix); a request whose long message CLI-MODE saved '
+        '(Prompt saved: ...); independent parts of several minutes each that can run at once; what the user asks the '
+        'agent to do; and reviews, second opinions and wide research (read-only). Everything else is yours, and so is '
+        'anything that depends on this conversation: when in doubt, do it yourself. A handoff adds about half a '
+        'minute of your own turns and the agent is slower than you, so a needless handoff costs more than doing a '
+        'job yourself. Do not read the code to decide, nor to write a task or its Files line: give the goal and '
+        'constraints, name the files the request names, and let the agent explore. Do not guess either: name what '
+        'you have not checked as something for the agent to find out, not as a fact or a suspect. When the user\'s '
+        'message was long, CLI-MODE saves it and says where (Prompt saved: ...): name that file in the task\'s Inputs '
+        'line, with the markers of the part the agent needs, and never copy its data into the task or the project '
+        'yourself.\n'
         'One writer per file: a writing task\'s Files line names the only files or folders it may change (without one, '
-        'it claims the whole project), and CLI-MODE refuses a handoff, or an edit of yours, that would change a file '
-        'another running task may change. Work on other files can run in parallel: hand it to an idle agent '
+        'it claims the whole project; `none` claims no project file, for work that writes only in its working folder), '
+        'and CLI-MODE refuses a handoff, or an edit of yours, that would change a file another running task may '
+        'change; a result names any edit outside its claim. Work on other files can run in parallel: hand it to an idle agent '
         '(`--agent <name>`), or start another ' + kind + ' like ' + name + ' for it with `--agent new` (15-40 s; at '
-        'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn.\n'
+        'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn. A request with three '
+        'or more independent parts that change different files, each several minutes of work, goes out at once, one '
+        'task per part on its own agent (`--agent new` beyond the idle ones), each with its own Files line; parts '
+        'that share files stay in one task, and a part of a minute or two stays in another part\'s task or is yours: '
+        'a new agent starts cold, and costs more than such a part.\n'
         'To hand off, all in one message: (1) a line that opens with this attribution, exactly as written but with the '
         'name of the agent you hand it to, then says in plain words what you pass on:\n' +
         style('Passing to ' + name + ':') + '\n(2) the task, written with the Write tool to ' +
@@ -458,8 +613,11 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         'follow of the agent\'s work: there is nothing else to run, and a refusal comes back as the call\'s error. '
         'Then end your turn with one short line that opens with this attribution, the same way:\n' +
         style(name + ' is working.') + '\nThe agent\'s finish wakes you with its result, already read for you, and '
-        'a CHECK line: CHECK: ok means tell the user in a few lines what was done, from the result alone; CHECK: look '
-        'names the only things to check first. Never poll or wait for it.\n'
+        'a CHECK line: CHECK: ok means tell the user in a few lines what was done, from the result alone, with no '
+        'tool call; CHECK: look names the only things to check first. Its CHANGES line is CLI-MODE\'s own git '
+        'status and diff of the project across the agent\'s turn, new files included, and its TESTS line CLI-MODE\'s '
+        'own run of the project\'s tests after it: do not run git, the tests or read the changed files again to '
+        'confirm them. Never poll or wait for it.\n'
         'The user switches back to driving the agents with /cli mode direct.')
 
 
@@ -477,6 +635,10 @@ class AutoMixin:
             return self.clear_backup()
         if action == 'strength':
             return self.set_strength(to)
+        if action == 'effort':
+            return self.set_effort(to)
+        if action == 'fast':
+            return self.set_fast(to)
         if action == 'choose':
             return self.mode_choose(number)
         if action == 'back':
@@ -549,7 +711,7 @@ class AutoMixin:
         self.use(choice['agent'])
         self.frontend(choice['agent'], purpose=purpose)
         return self.activate(choice['model'], choice['access'], effort=choice.get('effort'), agent=choice['agent'],
-                             require_hooks=True)
+                             require_hooks=True, fast=choice.get('fast'))
 
     def open_picker(self, purpose, agent=None, message=None):
         """The activation flow (agent list, then its page), marked so its activation becomes an AUTO agent."""
@@ -606,7 +768,7 @@ class AutoMixin:
         if to not in STRENGTHS:
             raise ValueError('Choose normal, strong or max.')
         config = load(self.store.root)
-        config['strength'] = to
+        config.update(strength=to, strengthChosen=True)
         save(self.store.root, config)
         return self.mode_page('auto-settings', message='Delegation: ' + to.title() + '.')
 
@@ -616,9 +778,10 @@ class AutoMixin:
         actions = {
             'mode': {1: lambda: self.set_mode('direct'), 2: lambda: self.set_mode('auto'),
                      3: lambda: self.mode_page('auto-settings')},
-            'auto-settings': {1: lambda: self.choose_auto_agent('agent'), 2: lambda: self.choose_auto_agent('backup'),
-                              3: lambda: self.mode_page('auto-strength'),
-                              **({4: self.clear_backup} if config['backup'] else {})},
+            'auto-settings': {number: self.settings_action(key, config) for number, (_, key) in
+                              enumerate(settings_rows(self.store.root, config), 1)},
+            'auto-effort': {number: (lambda value=value: self.set_effort(value)) for number, (_, value) in
+                            enumerate(effort_options(self.store.root, config['agent']), 1)},
             'auto-strength': {index: (lambda value=value: self.set_strength(value))
                               for index, value in enumerate(STRENGTHS, 1)},
         }.get(page)
@@ -626,9 +789,86 @@ class AutoMixin:
             raise ValueError('Choose a number from the page.')
         return actions[number]()
 
+    def settings_action(self, key, config):
+        """What an AUTO settings row does when its number is chosen."""
+        return {'agent': lambda: self.choose_auto_agent('agent'), 'backup': lambda: self.choose_auto_agent('backup'),
+                'strength': lambda: self.mode_page('auto-strength'), 'effort': lambda: self.mode_page('auto-effort'),
+                'fast': lambda: self.set_fast('off' if (config['agent'] or {}).get('fast') else 'on'),
+                'clear-backup': self.clear_backup}[key]
+
+    def set_effort(self, to):
+        """The AUTO agent's effort (`/cli mode effort <level>`, or the Effort page): saved, and taken in place by the
+        running AUTO agents of its kind."""
+        config = load(self.store.root)
+        choice = config['agent']
+        options = effort_options(self.store.root, choice)
+        if not options:
+            raise ValueError('Your AUTO agent has no effort of its own to set' + (
+                ': its effort is part of its model, so /cli mode agent chooses both.' if choice else ' yet.'))
+        wanted = str(to or '').strip().casefold()
+        value = next((option for label, option in options if wanted in (label.casefold(), option.casefold())), None)
+        if value is None:
+            raise ValueError('Choose one of ' + ', '.join(label for label, _ in options) + '.')
+        config['agent'] = dict(choice, effort=value)
+        save(self.store.root, config)
+        notes = self.apply_to_running(effort=value)
+        return self.mode_page('auto-settings', message='Effort: ' + effort_name(self.store.root, config['agent']) +
+                              '.' + (' ' + ' '.join(notes) if notes else ''))
+
+    def set_fast(self, to):
+        """Codex's own fast mode for the AUTO agent (`/cli mode fast on|off`, or the settings page)."""
+        if to not in ('on', 'off'):
+            raise ValueError('Choose on or off.')
+        config = load(self.store.root)
+        if not has_fast(config['agent']):
+            raise ValueError('Fast mode is Codex\'s own setting; your AUTO agent is ' +
+                             (describe(self.store.root, config['agent'], effort=False) if config['agent'] else
+                              'not chosen yet') + '.')
+        config['agent'] = dict(config['agent'], fast=to == 'on')
+        save(self.store.root, config)
+        notes = self.apply_to_running(fast=to == 'on')
+        return self.mode_page('auto-settings', message='Fast mode: ' + to.title() + '.' +
+                              (' ' + ' '.join(notes) if notes else ''))
+
+    def apply_to_running(self, effort=None, fast=None):
+        """Give the running AUTO agent, and the extras like it, a new effort or fast mode in place."""
+        state = self.store.read()
+        roster = state.get('auto') or {}
+        lead = agent_entry(state, roster.get('agent')) if roster.get('agent') else None
+        if not lead:
+            return []
+        sessions = [lead['name']] + [item for item in roster.get('extras') or []
+                                     if (agent_entry(state, item) or {}).get('backend') == lead['backend']]
+        return [note for note in (self.reconfigure(session, effort, fast) for session in sessions) if note]
+
+    def reconfigure(self, session, effort=None, fast=None):
+        """A running agent takes a new effort or fast mode in place: the same session and conversation, through the
+        setting controls a running agent takes, with no restart. One still working keeps its settings for now."""
+        state = self.store.read()
+        target = agent_entry(state, session)
+        if not target or not target.get('ready'):
+            return None
+        name = agent_label(state, session)
+        if pending_work(state, session=session):
+            return name + ' is working, so it keeps its settings until its next start.'
+        settings = target['settings']
+        with self.store.edit() as latest:
+            latest['pending'] = dict(id=uuid.uuid4().hex, stage='menu', phase='access', entrypoint=target['backend'],
+                                     backend=target['backend'], tuning=True, session=session, draft={})
+        try:
+            self.activate(settings['model'], settings['access'],
+                          effort=effort if effort is not None else settings.get('effortValue'),
+                          agent=target['backend'], fast=fast if fast is not None else settings.get('fast'))
+        except (RuntimeError, ValueError) as exc:
+            with self.store.edit() as latest:
+                if (latest.get('pending') or {}).get('session') == session:
+                    latest['pending'] = None
+            return name + ' could not take it: ' + str(exc)
+        return name + ' now works with it.'
+
     def mode_back(self):
         page = (self.store.read().get('pending') or {}).get('phase')
-        if page == 'auto-strength':
+        if page in ('auto-strength', 'auto-effort'):
             return self.mode_page('auto-settings')
         if page == 'auto-settings':
             return self.mode_page('mode')
@@ -704,7 +944,7 @@ class AutoMixin:
                 raise RuntimeError(conflict_text(latest, found, files) + ' Nothing was handed off.')
             self.store.capture(latest, request, text, session=session)
             latest['requests'][request]['handoff'] = dict(task=task, readOnly=bool(read_only),
-                                                          **({'files': files} if files else {}))
+                                                          **({'files': files} if files is not None else {}))
             labels = latest.setdefault('followLabels', {})  # The follow's pane row: `<Agent NAME> · <goal>`.
             labels.pop(request, None)
             labels[request] = label
@@ -754,7 +994,7 @@ class AutoMixin:
                                'raises the limit with /cli agents max <n>.)')
         settings = lead.get('settings') or {}
         choice = {'agent': lead['backend'], 'model': settings.get('model'), 'access': settings.get('access'),
-                  'effort': settings.get('effortValue')}
+                  'effort': settings.get('effortValue'), 'fast': settings.get('fast')}
         result = self.start_role('extra', choice)
         session = result.get('activated')
         if not session or not agent_entry(self.store.read(), session):
@@ -796,18 +1036,32 @@ class AutoMixin:
                         if (item.get('approval') or {}).get('requestId') == request_id), None)
         handoff = record.get('handoff') or {}
         task = handoff.get('task')
-        own = None if finished.get('unlocated') else finished.get('touched')
-        near = alongside(latest, request_id) if own is not None else []
-        mine = {path.casefold() for path in own or []}
         changed = [(item['path'], file_key(item['path'])) for item in
                    ((view['receipt'] or {}).get('changes') or {}).get('paths') or []]
+        own = None if finished.get('unlocated') else finished.get('touched')
+        if own is not None and not running_with(latest, request_id):
+            # Alone, a change its edit tools did not name came from a command it ran: its own too (live, 2026-09-27:
+            # a Claude agent writing through shell heredocs got CHECK: look on every result, and Claude ran git).
+            named = {path.casefold() for path in own}
+            own = list(own) + [path for path, _ in changed if path.casefold() not in named]
+        near = alongside(latest, request_id) if own is not None else []
+        mine = {path.casefold() for path in own or []}
         expected = [path for path, key in changed if path.casefold() not in mine and key and key != WHOLE
                     and any(overlaps(key, claim) for claim in near)]
+        claim = None if handoff.get('readOnly') else handoff.get('files')
+        outside = []
+        if claim is not None and WHOLE not in claim:  # Its Files line named what it may change: did it keep to it?
+            if own is not None:
+                theirs = own
+            else:  # Its edits name no files: the receipt's changes that no work running alongside explains.
+                other = alongside(latest, request_id)
+                theirs = [path for path, key in changed if key and not any(overlaps(key, item) for item in other)]
+            outside = outside_claim(theirs, claim, self.store.workspace)
         text = relay_view.host_text(
             request_id, label, status, public, view['receipt'], read_only=handoff.get('readOnly'),
             task=task_file(self.store.workspace, task).as_posix() if task and TASK_ID.fullmatch(task) else None,
             stopped=stopped, access=(agent_entry(latest, record.get('session')) or {}).get('settings'),
-            touched=own, answer_max=answer_max or relay_view.HOST_ANSWER_MAX, alongside=expected)
+            touched=own, answer_max=answer_max or relay_view.HOST_ANSWER_MAX, alongside=expected, outside=outside)
         with self.store.edit() as latest:
             saved = (latest.get('requests') or {}).get(request_id)
             if saved:

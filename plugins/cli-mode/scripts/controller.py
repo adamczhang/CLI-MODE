@@ -135,7 +135,8 @@ def build_parser():
     p = sub.add_parser('cancel'); p.add_argument('--name')
     p = sub.add_parser('acknowledge'); p.add_argument('--operation', required=True)
     p = sub.add_parser('auto', help='Claude Code: the Mode page, DIRECT or AUTO, and the AUTO agents.')
-    p.add_argument('action', choices=['page', 'set', 'agent', 'clear-backup', 'strength', 'choose', 'back', 'close'])
+    p.add_argument('action', choices=['page', 'set', 'agent', 'clear-backup', 'strength', 'effort', 'fast', 'choose',
+                                      'back', 'close'])
     p.add_argument('--to'); p.add_argument('--role', choices=['agent', 'backup'], default='agent')
     p.add_argument('--agent'); p.add_argument('--number', type=int)
     return parser

@@ -82,11 +82,19 @@ def selection(root, model, access, effort=None):
                 mode=choices[0]['nativeValue'], modeKey=data['accessControl']['key'])
 
 
+# Codex's own fast mode (its ACP session config option, off or on): chosen for an AUTO agent on Claude Code's AUTO
+# settings page. Settings without `fast` leave it as Codex has it.
+FAST_MODE_KEY = 'fast-mode'
+
+
 def setting_steps(settings):
-    """ACPX resolves the model selector; reasoning effort and mode use config options."""
-    return [['set', 'model', settings['model']],
-            ['set', settings['effortKey'], settings['effortValue']],
-            ['set', settings['modeKey'], settings['mode']]]
+    """ACPX resolves the model selector; reasoning effort, mode and fast mode use config options."""
+    steps = [['set', 'model', settings['model']],
+             ['set', settings['effortKey'], settings['effortValue']],
+             ['set', settings['modeKey'], settings['mode']]]
+    if settings.get('fast') is not None:
+        steps.append(['set', FAST_MODE_KEY, 'on' if settings['fast'] else 'off'])
+    return steps
 
 
 class Backend(acpx.AcpxBackend):

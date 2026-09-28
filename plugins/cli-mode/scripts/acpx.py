@@ -444,7 +444,8 @@ class AcpxBackend:
             # Not an ACPX command: a new session's record without starting the agent (the bridge's `reserve`).
             # Only a first prompt through ACPX's CLI (bootstrapPrompt) turns it into a session; a strict prompt
             # would refuse it. binding.provision falls back to `sessions ensure` if that prompt fails.
-            return bridge_request(owned['acpxRuntime'], dict(self.bridge_payload(owned, timeout), action='reserve'))
+            return bridge_request(owned['acpxRuntime'], dict(self.bridge_payload(owned, timeout), action='reserve',
+                                                             desired=owned.get('desiredSettings') or []))
         if control[:1] == ['cancel'] and self.bridge_ready(owned) and bridge_idle(owned['acpxRuntime']):
             # Session-wide cancel through a warm, idle bridge instead of a new ACPX
             # process. A busy bridge would mean starting another, which is slower.

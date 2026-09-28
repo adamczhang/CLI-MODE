@@ -323,7 +323,17 @@ HOST_ENDS = {'completed': 'finished', 'canceled': 'was canceled', 'superseded': 
              'rejected': 'was not sent', 'uncertain': 'could not be confirmed (check /cli queue)'}
 
 
-def check_line(status, receipt, batch, read_only=False, stopped=None, others=()):
+def file_stat(item):
+    """One changed file of a receipt: `app.py +3 -1`, `logo.png (binary)`, or the bare path when its lines were
+    not counted."""
+    if 'added' not in item:
+        return item['path']
+    if item['added'] is None:
+        return item['path'] + ' (binary)'
+    return item['path'] + ' +' + str(item['added']) + ' -' + str(item.get('removed') or 0)
+
+
+def check_line(status, receipt, batch, read_only=False, stopped=None, others=(), outside=()):
     """The result's verdict, worked out by CLI-MODE so Claude doesn't have to (lever L4): `CHECK: ok`, or
     `CHECK: look: <what>` naming only what needs a look. Every input is already in the settled request."""
     reasons = []
@@ -338,6 +348,8 @@ def check_line(status, receipt, batch, read_only=False, stopped=None, others=())
         reasons.append('its turn reported errors')
     if others:
         reasons.append('files it did not edit changed while it worked')
+    if outside:
+        reasons.append('it edited files outside its Files claim')
     if receipt.get('overlaps'):
         reasons.append('another agent edited the same files')
     if read_only and ((receipt.get('changes') or {}).get('files') or 0):
@@ -348,15 +360,16 @@ def check_line(status, receipt, batch, read_only=False, stopped=None, others=())
 
 
 def host_text(request, label, status, batch, receipt, read_only=False, task=None, stopped=None, access=None,
-              touched=None, answer_max=HOST_ANSWER_MAX, alongside=()):
+              touched=None, answer_max=HOST_ANSWER_MAX, alongside=(), outside=()):
     """An AUTO handoff's result as Claude reads it (relay --for-host, or the wake-up itself): plain lines, then the
     agent's answer.
 
     Claude checks it and tells the user in its own words, so there is no Markdown styling and nothing to post as is.
     The receipt covers the whole folder, so while several agents write it holds their files too: with `touched` (the
     files the agent's own edit tools changed), the rest are named apart: `alongside` are those that work running at
-    the same time may change (auto_mode.alongside), expected; the others need a look. The CHECK line says what, if
-    anything, needs a look; `answer_max` cuts the answer when several results share one wake-up.
+    the same time may change (auto_mode.alongside), expected; the others need a look. `outside` are its own edits
+    beyond its Files claim (auto_mode.outside_claim). The CHECK line says what, if anything, needs a look; `answer_max`
+    cuts the answer when several results share one wake-up.
     """
     from agent_folder import counts
     from test_gate import line, overlap_line
@@ -368,12 +381,13 @@ def host_text(request, label, status, batch, receipt, read_only=False, task=None
               and item['path'].casefold() not in own and item['path'].casefold() not in near]
     lines = ['HANDOFF ' + request + ': ' + label + ' ' + HOST_ENDS.get(status, status) +
              (' (read-only)' if read_only else '') + '.',
-             check_line(status, receipt, batch, read_only, stopped, others)]
+             check_line(status, receipt, batch, read_only, stopped, others, outside)]
     if task:
         lines.append('TASK: ' + task)
     if changes:
         count = changes.get('files') or 0
-        paths = [item['path'] for item in (changes.get('paths') or [])[:RECEIPT_PATHS]]
+        # Each file with its own lines, as `git diff --stat` gives them, so Claude has nothing to ask git.
+        paths = [file_stat(item) for item in (changes.get('paths') or [])[:RECEIPT_PATHS]]
         lines.append('CHANGES: ' + ('none' if not count else str(count) + (' file' if count == 1 else ' files') +
                                     ', +' + str(changes.get('added', 0)) + ' -' + str(changes.get('removed', 0)) +
                                     ': ' + ', '.join(paths) + (' and ' + str(count - len(paths)) + ' more'
@@ -389,6 +403,10 @@ def host_text(request, label, status, batch, receipt, read_only=False, task=None
                 'agent\'s.')
     else:
         lines.append('CHANGES: not measured (not a git repository).')
+    if outside:
+        lines.append('OUTSIDE ITS CLAIM: ' + ', '.join(list(outside)[:RECEIPT_PATHS]) + (
+            ' and ' + str(len(outside) - RECEIPT_PATHS) + ' more' if len(outside) > RECEIPT_PATHS else '') +
+            ': its own edits, though its Files line did not name them (another task may have been given them).')
     saved = receipt.get('saved')
     if saved:
         lines.append('SAVED: ' + counts(saved) + ' in ' + saved['folder'] + '/' + (

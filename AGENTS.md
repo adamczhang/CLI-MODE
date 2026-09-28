@@ -80,8 +80,9 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   never join a user's relay. Claude gets the AUTO rule once (`auto_mode.rule`), then only what changed
   (`auto_mode.status`), and
   the PreToolUse hook refuses Claude's larger project edits and coding subagents by delegation strength. One
-  writer per file: a task's Files line is its claim (`auto_mode.task_files`, `conflict`), and a handoff or an edit
-  of Claude's that would change a claimed file is refused; `handoff --agent new` starts an extra agent like the
+  writer per file: a task's Files line is its claim (`auto_mode.task_files`, `conflict`; `Files: none` claims no
+  project file), and a handoff or an edit of Claude's that would change a claimed file is refused, while a result
+  names the agent's own edits outside its claim (`auto_mode.outside_claim`); `handoff --agent new` starts an extra agent like the
   AUTO agent for work in parallel (`start_extra`). Codex keeps DIRECT only (it has no wake-up), so the
   Codex golden record does not change.
 - **Codex reply path** (Codex only): `route.codex_output()` returns additionalContext telling the model
@@ -179,9 +180,13 @@ The repository's history starts at 0.3.0, a single snapshot of the Codex plugin 
   (`python checks/codex_golden.py --write`) only for an intended change the user agreed to. Then read the
   fixture diff: only the intended text may move (no `route` kinds), and fix `codex_golden.py`'s scenario
   inputs if their meaning changed.
-- **Before saying anything works:** run `python -m pytest checks -q -p no:cacheprovider` (595+ tests,
-  about 5 minutes). After packaging, manifest, hook or installer changes, also run
-  `python scripts/package_plugin.py` and both install smokes.
+- **Before saying anything works (and before any commit or PR):** run the full suite in parallel,
+  `python -m pytest checks -q -p no:cacheprovider -n auto --dist loadgroup` (926+ tests, about 75 seconds on 16 cores; needs
+  `pytest-xdist`; `checks/conftest.py` keeps the package builds on one worker).
+  While iterating, add `-m "not slow"` (under a minute; it skips the 40 real-ACPX runtime and console-window
+  tests) but never in place of the full run. Without xdist, drop `-n auto --dist loadgroup` (about 7½ minutes).
+  After packaging, manifest, hook or installer changes, also run `python scripts/package_plugin.py` and both
+  install smokes.
 
 ## Working rules
 

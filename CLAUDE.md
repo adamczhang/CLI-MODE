@@ -96,8 +96,18 @@ lands in one of three zones below; know which before editing.
   expected; results ending together share `WAKE_ROOM`) and marked `hostRead`; if that fails, the wake-up names
   `relay --for-host` and the Stop guard holds the turn (`autoWake`). AUTO requests
   never join a user's relay (`unrelayed`). One writer per file: a task's Files line is its claim (`auto_mode.task_files`,
-  `conflict`; none named claims the whole project), `handoff --agent new` starts an extra agent like the AUTO agent
-  (`start_extra`, roster `extras`), and AUTO agents idle out after `AUTO_TIMEOUT`; `--read-only` sends ACPX a deny-by-default
+  `conflict`; no Files line claims the whole project, `Files: none` or only the working folder claims no project file;
+  `outside_claim` names the agent's own edits beyond its claim in the result, OUTSIDE ITS CLAIM), `handoff --agent new` starts an extra agent like the AUTO agent
+  (`start_extra`, roster `extras`), and AUTO agents idle out after `AUTO_TIMEOUT`. A prompt of `PROMPT_SAVE_MIN`
+  characters or more is saved under `auto_mode.prompts_dir` and Claude is told its path (`hooks/claude.py:saved_prompt`)
+  for the task's Inputs line. An AUTO task names the agent's working folder with its first task only (owned
+  `folderNamed`, set by `dispatch._send`, cleared with a new provider conversation), and AUTO never starts a project
+  brief (`agent_folder.write_team(..., create=False)`). A Files line's paths are found by `auto_mode.path_like`, in
+  brackets too. The default strength is Normal (`DEFAULT_STRENGTH`): Claude works itself and hands off only what
+  the rule lists; a saved Strong counts only with `strengthChosen` (set on the Delegation page). With no other work
+  running, `relay_for_host` counts a change its edit tools did not name as the agent's own (`running_with`). AUTO settings rows come from `auto_mode.settings_rows` (effort for agents with a separate
+  effort, Codex's `fast-mode` via `codex_cli.FAST_MODE_KEY`); `reconfigure` applies them to a running agent in place.
+  `--read-only` sends ACPX a deny-by-default
   policy (`dispatch.approval_policy`); in Claude's own turns `AUTO_OWNED_COMMANDS` are refused (`auto_owned`).
   Delegation (tested live in P0): `hooks/claude.py:auto_context` gives Claude the rule (`auto_mode.rule`) once, again
   when it changes, after a compaction and every `AUTO_RULE_REFRESH` turns (digests in `autoRule`), and otherwise only a
@@ -132,7 +142,7 @@ files) and `dist/cli-mode-claude-<v>.zip` (without the `CODEX_ONLY` files).
 | `test_host.py`, `test_claude_hook.py` | Claude routing, relay, colour, menus, the Stop guard, the fast path | a Codex or shared change breaks Claude behaviour |
 | `test_package_reproducibility.py` | identical zips from LF and CRLF checkouts | packaging depends on line endings |
 | `checks/claude_install_smoke.py`, `checks/codex_install_smoke.py` | real installs in a throwaway `CLAUDE_CONFIG_DIR` or `CODEX_HOME` (no cost) | a manifest, hook registration or installer breaks |
-| `checks/claude_user_validation.py` (35 turns), `claude_stop_guard_live.py`, `live_parity_probe.py`, `checks/codex_release_validation.py`, `checks/shared_brief_live.py` (one project from both hosts at once) | the installed plugin, live | real-world behaviour regresses. **These spend the user's quota: ask first** |
+| `checks/claude_user_validation.py` (35 turns), `claude_stop_guard_live.py`, `live_parity_probe.py`, `checks/codex_release_validation.py`, `checks/shared_brief_live.py` (one project from both hosts at once), `checks/claude_usage_live.py` (native Claude against AUTO: tokens on both sides, time, correctness) | the installed plugin, live | real-world behaviour regresses. **These spend the user's quota: ask first** |
 
 **Rules by zone:**
 - **Claude-only change:** the Codex golden record must stay byte-identical. If it moves, the change leaked
@@ -142,9 +152,13 @@ files) and `dist/cli-mode-claude-<v>.zip` (without the `CODEX_ONLY` files).
   (`python checks/codex_golden.py --write`) ONLY when the Codex change is intended and the user agrees.
   Then read the fixture diff: nothing beyond the intended text may move (for example, no `route` kind
   changes). Update the scenario inputs in `codex_golden.py` if their meaning changed.
-- **Always:** `python -m pytest checks -q -p no:cacheprovider` (about 5 minutes; 595+ tests) before saying
-  something works. After any packaging, manifest, hook-registration or installer change, also run
-  `python scripts/package_plugin.py`, then both install smokes.
+- **Always, before saying something works (and before any commit or PR):** the full suite in parallel,
+  `python -m pytest checks -q -p no:cacheprovider -n auto --dist loadgroup` (926+ tests, about 75 seconds on 16 cores; needs
+  `pytest-xdist`). `checks/conftest.py` keeps the package builds (they write `dist/`) on one worker. While
+  iterating, `... -n auto --dist loadgroup -m "not slow"` leaves out the 40 slow tests (real-ACPX runtime,
+  console-window rendering) and takes under a minute; it never replaces the full run. Without xdist, drop
+  `-n auto --dist loadgroup` (about 7½ minutes). After any packaging, manifest, hook-registration or installer
+  change, also run `python scripts/package_plugin.py`, then both install smokes.
 
 ## Working rules
 

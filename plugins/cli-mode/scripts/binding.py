@@ -127,7 +127,8 @@ class BindingMixin:
         # Its attached-file copies go with it (agent_folder.attach); its own files and saved answers stay.
         workspace = owned.get('workspace') or self.store.workspace
         agent_folder.clear_attachments(workspace, owned.get('alias'))
-        agent_folder.write_team(workspace, self.store.key, *team_of(self.store.read()))  # The brief no longer lists it.
+        latest = self.store.read()  # The brief no longer lists it (and AUTO never starts one).
+        agent_folder.write_team(workspace, self.store.key, *team_of(latest), create=routing_mode(latest) != 'auto')
         return None
 
     def off(self):
@@ -494,7 +495,12 @@ class BindingMixin:
             # Reserved, the session's record is written without starting the agent; the readiness prompt below
             # starts it once and creates the session. `sessions ensure` would start it here as well.
             reserve = getattr(self.backend, 'reserve_without_start', False)
-            self.control(owned, ['sessions', 'reserve' if reserve else 'ensure', '--name', name], generation, pending)
+            # The reserved record carries the chosen settings: ACPX applies them to the session it creates, before
+            # the readiness prompt, so the agent starts on the chosen model, effort and access and the readiness
+            # answer comes from them (not from the agent's own default, as Codex's config model did, live
+            # 2026-09-27). The steps below then find them already in place.
+            self.control(dict(owned, desiredSettings=steps) if reserve else owned,
+                         ['sessions', 'reserve' if reserve else 'ensure', '--name', name], generation, pending)
             try:
                 self.readiness(dict(owned, bootstrapPrompt=True), generation, pending)
             except RuntimeError as first:
@@ -571,13 +577,15 @@ class BindingMixin:
                     if item['name'] == owned['name']:
                         item['advertisedCommands'] = names
 
-    def activate(self, model, access, effort=None, agent=None, require_hooks=False, expected_pending=None):
+    def activate(self, model, access, effort=None, agent=None, require_hooks=False, expected_pending=None, fast=None):
         if require_hooks:
             host_access = frontends.access_readiness()
             if not host_access['ready']:
                 raise RuntimeError(host_access['message'])
         target = self.use(agent or self.agent_of(self.store.read())).ID
         settings = self.adapter.selection(self.store.root, model, access, effort)
+        if fast is not None and getattr(self.adapter, 'FAST_MODE_KEY', None):
+            settings['fast'] = bool(fast)  # The agent's own fast mode (Codex), chosen on AUTO's settings page.
         with self.store.edit() as state:
             if expected_pending is not None and state.get('pending') != expected_pending:
                 raise RuntimeError('Menu changed before activation; no settings were applied.')
@@ -699,8 +707,9 @@ class BindingMixin:
             # has been working on, which the host writes as it shows this activation (hostNote). Not in AUTO,
             # where each task Claude writes is its agent's brief.
             workspace = owned.get('workspace') or self.store.workspace
-            agent_folder.write_team(workspace, self.store.key, *team_of(latest))
-            if purpose or routing_mode(latest) == 'auto':
+            auto = bool(purpose) or routing_mode(latest) == 'auto'
+            agent_folder.write_team(workspace, self.store.key, *team_of(latest), create=not auto)
+            if auto:
                 return dict(latest, activated=owned['name'])
             note = agent_folder.add_host_note(workspace, time.strftime('%Y-%m-%d %H:%M'),
                                               agent_label(latest, owned['name']))
