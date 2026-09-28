@@ -87,6 +87,7 @@ import claude_usage_fleet as fleet  # noqa: E402
 import claude_usage_multi as multi  # noqa: E402
 import claude_usage_adambench as adambench  # noqa: E402
 import claude_usage_bughunt as bughunt  # noqa: E402
+import claude_usage_escalation as escalation  # noqa: E402
 import claude_usage_sidebar as sidebar  # noqa: E402
 
 CODEX_SESSIONS = Path.home() / '.codex' / 'sessions'
@@ -421,7 +422,8 @@ def tasks():
 SETS = {'shop': (SEED, tasks), 'fleet': (fleet.SEED, fleet.tasks), 'fleet5': (fleet.SEED, fleet.tasks5),
         'hot': (fleet.HOT_SEED, fleet.tasks_hot), 'par': (fleet.HOT_SEED, fleet.tasks_par),
         'multi': (fleet.HOT_SEED, multi.tasks), 'sidebar': (sidebar.seed, sidebar.tasks),
-        'bughunt': (bughunt.seed, bughunt.tasks), 'adambench': (adambench.seed, adambench.tasks)}
+        'bughunt': (bughunt.seed, bughunt.tasks), 'adambench': (adambench.seed, adambench.tasks),
+        'escalation': (escalation.seed, escalation.tasks)}
 
 
 # ---------------------------------------------------------------- checking the work
@@ -451,6 +453,8 @@ def check(name, workspace, reply, answers):
         return bughunt.check(name, workspace, reply, answers)
     if name in adambench.NAMES:
         return adambench.check(name, workspace, reply, answers)
+    if name in escalation.NAMES:
+        return escalation.check(name, workspace, reply, answers, pytest_counts)
     if name in multi.ALL_NAMES:
         return multi.check(name, workspace, reply, answers, pytest_counts)
     if name in fleet.NAMES + fleet.NAMES5 + fleet.NAMES_HOT + fleet.NAMES_PAR:
