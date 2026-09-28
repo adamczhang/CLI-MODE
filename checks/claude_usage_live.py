@@ -29,12 +29,15 @@ build, dist/claude-dev), one at a time. Measured:
   - handoffs, tool calls, subagents, and whether the work is right (tests, files, the exact answers).
 
     python scripts/package_plugin.py
-    python checks/claude_usage_live.py [--set shop|fleet|fleet5|hot|par] [--only W1,P1] [--modes native,auto]
-        [--repeat 2] [--session]
+    python checks/claude_usage_live.py [--set shop|fleet|fleet5|hot|par|sidebar|bughunt|adambench|escalation]
+        [--only W1,P1] [--modes native,auto] [--repeat 2] [--session] [--budget <minutes>]
         [--agent codex] [--model gpt-6-sol] [--effort high] [--fast on|off] [--host-model <id>] [--host-effort <level>]
         [--out <folder>] [--dry]
 
 Writes results.json, each run's events and report.md to --out (default: a new folder in the temp folder).
+A timed run (an Adam Bench timed set such as B10T20, or any task with --budget) is cut off at its budget: the host
+session stops with everything it started, every AUTO agent closes, and the project is graded as it stands, with
+the time it ran (`cutoff` in its result). A session that exits before its budget is still an error.
 """
 import argparse
 from decimal import Decimal, ROUND_HALF_UP
@@ -101,6 +104,8 @@ WORKING = ('captured', 'submitting')
 STOP_AT = 90  # Claude's 5-hour window, percent: no new run starts above it.
 TIMEOUT = {'1': 20 * 60, '2': 30 * 60, '3': 60 * 60, '5': 75 * 60, '10': 90 * 60, '10G5': 120 * 60, '10K': 120 * 60, '12': 60 * 60, '20': 150 * 60, '15': 75 * 60, '25': 100 * 60, '50': 100 * 60}
 QUIET = 30  # Seconds Claude must stay idle before a run counts as finished (a wake-up may follow).
+CUTOFF_SETTLE = 5  # Seconds after a timed run's cutoff before grading: a write under way lands, nothing new starts.
+BUDGET = None  # --budget <minutes>: every task is a timed run of that length (tasks with their own budget keep it).
 NO_QUESTIONS = ' Work without asking me questions: make reasonable assumptions and say what they were. Do not commit.'
 
 # ---------------------------------------------------------------- the seed project
@@ -446,13 +451,23 @@ def numbers(text):
     return {found.replace(',', '') for found in re.findall(r'\d[\d,]*\.\d\d(?!\d)|\d[\d,]*', text or '')}
 
 
-def check(name, workspace, reply, answers):
+def time_budget(name):
+    """A timed run's budget in seconds, or None: an Adam Bench set in timed mode (`--mode timed --minutes N`) has its
+    own; --budget gives every other task one. The run is cut off at the budget and graded as it stands."""
+    if name in adambench.NAMES:
+        args = adambench.SETS[name][1]
+        if '--mode' in args and args[args.index('--mode') + 1] == 'timed' and '--minutes' in args:
+            return round(float(args[args.index('--minutes') + 1]) * 60)
+    return round(BUDGET * 60) if BUDGET else None
+
+
+def check(name, workspace, reply, answers, elapsed=None):
     if name in sidebar.NAMES:
         return sidebar.check(name, workspace, reply, answers)
     if name in bughunt.NAMES:
         return bughunt.check(name, workspace, reply, answers)
     if name in adambench.NAMES:
-        return adambench.check(name, workspace, reply, answers)
+        return adambench.check(name, workspace, reply, answers, elapsed=elapsed)
     if name in escalation.NAMES:
         return escalation.check(name, workspace, reply, answers, pytest_counts)
     if name in multi.ALL_NAMES:
@@ -739,6 +754,7 @@ class Run:
         self.host = Session(self.workspace, options.get('hostModel'), EXTRA + (['--effort', effort] if effort else []),
                             plugin_dir=None if INSTALLED else DEV)
         self.session = None
+        self.cut = False  # A timed run cut off at its budget (Run.cutoff).
 
     def state(self):
         return saved_state(self.session, self.workspace) if self.session else {}
@@ -804,8 +820,30 @@ class Run:
         return self.reader(self.workspace, self.started - 5) if self.reader else None
 
     def finish(self):
-        if self.mode == 'auto':
+        if self.mode == 'auto' and not self.cut:  # A cut-off run's session and agents are stopped already.
             self.control('/cli off', timeout=120)
+
+    def stop_agents(self):
+        """This conversation's CLI-MODE agents closed (their turns end), however the host session went."""
+        if not self.session:
+            return
+        sys.path.insert(0, str(plugin_root() / 'scripts'))
+        from controller import Controller
+        from state import Store
+        store = Store(self.session, self.workspace, data())
+        if store.path.exists() and store.read().get('owned'):
+            Controller(store).off()
+
+    def cutoff(self):
+        """A timed run's end at its budget: everything that can still write to the project stops, the host session with
+        all it started and every AUTO agent, before grading. Otherwise late edits would count after the bell."""
+        self.cut = True
+        self.host.stop()
+        try:
+            self.stop_agents()
+        except (OSError, RuntimeError, ValueError) as exc:
+            print('cutoff: the agents did not all close:', str(exc)[:200], flush=True)
+        time.sleep(CUTOFF_SETTLE)
 
     def go(self, timeout):
         self.prepare()
@@ -817,22 +855,33 @@ class Run:
         """One prompt in this session, to its settled end: its time, Claude's and the agent's tokens (the agent's
         since the last prompt, so a session's later prompts count only their own), handoffs and checks."""
         mark, count = self.host.mark(), len(self.host.results())
+        budget = time_budget(name)  # A timed run: at its budget it is cut off and graded, not an error.
+        limit = budget or timeout
         clock = time.monotonic()
         self.host.send(prompt)
-        if not self.host.wait(count + 1, timeout):
-            raise RuntimeError('no result within ' + str(timeout) + ' s')
-        until = clock + timeout
-        while time.monotonic() < until:
+        reached = not self.host.wait(count + 1, limit)
+        if reached and (not budget or self.host.process.poll() is not None):
+            raise RuntimeError('no result within ' + str(limit) + ' s' if not budget else 'Claude Code exited mid-run')
+        until = clock + limit
+        while not reached and time.monotonic() < until:
             if self.host.wait(None, max(1, until - time.monotonic()), done=self.settled):
                 time.sleep(QUIET)
                 if self.settled():
                     break
         else:
-            raise RuntimeError('did not settle within ' + str(timeout) + ' s')
+            if not budget:
+                raise RuntimeError('did not settle within ' + str(timeout) + ' s')
+            reached = True
+        elapsed = time.monotonic() - clock
+        if budget and reached:
+            self.cutoff()
+            elapsed = min(elapsed, budget)
         with self.host.lock:
             events = list(self.host.events[mark:])
             everything = list(self.host.events)
         times = timeline(events, self.mode, clock)
+        if self.cut:
+            times['total'] = round(elapsed / 60, 2)  # Its end is the cutoff, not a final answer.
         replies = [e.get('result') or '' for e in events if e.get('type') == 'result']
         for reply in replies:
             signed_out(reply)
@@ -844,7 +893,7 @@ class Run:
         requests = {key: r for key, r in (self.state().get('requests') or {}).items() if r.get('routingMode') == 'auto'}
         records = [r for key, r in requests.items() if key not in self.seen]
         self.seen |= set(requests)
-        tests, checks = check(name, self.workspace, '\n'.join(replies), answers)
+        tests, checks = check(name, self.workspace, '\n'.join(replies), answers, elapsed=elapsed if budget else None)
         if name in bughunt.NAMES + adambench.NAMES:  # Always kept: the whole diff against the seed, and the report.
             (adambench if name in adambench.NAMES else bughunt).keep(self.workspace, self.out / ('%s-%s-%d' % (name, self.mode, len(self.seen))))
         elif not tests['ok'] or checks.get('hiddenOutput'):  # Kept as it was, to see why (the run's folder goes).
@@ -861,18 +910,18 @@ class Run:
                     toolNames=sorted(set(tools)), subagents=tools.count('Agent') + tools.count('Task'),
                     handoffs=len(records), handoffFiles=[(r.get('handoff') or {}).get('files') for r in records],
                     parallel=parallel_work(records),
-                    tests=tests, checks=checks, reply=replies[-1][-1500:] if replies else '', events=everything)
+                    tests=tests, checks=checks, reply=replies[-1][-1500:] if replies else '', events=everything,
+                    **({'cutoff': dict(budgetSeconds=budget, stoppedAtBudget=self.cut,
+                                       elapsedSeconds=round(elapsed))} if budget else {}))
 
     def close(self):
         self.host.close()
         if self.session:
             sys.path.insert(0, str(plugin_root() / 'scripts'))
-            from controller import Controller
             from state import Store
             store = Store(self.session, self.workspace, data())
             if store.path.exists():
-                if store.read().get('owned'):
-                    Controller(store).off()
+                self.stop_agents()
                 key = hashlib.sha256(self.session.encode()).hexdigest()
                 for path in (data() / 'sessions').glob(key + '*'):
                     path.unlink(missing_ok=True)
@@ -999,6 +1048,8 @@ def main():
     parser.add_argument('--only', help='Tasks, such as W1,P1 (default: all of the set).')
     parser.add_argument('--modes', default='native,auto')
     parser.add_argument('--repeat', type=int, default=1)
+    parser.add_argument('--budget', type=float, help='Minutes: every task is a timed run, cut off at this budget and '
+                        'graded as it stands (an Adam Bench timed set has its own).')
     parser.add_argument('--session', action='store_true', help='One session per mode: the tasks in order in the same '
                                                                'conversation, the AUTO agent started once and kept.')
     parser.add_argument('--agent', default='codex', help='The AUTO agent.')
@@ -1014,8 +1065,9 @@ def main():
     parser.add_argument('--out', type=Path)
     parser.add_argument('--dry', action='store_true', help='Write the prompts and answers only.')
     args = parser.parse_args()
-    global INSTALLED
+    global INSTALLED, BUDGET
     INSTALLED = args.installed
+    BUDGET = args.budget
     out = args.out or Path(tempfile.gettempdir()) / ('cli-mode-usage-' + time.strftime('%Y%m%d-%H%M%S'))
     out.mkdir(parents=True, exist_ok=True)
     options = dict(agent=args.agent, model=args.model, effort=args.effort,
