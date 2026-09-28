@@ -17,7 +17,7 @@ You need Windows 10 or 11, **Claude Code 2.1.147 or later**, Python 3.10+, Node.
 agent CLI signed in to its own subscription (setup checks each one and guides the rest).
 
 ```bash
-claude plugin marketplace add adamczhang/CLI-MODE@v0.3.9 --sparse .claude-plugin plugins
+claude plugin marketplace add adamczhang/CLI-MODE@v0.4.0 --sparse .claude-plugin plugins
 claude plugin install cli-mode@cli-mode
 ```
 
@@ -31,7 +31,7 @@ Then, in a Claude Code session in your project folder:
 The first line adds `/cli` and `/d` to autocomplete; `/cli` picks your AUTO agent and runs its setup. Then just
 talk to Claude: in AUTO, Claude Code's default, it works with your agent and hands it the work worth handing
 over. `/cli mode direct` lets you send every task yourself with `/d <your task>` instead. The
-[release zip](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.9) has an installer that also checks
+[release zip](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.4.0) has an installer that also checks
 Python, Node and Claude Code; Codex installs are under [Codex](#codex).
 
 ## The problem
@@ -203,7 +203,7 @@ later, or not at all.
 **Install** (PowerShell or Bash):
 
 ```bash
-codex plugin marketplace add adamczhang/CLI-MODE --ref v0.3.9
+codex plugin marketplace add adamczhang/CLI-MODE --ref v0.4.0
 codex plugin add cli-mode@cli-mode
 ```
 
@@ -234,8 +234,8 @@ installation and each agent's sign-in; conversations and settings stay separate 
 
 ## Install
 
-**Claude Code, from the release zip:** download `cli-mode-claude-0.3.9.zip` from the
-[v0.3.9 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.3.9), extract it, and run in PowerShell:
+**Claude Code, from the release zip:** download `cli-mode-claude-0.4.0.zip` from the
+[v0.4.0 release](https://github.com/adamczhang/CLI-MODE/releases/tag/v0.4.0), extract it, and run in PowerShell:
 
 ```powershell
 .\install-claude.ps1
@@ -251,7 +251,7 @@ installed, which CLI-MODE then uses), and each agent's ACP adapter the first tim
 [release notes](RELEASE_NOTES.md#upgrading-from-an-earlier-03-release) show how to move it to a new release and
 keep your settings.
 
-Release **0.3.9** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
+Release **0.4.0** · [Release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
 
 ## Get started
 

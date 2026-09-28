@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — AUTO: Claude leads, a cheaper engine works — 2026-09-28
 
 ### AUTO mode (Claude Code)
-- **Two modes: AUTO, the default on Claude Code, and DIRECT.** In AUTO you talk to Claude only, and Claude
-  hands the work to your AUTO agent: it writes the task, the agent works in the background, and Claude reads the
-  result, checks it and tells you how it went. Small edits and quick questions Claude keeps. DIRECT is `/d` as
+- **Two modes: AUTO, the default on Claude Code, and DIRECT.** In AUTO you talk to Claude only, and Claude works
+  with your AUTO agent as a partner: it keeps quick work and anything that needs its judgment, and hands the agent
+  long jobs, long pasted messages, big independent parts (each on its own agent) and reviews. It writes each task,
+  the agent works in the background, and Claude reads the result, checks it and tells you how it went. Paired with
+  a cheaper engine from another provider, AUTO moved 36% of the work off Claude at 2.5k tokens of prompt, 60% at
+  12.5k and 77% at 50k in usage tests, with every hidden check passing. DIRECT is `/d` as
   before; `/cli mode` opens a Mode page that switches between them, and DIRECT chosen in a conversation stays
   there, `/cli off` included. A conversation an earlier version saved in DIRECT opens in AUTO once it is off.
   Codex keeps DIRECT only.
