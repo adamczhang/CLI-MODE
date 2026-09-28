@@ -143,9 +143,13 @@ files) and `dist/cli-mode-claude-<v>.zip` (without the `CODEX_ONLY` files).
   (`python checks/codex_golden.py --write`) ONLY when the Codex change is intended and the user agrees.
   Then read the fixture diff: nothing beyond the intended text may move (for example, no `route` kind
   changes). Update the scenario inputs in `codex_golden.py` if their meaning changed.
-- **Always:** `python -m pytest checks -q -p no:cacheprovider` (about 5 minutes; 595+ tests) before saying
-  something works. After any packaging, manifest, hook-registration or installer change, also run
-  `python scripts/package_plugin.py`, then both install smokes.
+- **Always, before saying something works (and before any commit or PR):** the full suite in parallel,
+  `python -m pytest checks -q -p no:cacheprovider -n auto --dist loadgroup` (926+ tests, about 75 seconds on 16 cores; needs
+  `pytest-xdist`). `checks/conftest.py` keeps the package builds (they write `dist/`) on one worker. While
+  iterating, `... -n auto --dist loadgroup -m "not slow"` leaves out the 40 slow tests (real-ACPX runtime,
+  console-window rendering) and takes under a minute; it never replaces the full run. Without xdist, drop
+  `-n auto --dist loadgroup` (about 7½ minutes). After any packaging, manifest, hook-registration or installer
+  change, also run `python scripts/package_plugin.py`, then both install smokes.
 
 ## Working rules
 
