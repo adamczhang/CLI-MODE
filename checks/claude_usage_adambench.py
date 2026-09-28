@@ -72,9 +72,12 @@ def keep(workspace, stem):
         shutil.copy2(report, stem.with_name(stem.name + '-BUGS_FOUND.md'))
 
 
-def check(name, workspace, reply, answers):
+def check(name, workspace, reply, answers, elapsed=None):
+    """`elapsed`: a timed run's seconds from its prompt to its cutoff, measured by the harness (else the grade counts
+    from the seed commit, which includes starting the session)."""
     bench, mode_args = SETS[name]
-    result = json.loads(cli('grade', bench, str(workspace), *mode_args, '--json'))
+    timed = ['--elapsed', str(round(elapsed))] if elapsed is not None else []
+    result = json.loads(cli('grade', bench, str(workspace), *mode_args, *timed, '--json'))
     mode = result['mode']
     healthy = result['typecheck'] and result['visibleSuite']
     tests = dict(ok=healthy, passed=result['fixed'], failed=result['of'] - result['fixed'],

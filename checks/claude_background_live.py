@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import signal
 import threading
 import time
 import uuid
@@ -59,8 +60,10 @@ class Session:
                 + list(extra))
         env = {key: value for key, value in os.environ.items() if not key.startswith('CLI_MODE_')}
         env['MSYS_NO_PATHCONV'] = '1'
+        # On POSIX its own process group, so a hard stop reaches everything it started (Session.stop).
         self.process = subprocess.Popen(args, cwd=workspace, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
+                                        stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
+                                        start_new_session=os.name != 'nt')
         self.events, self.lock = [], threading.Lock()
         threading.Thread(target=self._read, daemon=True).start()
 
@@ -122,6 +125,23 @@ class Session:
             self.process.wait(timeout=30)
         except (OSError, subprocess.TimeoutExpired):
             self.process.kill()
+
+    def stop(self):
+        """End the session now, mid-turn, with everything it started (its tools' commands, background tasks): a
+        timed run's cutoff. close() lets a turn finish; this does not."""
+        if self.process.poll() is not None:
+            return
+        try:
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/T', '/F', '/PID', str(self.process.pid)], capture_output=True, timeout=60)
+            else:
+                os.killpg(self.process.pid, signal.SIGKILL)
+        except (OSError, subprocess.SubprocessError):
+            self.process.kill()
+        try:
+            self.process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def turns(events, marks):
