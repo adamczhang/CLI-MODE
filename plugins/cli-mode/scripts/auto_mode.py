@@ -26,7 +26,7 @@ from state import (MODE_PAGES, STRENGTHS, agent_entry, agent_label, agent_limit,
 ROLES = ('agent', 'backup')
 # Handoffs: Claude writes each task to a file here (git-ignored, CLI-MODE's own), then runs `handoff --task <id>`.
 TASK_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,39}')
-TASK_MAX = 100 * 1024  # Characters.
+TASK_MAX = 800 * 1024  # Characters: about 200k tokens, most of Codex's 258k-token window.
 WORKING = ('captured', 'submitting')  # A request still with its agent.
 LEDGER_SHOWN = 5
 SMALL_EDIT = 20  # Strong: lines one edit of Claude's may change.
