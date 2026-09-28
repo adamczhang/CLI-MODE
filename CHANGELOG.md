@@ -73,6 +73,8 @@
     starts a project brief (agents found the one CLI-MODE wrote, which no task named, and read it every task);
   - parallel work goes out only in parts of several minutes each: a new agent starts cold, and a small part stays
     in another task or with Claude;
+  - several `--agent new` handoffs at once each get their agent: a start that finds another under way waits for it
+    (up to five minutes) instead of being refused, which had left one part of three queued behind a busy agent;
   - a Files line's paths in brackets count, and a sentence's end is not a file (`...its test file only.` had
     claimed `only`, and `No other files.` the file `files`).
 - In AUTO, `/d` asks Claude itself: nothing from that turn goes to an agent. A plain message lets Claude decide.

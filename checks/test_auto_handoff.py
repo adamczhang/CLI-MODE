@@ -450,6 +450,32 @@ class Handoffs(AutoBase):
         self.prompt('/cli off')  # The extras close with the rest.
         self.assertEqual(self.store().read()['owned'], [])
 
+    def test_a_new_agent_waits_for_another_start_instead_of_failing(self):
+        """Live, 2026-09-27: three parts went out at once with --agent new; the third start found the second one
+        under way and was refused, so its part queued behind a busy agent. Now it waits, then starts its own."""
+        import threading
+        self.auto()
+        with self.store().edit() as saved:  # Another agent's start, under way.
+            saved['pending'] = dict(id='x' * 32, stage='verifying', phase='activation')
+
+        def finish():
+            with self.store().edit() as saved:
+                saved.pop('pending', None)
+        timer = threading.Timer(1.5, finish)
+        timer.start()
+        self.write_task('t2', 'Goal: fix the command line.\nFiles: app/cli.py')
+        began = time.monotonic()
+        result = self.ctl('handoff', '--task', 't2', '--agent', 'new')
+        timer.join()
+        self.assertGreaterEqual(time.monotonic() - began, 1.0)  # It waited for the other start.
+        self.assertEqual(result['agent'], 'Antigravity-02')
+        with self.store().edit() as saved:  # A start that never ends: it gives up, and says what to do.
+            saved['pending'] = dict(id='y' * 32, stage='verifying', phase='activation')
+        self.write_task('t3', 'Goal: write the docs.\nFiles: docs/')
+        with patch.object(auto_mode, 'START_WAIT', 1):
+            with self.assertRaisesRegex(RuntimeError, 'still starting after 1 s'):
+                self.ctl('handoff', '--task', 't3', '--agent', 'new')
+
     def test_the_files_line_says_what_a_task_claims(self):
         (self.project / 'Makefile').write_text('all:\n', encoding='utf-8')
         cases = {

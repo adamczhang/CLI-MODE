@@ -52,9 +52,11 @@ LABELS = {'grok-build': 'Grok', 'agy': 'Antigravity', 'claude': 'Claude Code', '
 
 class Session:
     """One headless Claude Code session kept open across turns, including wake-ups."""
-    def __init__(self, workspace, model, extra=()):
-        args = [claude_binary(), '-p', '--input-format', 'stream-json', '--output-format', 'stream-json',
-                '--verbose', '--plugin-dir', str(DEV)] + (['--model', model] if model else []) + list(extra)
+    def __init__(self, workspace, model, extra=(), plugin_dir=DEV):
+        """`plugin_dir` None runs the CLI-MODE that Claude Code has installed, as a user's session would."""
+        args = ([claude_binary(), '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
+                + (['--plugin-dir', str(plugin_dir)] if plugin_dir else []) + (['--model', model] if model else [])
+                + list(extra))
         env = {key: value for key, value in os.environ.items() if not key.startswith('CLI_MODE_')}
         env['MSYS_NO_PATHCONV'] = '1'
         self.process = subprocess.Popen(args, cwd=workspace, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
