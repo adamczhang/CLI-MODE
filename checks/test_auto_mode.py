@@ -15,6 +15,10 @@ def agy_choice(model='gemini-3.8-flash-high'):
     return {'agent': 'agy', 'model': model, 'effort': None, 'access': 'allow'}
 
 
+def codex_choice(effort='high'):
+    return {'agent': 'codex', 'model': 'gpt-6-sol', 'effort': effort, 'access': 'allow'}
+
+
 class AutoRouting(unittest.TestCase):
     """route() alone: what each prompt means in DIRECT and in AUTO."""
 
@@ -38,6 +42,8 @@ class AutoRouting(unittest.TestCase):
             '/cli mode backup gro': {'route': 'mode-agent', 'role': 'backup', 'agent': 'grok-build', 'text': ''},
             '/cli mode backup none': {'route': 'mode-backup-clear'},
             '/cli mode strength MAX': {'route': 'mode-strength', 'strength': 'max'},
+            '/cli mode effort Low': {'route': 'mode-effort', 'effort': 'low'},
+            '/cli mode fast ON': {'route': 'mode-fast', 'fast': 'on'},
         }
         for prompt, expected in cases.items():
             self.assertEqual(route(prompt, self.state()), expected, prompt)
@@ -377,6 +383,45 @@ class ModeHook(ClaudeHook):
         self.reply('/cli bind agy')  # DIRECT keeps its generated names.
         self.assertRegex(self.name(), r'^Antigravity AGY-[A-Z0-9]{2}$')
         self.assertEqual(auto_mode.auto_name('codex', ['Codex-01', 'codex-03']), 'Codex-02')
+
+    def test_effort_and_fast_mode_change_the_running_auto_agent_in_place(self):
+        # Usage test, 2026-09-27: GPT-6 Sol at High was most of AUTO's time. AUTO settings choose the agent's effort
+        # and Codex's own fast mode; the running agent takes them in place (same session, no restart).
+        auto_mode.save(self.data, {'agent': codex_choice(), 'backup': None, 'strength': 'strong'})
+        self.reply('/cli mode auto')
+        before = self.store().read()
+        lead = before['auto']['agent']
+        self.reply('/cli mode')
+        settings = self.reply('3')
+        self.assertIn('4. Effort: High', settings)
+        self.assertIn('5. Fast mode: Off', settings)
+        faster = self.reply('5')
+        self.assertIn('Fast mode: On. Codex-01 now works with it.', faster)
+        self.assertIn('5. Fast mode: On', faster)
+        state = self.store().read()
+        self.assertEqual([item['name'] for item in state['owned']], [lead])  # The same agent, not a new one.
+        self.assertIs(state['owned'][0]['settings']['fast'], True)
+        self.assertIs(self.config()['agent']['fast'], True)
+        page = self.reply('4')  # The Effort page: the agent's own levels.
+        self.assertIn('Now: High', page)
+        number = [label for label, _ in auto_mode.effort_options(self.data, self.config()['agent'])].index('Low') + 1
+        self.assertIn('Effort: Low.', self.reply(str(number)))
+        self.assertEqual(self.store().read()['owned'][0]['settings']['effortValue'], 'low')
+        self.assertEqual(self.config()['agent']['effort'], 'low')
+        self.assertIn('Fast mode: Off.', self.reply('/cli mode fast off'))
+        self.assertIn('Choose one of', self.reply('/cli mode effort warp'))
+        import codex_cli  # Codex's fast-mode config option only when chosen: other settings stay as they were.
+        steps = codex_cli.setting_steps(dict(state['owned'][0]['settings'], fast=True))
+        self.assertEqual(steps[-1], ['set', 'fast-mode', 'on'])
+        self.assertNotIn('fast-mode', str(codex_cli.setting_steps({k: v for k, v in state['owned'][0]['settings']
+                                                                   .items() if k != 'fast'})))
+
+    def test_no_effort_or_fast_rows_for_an_agent_without_them(self):
+        auto_mode.save(self.data, {'agent': agy_choice(), 'backup': None, 'strength': 'strong'})
+        settings = auto_mode.page_text('auto-settings', self.data, {})
+        self.assertNotIn('Effort', settings)  # Antigravity's effort is part of its model.
+        self.assertNotIn('Fast mode', settings)
+        self.assertIn('Fast mode is Codex', self.reply('/cli mode fast on'))
 
     def test_a_typed_agent_and_model_turns_auto_on(self):
         self.assertIn('models match', self.reply('/cli mode agent agy no-such-model'))

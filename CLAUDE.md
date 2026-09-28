@@ -98,7 +98,11 @@ lands in one of three zones below; know which before editing.
   never join a user's relay (`unrelayed`). One writer per file: a task's Files line is its claim (`auto_mode.task_files`,
   `conflict`; no Files line claims the whole project, `Files: none` or only the working folder claims no project file;
   `outside_claim` names the agent's own edits beyond its claim in the result, OUTSIDE ITS CLAIM), `handoff --agent new` starts an extra agent like the AUTO agent
-  (`start_extra`, roster `extras`), and AUTO agents idle out after `AUTO_TIMEOUT`; `--read-only` sends ACPX a deny-by-default
+  (`start_extra`, roster `extras`), and AUTO agents idle out after `AUTO_TIMEOUT`. A prompt of `PROMPT_SAVE_MIN`
+  characters or more is saved under `auto_mode.prompts_dir` and Claude is told its path (`hooks/claude.py:saved_prompt`)
+  for the task's Inputs line. AUTO settings rows come from `auto_mode.settings_rows` (effort for agents with a separate
+  effort, Codex's `fast-mode` via `codex_cli.FAST_MODE_KEY`); `reconfigure` applies them to a running agent in place.
+  `--read-only` sends ACPX a deny-by-default
   policy (`dispatch.approval_policy`); in Claude's own turns `AUTO_OWNED_COMMANDS` are refused (`auto_owned`).
   Delegation (tested live in P0): `hooks/claude.py:auto_context` gives Claude the rule (`auto_mode.rule`) once, again
   when it changes, after a compaction and every `AUTO_RULE_REFRESH` turns (digests in `autoRule`), and otherwise only a
@@ -133,7 +137,7 @@ files) and `dist/cli-mode-claude-<v>.zip` (without the `CODEX_ONLY` files).
 | `test_host.py`, `test_claude_hook.py` | Claude routing, relay, colour, menus, the Stop guard, the fast path | a Codex or shared change breaks Claude behaviour |
 | `test_package_reproducibility.py` | identical zips from LF and CRLF checkouts | packaging depends on line endings |
 | `checks/claude_install_smoke.py`, `checks/codex_install_smoke.py` | real installs in a throwaway `CLAUDE_CONFIG_DIR` or `CODEX_HOME` (no cost) | a manifest, hook registration or installer breaks |
-| `checks/claude_user_validation.py` (35 turns), `claude_stop_guard_live.py`, `live_parity_probe.py`, `checks/codex_release_validation.py`, `checks/shared_brief_live.py` (one project from both hosts at once) | the installed plugin, live | real-world behaviour regresses. **These spend the user's quota: ask first** |
+| `checks/claude_user_validation.py` (35 turns), `claude_stop_guard_live.py`, `live_parity_probe.py`, `checks/codex_release_validation.py`, `checks/shared_brief_live.py` (one project from both hosts at once), `checks/claude_usage_live.py` (native Claude against AUTO: tokens on both sides, time, correctness) | the installed plugin, live | real-world behaviour regresses. **These spend the user's quota: ask first** |
 
 **Rules by zone:**
 - **Claude-only change:** the Codex golden record must stay byte-identical. If it moves, the change leaked

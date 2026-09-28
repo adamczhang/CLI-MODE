@@ -527,7 +527,7 @@ class Levers(AutoBase):
         for part in ('CLI-MODE AUTO is on. The user turned it on', self.name(), 'Delegation is Strong',
                      '`' + claude.handoff_command({}, self.data) + '`', auto_mode.TEMPLATE,
                      auto_mode.tasks_dir(self.project).as_posix() + '/<id>.md', 'Do not guess', 'One writer per file',
-                     '`--agent new`', 'one or two tool calls', 'Goal and Done when are enough',
+                     '`--agent new`', 'about five tool calls', 'Goal and Done when are enough', 'Inputs:', 'do not run them again',
                      'there is nothing else to run', 'CHECK: ok', 'Agents now: ' + self.name() + ' (AUTO agent): idle.'):
             self.assertIn(part, text)
         self.assertNotIn('AUTO ledger', text)  # Nothing working or unread (L5).
@@ -564,6 +564,24 @@ class Levers(AutoBase):
         self.prompt('/cli mode auto')
         self.assertIn('To hand off', self.context(self.prompt('back again')))  # Back in AUTO: the rule again.
 
+    def test_a_long_prompt_is_saved_for_the_agent_to_read(self):
+        """Pass by reference (usage test, 2026-09-27: handed off, a 25k-token prompt cost Claude 7 minutes retyping its
+        data): a long AUTO prompt is saved exactly as sent, and Claude is told where, for the task's Inputs line."""
+        self.auto()
+        short = self.context(self.prompt('please make the parser keep the last word'))
+        self.assertIsNone(re.search(r'Prompt saved: .+?\.md \(', short))  # Short: nothing saved.
+        data = 'Audit this log.\nOrder log:\n' + '\n'.join('ORD-%05d,2026-08-01,SKU-0001,1,1.00,JP,paid' % n
+                                                          for n in range(400))
+        self.assertGreaterEqual(len(data), auto_mode.PROMPT_SAVE_MIN)
+        note = self.context(self.prompt(data))
+        path = Path(re.search(r'Prompt saved: (.+?\.md) \(', note).group(1))
+        self.assertEqual(path.parent, auto_mode.prompts_dir(self.project))
+        self.assertEqual(path.read_bytes().decode('utf-8'), data)  # Byte for byte, markers and all.
+        self.assertIn('Inputs line', note)
+        for _ in range(auto_mode.PROMPTS_KEPT + 3):
+            auto_mode.save_prompt(self.project, 'x')
+        self.assertEqual(len(list(auto_mode.prompts_dir(self.project).glob('*.md'))), auto_mode.PROMPTS_KEPT)
+
     def test_d_in_auto_asks_claude_itself_and_nothing_goes_to_an_agent(self):
         self.auto()
         text = self.context(self.prompt('/d what does the parser do with quotes?'))
@@ -587,10 +605,11 @@ class Levers(AutoBase):
         refused = self.edit(source, lines=auto_mode.SMALL_EDIT + 5)
         self.assertEqual(refused['permissionDecision'], 'deny')
         self.assertIn('more than a small fix', refused['permissionDecisionReason'])
-        self.assertEqual(self.edit(self.project / 'src' / 'b.py'), {})  # A second file.
-        self.assertEqual(self.edit(self.project / 'src' / 'c.py')['permissionDecision'], 'deny')  # A third.
+        for name in ('b.py', 'c.py')[:auto_mode.TURN_FILES - 1]:  # Up to TURN_FILES files a turn (a fix and its test).
+            self.assertEqual(self.edit(self.project / 'src' / name), {})
+        self.assertEqual(self.edit(self.project / 'src' / 'd.py')['permissionDecision'], 'deny')  # One more.
         self.prompt('and another small one')  # A new turn: a new count.
-        self.assertEqual(self.edit(self.project / 'src' / 'c.py'), {})
+        self.assertEqual(self.edit(self.project / 'src' / 'd.py'), {})
         outside = self.root / 'notes.md'  # Claude's own files outside the project stay Claude's.
         self.assertEqual(self.edit(outside, lines=200), {})
         folder = self.project / 'Agent_Working_Folder' / 'notes.md'

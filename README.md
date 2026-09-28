@@ -134,14 +134,18 @@ What to know about AUTO:
   only the agent's own edits.
 - **Agents stay loaded.** AUTO's agents wait between tasks, and close after two hours idle or with `/cli off`.
 - **Delegation strength** (`/cli mode strength normal|strong|max`, or the AUTO settings page): at **Normal**
-  Claude decides; at **Strong** (the default) Claude may make small fixes itself (about 20 lines an edit, two
-  files a turn) and hands off anything bigger; at **Max** every project change goes to the agent. It steers
-  Claude's own edit tools; it is not a sandbox.
+  Claude decides; at **Strong** (the default) Claude keeps small pieces of work itself (about 40 lines an edit,
+  three files a turn: a bug fix with its test, a small function) and hands off anything bigger; at **Max** every
+  project change goes to the agent. It steers Claude's own edit tools; it is not a sandbox.
 - **Settings:** `/cli mode agent [<agent> [<model>]]` changes the AUTO agent; `/cli mode backup <agent>|none`
   sets a backup, used when the AUTO agent fails or is out of usage.
   Choosing an AUTO agent, from the Mode page or by command, always turns AUTO on and starts it (and the backup).
+  The AUTO settings page (or `/cli mode effort <level>` and `/cli mode fast on|off`) sets the AUTO agent's effort
+  and Codex's own fast mode; running agents take them in place, with no restart.
+- **Long prompts go by reference:** a long message (8,000 characters or more), such as a spec with data pasted in,
+  is saved for the agents to read, and Claude's task points to it instead of copying the data out again.
 - **For developers:** each task Claude writes is kept in `Agent_Working_Folder/.cli-mode/tasks/` (Goal,
-  Context, Files, Do not, Done when, Report); agents never commit or push; each result carries the change receipt and
+  Context, Inputs, Files, Do not, Done when, Report); agents never commit or push; each result carries the change receipt and
   the test result. The agent reads its own instruction files (`AGENTS.md`, `CLAUDE.md`) for your conventions,
   and in AUTO the project brief is not used.
 

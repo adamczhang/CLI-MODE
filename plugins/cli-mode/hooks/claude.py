@@ -607,6 +607,19 @@ def auto_context(event, root, state):
     return None
 
 
+def saved_prompt(event):
+    """AUTO: a long prompt is saved where the agents can read it, and Claude is told where (pass by reference);
+    None for a short one, or when it can't be saved (the turn goes on without it)."""
+    import auto_mode
+    text = event.get('prompt') or ''
+    if len(text) < auto_mode.PROMPT_SAVE_MIN:
+        return None
+    try:
+        return auto_mode.prompt_note(auto_mode.save_prompt(workspace(event), text), text)
+    except OSError:
+        return None
+
+
 def attribution(text):
     """An AUTO attribution line, marked as DIRECT's "Passing to" line is: green bold (plain bold with /cli color off),
     with a zero-width space after it so a line that ends a still-streaming block renders at once."""
@@ -889,7 +902,9 @@ def auto_wake(event, root, requests, state):
                 '\n'.join(attribution(label + ' finished.') for label in labels) + '\nThen tell the user in a few '
                 'lines, in your own words, what was done, whether it held up, and anything unresolved or waiting on '
                 'them; do not post the result as is. CHECK: ok means CLI-MODE found nothing to look into: report from '
-                'the result alone, with no files to open and no commands to run unless the user asked. CHECK: look '
+                'the result alone, with no files to open and no commands to run unless the user asked. A TESTS line '
+                'is CLI-MODE\'s own run of the project\'s tests after the agent finished: never run them again. '
+                'CHECK: look '
                 'names what to check: check only that. If it needs more work, hand a follow-up task to the agent the '
                 'same way. The CLI-MODE skill and its guides are not needed.\n\n' +
                 '\n\n'.join(item['text'] for item in done))
@@ -1199,6 +1214,8 @@ MODE_ACTIONS = {
                                     *(['--agent', decision['agent']] if decision.get('agent') else [])],
     'mode-backup-clear': lambda decision: ['clear-backup'],
     'mode-strength': lambda decision: ['strength', '--to', decision['strength']],
+    'mode-effort': lambda decision: ['effort', '--to', decision['effort']],
+    'mode-fast': lambda decision: ['fast', '--to', decision['fast']],
     'mode-choose': lambda decision: ['choose', '--number', str(decision['number'])],
     'mode-back': lambda decision: ['back'],
     'mode-dismiss': lambda decision: ['close'],
@@ -1247,6 +1264,7 @@ def prompt_reply(event, root, state, decision, worker, cancellation):
                        'the project, still leave the project files alone). The /d is not part of the request.')
     if kind == 'host' and state.get('active') and state.get('routingMode') == 'auto':
         text = auto_context(event, root, state)  # Claude's own turn in AUTO: the rule once, then what changed.
+        text = '\n'.join(part for part in (text, saved_prompt(event)) if part)
         return context(event, text) if text else {}
     if kind in ('host', 'restore'):
         return {}

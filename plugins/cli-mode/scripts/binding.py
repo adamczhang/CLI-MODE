@@ -576,13 +576,15 @@ class BindingMixin:
                     if item['name'] == owned['name']:
                         item['advertisedCommands'] = names
 
-    def activate(self, model, access, effort=None, agent=None, require_hooks=False, expected_pending=None):
+    def activate(self, model, access, effort=None, agent=None, require_hooks=False, expected_pending=None, fast=None):
         if require_hooks:
             host_access = frontends.access_readiness()
             if not host_access['ready']:
                 raise RuntimeError(host_access['message'])
         target = self.use(agent or self.agent_of(self.store.read())).ID
         settings = self.adapter.selection(self.store.root, model, access, effort)
+        if fast is not None and getattr(self.adapter, 'FAST_MODE_KEY', None):
+            settings['fast'] = bool(fast)  # The agent's own fast mode (Codex), chosen on AUTO's settings page.
         with self.store.edit() as state:
             if expected_pending is not None and state.get('pending') != expected_pending:
                 raise RuntimeError('Menu changed before activation; no settings were applied.')

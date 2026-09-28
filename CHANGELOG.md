@@ -37,7 +37,19 @@
   closes with the others. Reviews and research go read-only, and their agent's writes are refused. Claude's copy
   of a result names the files changed meanwhile that were not the agent's own edits.
 - **Delegation strength** Normal, Strong (default) or Max: how much Claude may edit itself before a change goes
-  to the agent, and whether its own coding subagents are sent to the agent instead.
+  to the agent, and whether its own coding subagents are sent to the agent instead. Strong keeps a small piece of
+  work whole with Claude (about 40 lines an edit, three files a turn: a bug fix with its test): handed off, the
+  smallest task of a usage test cost Claude nearly as much as doing it, and took four times as long.
+- **Lighter still, from a usage test** (native Claude against AUTO on tasks of 1k-25k tokens):
+  - a long message (8,000 characters or more) is saved for the agents, and the task points to it in a new Inputs
+    line: handed off, a 25k-token prompt had cost Claude 7 minutes retyping its data;
+  - the result's TESTS line is CLI-MODE's own run of the tests, so Claude doesn't run them again;
+  - a request with three or more independent parts that change different files goes to several agents at once;
+  - each task asks for tests of every new function and its edge cases;
+  - the AUTO settings page, `/cli mode effort <level>` and `/cli mode fast on|off` set the AUTO agent's effort and
+    Codex's own fast mode, and running AUTO agents take them in place;
+  - `checks/claude_usage_live.py` repeats the usage test: Claude's tokens alone and in AUTO, the agent's tokens,
+    time to completion and whether the work is right.
 - In AUTO, `/d` asks Claude itself: nothing from that turn goes to an agent. A plain message lets Claude decide.
   AUTO agents are named after their kind and numbered: Codex-01, Codex-02, Grok-01. The commands that change which
   agent does what are refused, and so are the ones that act on one agent's piece of the work (`undo`, `diff`,
