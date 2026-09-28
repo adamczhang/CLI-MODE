@@ -49,7 +49,10 @@
   - the AUTO settings page, `/cli mode effort <level>` and `/cli mode fast on|off` set the AUTO agent's effort and
     Codex's own fast mode, and running AUTO agents take them in place;
   - `checks/claude_usage_live.py` repeats the usage test: Claude's tokens alone and in AUTO, the agent's tokens,
-    time to completion and whether the work is right.
+    time to completion and whether the work is right. A second project (`--set fleet`, `fleet5`) checks the work
+    with hidden tests the agents never see; the agent's tokens are read for Codex, Antigravity and Claude Code, and
+    with Claude Code as the agent on the host's model (`--host-model`, `--host-effort`) the difference from native
+    is AUTO's own cost.
 - In AUTO, `/d` asks Claude itself: nothing from that turn goes to an agent. A plain message lets Claude decide.
   AUTO agents are named after their kind and numbered: Codex-01, Codex-02, Grok-01. The commands that change which
   agent does what are refused, and so are the ones that act on one agent's piece of the work (`undo`, `diff`,

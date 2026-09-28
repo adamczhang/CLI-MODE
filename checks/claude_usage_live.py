@@ -1,21 +1,33 @@
 """Live usage test (Claude Code): native Claude against AUTO (Claude plus its AUTO agent), on single prompts of
 escalating size. It spends the Claude and agent plans it runs on: ask before running it.
 
-Two kinds of size, three tiers each (1k, 5k, 25k tokens):
-  W<n>  the WORK is about n tokens: a short prompt asking for that much finished work (code, tests, docs);
-  P<n>  the PROMPT is about n tokens: pricing rules and data pasted in, with an exact answer computed in advance.
+Two task sets (--set):
+  shop   (default) two kinds of size, three tiers each (1k, 5k, 25k tokens) on an inventory library:
+         W<n> the WORK is about n tokens: a short prompt asking for that much finished work (code, tests, docs);
+         P<n> the PROMPT is about n tokens: pricing rules and data pasted in, with an exact answer computed in advance;
+  fleet  a telemetry library (checks/claude_usage_fleet.py): T1 and T5 (1k and 5k of work), then three 15k tasks of
+         different kinds: F15 a feature build, D15 pasted data with exact answers, R15 reported bugs and a refactor;
+         hidden acceptance tests the agents never see check the work;
+  fleet5 five 5k tasks of different kinds on the same library: S5 a feature, H5 pasted shift data with exact
+         answers, V5 exact validation rules, C5 a refactor to a class that keeps the old functions, Q5 test-writing
+         that must find the bugs itself.
+With --agent claude and the same --model and --host-model, both sides run one model, so AUTO's extra tokens (Claude
+plus the agent, against native) are the harness's own cost. Two Claude Code processes then share one sign-in: the
+test checks it before each run and stops at the first run that finds it signed out.
 Each (task, mode, repeat) runs in its own throwaway project and its own headless Claude Code session (the unpacked
 build, dist/claude-dev), one at a time. Measured:
   - Claude: tokens from each result's usage (input, output, cache write and read, turns) and its 5-hour window;
-  - the AUTO agent: Codex's tokens and weekly window from its own session logs (~/.codex/sessions, matched by the
-    run's folder); other agents' own counts are not read;
+  - the AUTO agent's own tokens, matched by the run's folder: Codex from its session logs (~/.codex/sessions, with
+    its weekly window), Antigravity from its conversation stores (~/.gemini/antigravity-acp/conversations), Claude
+    Code from ACPX's session records; other agents' counts are not read;
   - time from the prompt to Claude's final answer, and for AUTO its split: Claude before the handoff, the agent
     working, Claude after the wake-up;
   - handoffs, tool calls, subagents, and whether the work is right (tests, files, the exact answers).
 
     python scripts/package_plugin.py
-    python checks/claude_usage_live.py [--only W1,P1] [--modes native,auto] [--repeat 2]
-        [--agent codex] [--model gpt-6-sol] [--effort high] [--fast on|off] [--out <folder>] [--dry]
+    python checks/claude_usage_live.py [--set shop|fleet|fleet5] [--only W1,P1] [--modes native,auto] [--repeat 2]
+        [--agent codex] [--model gpt-6-sol] [--effort high] [--fast on|off] [--host-model <id>] [--host-effort <level>]
+        [--out <folder>] [--dry]
 
 Writes results.json, each run's events and report.md to --out (default: a new folder in the temp folder).
 """
@@ -36,9 +48,11 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from claude_background_live import Session, saved_state  # noqa: E402
-from claude_live_relay import DEV, claude_data  # noqa: E402
+from claude_live_relay import DEV, claude_binary, claude_data  # noqa: E402
+import claude_usage_fleet as fleet  # noqa: E402
 
 CODEX_SESSIONS = Path.home() / '.codex' / 'sessions'
+AGY_CONVERSATIONS = Path.home() / '.gemini' / 'antigravity-acp' / 'conversations'
 # Relative weights of Claude's token kinds, from API prices (output 20, cache write 5, cache read 0.2, input 4 per
 # million): a stand-in for how much of a plan each run uses, to compare runs; never a price.
 WEIGHTS = {'output': 20, 'cacheWrite': 5, 'cacheRead': 0.2, 'input': 4}
@@ -46,7 +60,7 @@ CENT = Decimal('0.01')
 EXTRA = ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'PowerShell']
 WORKING = ('captured', 'submitting')
 STOP_AT = 90  # Claude's 5-hour window, percent: no new run starts above it.
-TIMEOUT = {'1': 20 * 60, '5': 45 * 60, '25': 100 * 60}
+TIMEOUT = {'1': 20 * 60, '5': 45 * 60, '15': 75 * 60, '25': 100 * 60}
 QUIET = 30  # Seconds Claude must stay idle before a run counts as finished (a wake-up may follow).
 NO_QUESTIONS = ' Work without asking me questions: make reasonable assumptions and say what they were. Do not commit.'
 
@@ -97,13 +111,13 @@ SEED = {
 }
 
 
-def seed(workspace):
-    for name, text in SEED.items():
+def seed(workspace, files=None):
+    for name, text in (files or SEED).items():
         path = workspace / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(text.encode('utf-8'))
     for command in (['init', '-q'], ['add', '-A'],
-                    ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'Shopkeeper']):
+                    ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'Seed']):
         subprocess.run(['git', *command], cwd=workspace, check=True)
 
 
@@ -204,7 +218,6 @@ def p1_prompt(count):
 
 
 def task_p5():
-    rng = random.Random(505)
     prompt, count = '', 300
     while True:
         items = catalog(random.Random(505), count)
@@ -365,6 +378,9 @@ def tasks():
             'W25': (W_TASKS['W25'], {}), 'P25': (p25, a25)}
 
 
+SETS = {'shop': (SEED, tasks), 'fleet': (fleet.SEED, fleet.tasks), 'fleet5': (fleet.SEED, fleet.tasks5)}
+
+
 # ---------------------------------------------------------------- checking the work
 
 def python(workspace, code):
@@ -386,6 +402,8 @@ def numbers(text):
 
 
 def check(name, workspace, reply, answers):
+    if name in fleet.NAMES + fleet.NAMES5:
+        return fleet.check(name, workspace, reply, answers, pytest_counts)
     tests = pytest_counts(workspace)
     checks = {'tests pass': tests['ok']}
     if name == 'W1':  # W1 says what low_stock returns: the SKUs at or below the threshold, sorted.
@@ -496,15 +514,134 @@ def codex_use(workspace, since):
     return total
 
 
+def fields(data):
+    """A protobuf message's top-level fields as (number, value): varints as ints, the rest as bytes."""
+    def varint(at):
+        value = shift = 0
+        while True:
+            byte = data[at]
+            at += 1
+            value |= (byte & 0x7f) << shift
+            shift += 7
+            if byte < 0x80:
+                return value, at
+    at = 0
+    while at < len(data):
+        key, at = varint(at)
+        number, kind = key >> 3, key & 7
+        if kind == 0:
+            value, at = varint(at)
+        elif kind == 2:
+            size, at = varint(at)
+            value, at = data[at:at + size], at + size
+        elif kind in (1, 5):
+            size = 8 if kind == 1 else 4
+            value, at = data[at:at + size], at + size
+        else:
+            raise ValueError('protobuf wire type ' + str(kind))
+        yield number, value
+
+
+def agy_use(workspace, since):
+    """Antigravity's own tokens for conversations whose working folder is this run's project. Each conversation is
+    a SQLite store next to a .meta file naming its folder; each gen_metadata row is one model call, whose field 1.4
+    holds its usage (read 2026-09-27): 2 new input, 5 cache read, 3 output, of which 9 is thinking."""
+    import sqlite3
+    total = dict(input=0, cachedInput=0, output=0, reasoning=0, sessions=0, calls=0)
+    target = os.path.normcase(str(Path(workspace).resolve()))
+    for meta in AGY_CONVERSATIONS.glob('*.meta'):
+        store = meta.with_suffix('.db')
+        try:
+            folder = json.loads(meta.read_text(encoding='utf-8')).get('cwd') or '.'
+            if not store.exists() or store.stat().st_mtime < since or \
+                    os.path.normcase(str(Path(folder).resolve())) != target:
+                continue
+            connection = sqlite3.connect('file:' + store.as_posix() + '?mode=ro', uri=True)
+            rows = connection.execute('select data from gen_metadata').fetchall()
+            connection.close()
+        except (OSError, ValueError, sqlite3.Error):
+            continue
+        total['sessions'] += 1
+        for (data,) in rows:
+            try:
+                call = dict(fields(data)).get(1)
+                usage = dict(fields(dict(fields(call)).get(4) or b'')) if isinstance(call, bytes) else {}
+            except (ValueError, IndexError):
+                continue
+            if not usage:
+                continue
+            total['calls'] += 1
+            total['input'] += usage.get(2, 0) + usage.get(5, 0)
+            total['cachedInput'] += usage.get(5, 0)
+            total['output'] += usage.get(3, 0)
+            total['reasoning'] += usage.get(9, 0)
+    total['uncachedInput'] = total['input'] - total['cachedInput']
+    return total
+
+
+def claude_agent_use(workspace, since):
+    """A Claude Code AUTO agent's tokens, from ACPX's records of the sessions it ran in this run's project: each
+    request's usage, summed (it matched the agent's own transcript to the token, 2026-09-27). The record's
+    cumulative_token_usage is only the last request's, despite its name."""
+    total = dict(input=0, cachedInput=0, cacheWrite=0, output=0, reasoning=0, sessions=0, calls=0)
+    target = os.path.normcase(str(Path(workspace).resolve()))
+    for path in (Path.home() / '.acpx' / 'sessions').glob('*.json'):
+        try:
+            if path.stat().st_mtime < since:
+                continue
+            record = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+        if os.path.normcase(str(Path(record.get('cwd') or '.').resolve())) != target or \
+                'claude' not in json.dumps(record.get('agent_command') or '').lower():
+            continue
+        total['sessions'] += 1
+        for usage in (record.get('request_token_usage') or {}).values():
+            total['calls'] += 1
+            total['input'] += usage.get('input_tokens') or 0
+            total['cacheWrite'] += usage.get('cache_creation_input_tokens') or 0
+            total['cachedInput'] += usage.get('cache_read_input_tokens') or 0
+            total['output'] += usage.get('output_tokens') or 0
+    # Weighed like Claude's own tokens (same model), before input becomes the total of all three kinds.
+    total['weighted'] = round((total['output'] * WEIGHTS['output'] + total['cacheWrite'] * WEIGHTS['cacheWrite'] +
+                               total['cachedInput'] * WEIGHTS['cacheRead'] + total['input'] * WEIGHTS['input'])
+                              / 1000, 1)
+    total['uncachedInput'] = total['input'] + total['cacheWrite']
+    total['input'] += total['cacheWrite'] + total['cachedInput']
+    return total
+
+
+AGENT_USE = {'codex': codex_use, 'agy': agy_use, 'claude': claude_agent_use}
+SIGNED_OUT = ('Failed to authenticate', 'OAuth session expired', 'Not logged in', 'Please run /login')
+
+
 # ---------------------------------------------------------------- one run
 
+class SignedOut(RuntimeError):
+    """Claude Code could not sign in: every later run would fail the same way, so the test stops."""
+
+
+def signed_out(reply):
+    if any(marker in (reply or '')[:300] for marker in SIGNED_OUT):
+        raise SignedOut('Claude Code is signed out: ' + reply[:200])
+
+
+def claude_signed_in():
+    run = subprocess.run([claude_binary(), 'auth', 'status'], capture_output=True, text=True, timeout=60)
+    try:
+        return bool(json.loads(run.stdout).get('loggedIn'))
+    except ValueError:
+        return False
+
+
 class Run:
-    def __init__(self, name, mode, prompt, answers, out, options):
+    def __init__(self, name, mode, prompt, answers, out, options, files=None):
         self.name, self.mode, self.prompt, self.answers, self.out = name, mode, prompt, answers, out
         self.options = options  # The AUTO agent: agent, model, effort, fast.
         self.workspace = Path(tempfile.mkdtemp(prefix='cli-mode-usage-')).resolve()
-        seed(self.workspace)
-        self.host = Session(self.workspace, None, EXTRA)
+        seed(self.workspace, files)
+        effort = options.get('hostEffort')
+        self.host = Session(self.workspace, options.get('hostModel'), EXTRA + (['--effort', effort] if effort else []))
         self.session = None
 
     def state(self):
@@ -532,7 +669,9 @@ class Run:
         with self.host.lock:
             if self.session is None:
                 self.session = next(e.get('session_id') for e in self.host.events if e.get('session_id'))
-            return next((e.get('result') or '' for e in reversed(self.host.events) if e.get('type') == 'result'), '')
+            reply = next((e.get('result') or '' for e in reversed(self.host.events) if e.get('type') == 'result'), '')
+        signed_out(reply)
+        return reply
 
     def start_auto(self):
         sys.path.insert(0, str(DEV / 'scripts'))
@@ -578,6 +717,8 @@ class Run:
             everything = list(self.host.events)
         times = timeline(events, self.mode, clock)
         replies = [e.get('result') or '' for e in events if e.get('type') == 'result']
+        for reply in replies:
+            signed_out(reply)
         blocks = [block for e in events if e.get('type') == 'assistant'
                   for block in (e.get('message') or {}).get('content') or [] if block.get('type') == 'tool_use']
         tools = [block.get('name') for block in blocks]
@@ -587,11 +728,12 @@ class Run:
         if self.mode == 'auto':
             self.control('/cli off', timeout=120)
         tests, checks = check(self.name, self.workspace, '\n'.join(replies), self.answers)
+        reader = AGENT_USE.get(self.options['agent']) if self.mode == 'auto' else None
         return dict(task=self.name, mode=self.mode, promptChars=len(self.prompt), promptTokensApprox=len(self.prompt) // 4,
                     minutes=times['total'], time=times, claude=claude_use(events), claudeFiveHour=five_hour(everything),
                     agent=self.options['agent'] if self.mode == 'auto' else None,
-                    codex=codex_use(self.workspace, started - 5) if self.mode == 'auto' and
-                    self.options['agent'] == 'codex' else None, tools=len(tools), claudeWroteChars=written,
+                    agentTokens=reader(self.workspace, started - 5) if reader else None,
+                    tools=len(tools), claudeWroteChars=written,
                     toolNames=sorted(set(tools)), subagents=tools.count('Agent') + tools.count('Task'),
                     handoffs=len(records), handoffFiles=[(r.get('handoff') or {}).get('files') for r in records],
                     tests=tests, checks=checks, reply=replies[-1][-1500:] if replies else '', events=everything)
@@ -646,10 +788,11 @@ def cells(results):
                         passed=all(run['tests']['ok'] for run in good),
                         checks=[{k: v for k, v in run['checks'].items() if k != 'tests pass'} for run in good],
                         agent=next((run.get('agent') for run in good if run.get('agent')), None))
-            codex = [run['codex'] for run in good if run.get('codex') and run['codex'].get('sessions')]
-            if codex:
-                cell['codex'] = {key: mean([item[key] for item in codex]) for key in
-                                 ('input', 'cachedInput', 'uncachedInput', 'output', 'reasoning')}
+            agent = [run['agentTokens'] for run in good if (run.get('agentTokens') or {}).get('sessions')]
+            if agent:
+                cell['agentTokens'] = {key: mean([item.get(key) for item in agent]) for key in
+                                       ('input', 'cachedInput', 'uncachedInput', 'output', 'reasoning', 'weighted',
+                                        'calls')}
         out.append(cell)
     return out
 
@@ -661,7 +804,10 @@ def report(results, out, options):
     agent = ', '.join(str(options.get(key)) for key in ('agent', 'model', 'effort') if options.get(key))
     if options.get('fast') is not None:
         agent += ', fast mode ' + ('on' if options['fast'] else 'off')
-    lines = ['# CLI-MODE usage test', '', 'AUTO agent: ' + agent, '', '## Claude alone (native)', '',
+    claude_host = ', '.join(str(options.get(key)) for key in ('hostModel', 'hostEffort') if options.get(key))
+    lines = ['# CLI-MODE usage test', '', 'AUTO agent: ' + agent, '',
+             'Claude Code (host): ' + (claude_host or 'its configured model and effort'), '',
+             '## Claude alone (native)', '',
              '| Task | Output | Cache read | Cache write | Turns | Tool calls | Runs |', '|---|---|---|---|---|---|---|']
     for cell in table:
         if cell['mode'] == 'native' and 'claude' in cell:
@@ -670,20 +816,23 @@ def report(results, out, options):
                                                                 c['cacheWrite'], c['turns'], cell['tools'], cell['runs']))
     lines += ['', '## AUTO: Claude, and its agent', '',
               '| Task | Claude output | Claude cache read / write | Claude turns | Claude wrote (chars) | Handoffs | '
-              'Agent input (cached / new) | Agent output (of it reasoning) | Claude vs native |',
-              '|---|---|---|---|---|---|---|---|---|']
+              'Agent input (cached / new) | Agent output (of it reasoning) | Claude vs native | Claude + agent vs '
+              'native |', '|---|---|---|---|---|---|---|---|---|---|']
     for cell in table:
         if cell['mode'] == 'auto' and 'claude' in cell:
-            c, x = cell['claude'], cell.get('codex')
+            c, x = cell['claude'], cell.get('agentTokens')
             base = native.get(cell['task'])
-            share = (str(round(100 * c['weighted'] / base['claude']['weighted'])) + '%'
-                     if base and base['claude']['weighted'] else '-')
-            lines.append('| %s | %s | %s / %s | %s | %s | %s | %s | %s | %s |' % (
+            percent = lambda value: (str(round(100 * value / base['claude']['weighted'])) + '%'  # noqa: E731
+                                     if base and base['claude']['weighted'] else '-')
+            lines.append('| %s | %s | %s / %s | %s | %s | %s | %s | %s | %s | %s |' % (
                 cell['task'], c['output'], c['cacheRead'], c['cacheWrite'], c['turns'], cell['wrote'], cell['handoffs'],
                 '%s (%s / %s)' % (x['input'], x['cachedInput'], x['uncachedInput']) if x else 'not read',
-                '%s (%s)' % (x['output'], x['reasoning']) if x else 'not read', share))
+                '%s (%s)' % (x['output'], x['reasoning']) if x else 'not read', percent(c['weighted']),
+                percent(c['weighted'] + x['weighted']) if x and x.get('weighted') is not None else '-'))
     lines += ['', "Claude vs native weighs Claude's tokens by relative API prices (output 20, cache write 5, cache "
-              "read 0.2): a stand-in for plan usage, not a price. The agent's reasoning is part of its output.", '',
+              "read 0.2): a stand-in for plan usage, not a price. Claude + agent adds the agent's tokens, weighed "
+              "the same way, when the agent is Claude Code too (the same model: the harness's own cost). The "
+              "agent's reasoning is part of its output.", '',
               '## Time to completion (minutes, prompt to final answer)', '',
               '| Task | Native | AUTO | AUTO: Claude before handoff / agent working / Claude after wake |',
               '|---|---|---|---|']
@@ -700,7 +849,7 @@ def report(results, out, options):
             cell['task'], cell['mode'], cell.get('tests', '-'), cell.get('passed', '-'),
             json.dumps(cell.get('checks', ''))[:160], '; '.join(error[:80] for error in cell['errors']) or '-'))
     windows = [(r['task'], r['mode'], (r.get('claudeFiveHour') or [])[:1] + (r.get('claudeFiveHour') or [])[-1:],
-                (r.get('codex') or {}).get('weeklyPercent')) for r in results if 'error' not in r]
+                (r.get('agentTokens') or {}).get('weeklyPercent')) for r in results if 'error' not in r]
     lines += ['', 'Plan windows (Claude 5-hour %, agent weekly %, first and last seen): ' + json.dumps(windows), '']
     text = '\n'.join(lines)
     (out / 'report.md').write_text(text, encoding='utf-8')
@@ -709,26 +858,32 @@ def report(results, out, options):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--only', help='Tasks, such as W1,P1 (default: all six).')
+    parser.add_argument('--set', default='shop', choices=sorted(SETS), help='The task set (default: shop).')
+    parser.add_argument('--only', help='Tasks, such as W1,P1 (default: all of the set).')
     parser.add_argument('--modes', default='native,auto')
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--agent', default='codex', help='The AUTO agent.')
     parser.add_argument('--model')
     parser.add_argument('--effort')
     parser.add_argument('--fast', choices=['on', 'off'])
+    parser.add_argument('--host-model', help="Claude Code's model for the host, native and AUTO alike (default: "
+                                             'the configured one). With --agent claude, give both the same model to '
+                                             'measure the harness alone.')
+    parser.add_argument('--host-effort', help="Claude Code's effort for the host.")
     parser.add_argument('--out', type=Path)
     parser.add_argument('--dry', action='store_true', help='Write the prompts and answers only.')
     args = parser.parse_args()
-    if args.agent == 'claude':
-        raise SystemExit('Use an AUTO agent other than Claude Code: it shares the sign-in this test drives.')
     out = args.out or Path(tempfile.gettempdir()) / ('cli-mode-usage-' + time.strftime('%Y%m%d-%H%M%S'))
     out.mkdir(parents=True, exist_ok=True)
     options = dict(agent=args.agent, model=args.model, effort=args.effort,
-                   fast=None if args.fast is None else args.fast == 'on')
-    all_tasks = tasks()
+                   fast=None if args.fast is None else args.fast == 'on', hostModel=args.host_model,
+                   hostEffort=args.host_effort)
+    files, make = SETS[args.set]
+    all_tasks = make()
     for name, (prompt, answers) in all_tasks.items():
         (out / (name + '.prompt.txt')).write_text(prompt, encoding='utf-8')
-        (out / (name + '.answers.json')).write_text(json.dumps(answers, indent=1), encoding='utf-8')
+        (out / (name + '.answers.json')).write_text(json.dumps(
+            {key: value for key, value in answers.items() if key != 'csv'}, indent=1), encoding='utf-8')
     print(json.dumps({name: dict(chars=len(p), tokensApprox=len(p) // 4) for name, (p, _) in all_tasks.items()}))
     if args.dry:
         print('RESULTS', out)
@@ -742,7 +897,7 @@ def main():
     if saved.exists():
         saved.replace(aside)
     names = args.only.split(',') if args.only else list(all_tasks)
-    results = []
+    results, stopped = [], None
     try:
         for name in names:
             prompt, answers = all_tasks[name]
@@ -750,13 +905,19 @@ def main():
                 for repeat in range(1, args.repeat + 1):
                     last = next((r['claudeFiveHour'][-1] for r in reversed(results) if r.get('claudeFiveHour')), None)
                     if last is not None and last >= STOP_AT:
-                        results.append(dict(task=name, mode=mode, repeat=repeat,
-                                            error='skipped: the 5-hour window is at ' + str(last) + '%'))
+                        stopped = 'the 5-hour window is at ' + str(last) + '%'
+                    elif not stopped and not claude_signed_in():
+                        stopped = 'Claude Code is signed out'
+                    if stopped:
+                        results.append(dict(task=name, mode=mode, repeat=repeat, error='skipped: ' + stopped))
                         continue
                     print(time.strftime('%I:%M:%S %p'), 'start', name, mode, repeat, flush=True)
-                    run = Run(name, mode, prompt, answers, out, options)
+                    run = Run(name, mode, prompt, answers, out, options, files)
                     try:
                         result = run.go(TIMEOUT[name[1:]])
+                    except SignedOut as exc:
+                        stopped = str(exc)
+                        result = dict(task=name, mode=mode, error=str(exc), events=list(run.host.events))
                     except (RuntimeError, ValueError, KeyError, StopIteration, OSError) as exc:
                         with run.host.lock:
                             events = list(run.host.events)
