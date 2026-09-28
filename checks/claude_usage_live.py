@@ -85,6 +85,7 @@ def saved_state(session, workspace):
     return Store(session, workspace, data()).read()
 import claude_usage_fleet as fleet  # noqa: E402
 import claude_usage_multi as multi  # noqa: E402
+import claude_usage_sidebar as sidebar  # noqa: E402
 
 CODEX_SESSIONS = Path.home() / '.codex' / 'sessions'
 AGY_CONVERSATIONS = Path.home() / '.gemini' / 'antigravity-acp' / 'conversations'
@@ -95,7 +96,7 @@ CENT = Decimal('0.01')
 EXTRA = ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'PowerShell']
 WORKING = ('captured', 'submitting')
 STOP_AT = 90  # Claude's 5-hour window, percent: no new run starts above it.
-TIMEOUT = {'1': 20 * 60, '2': 30 * 60, '5': 45 * 60, '12': 60 * 60, '15': 75 * 60, '25': 100 * 60, '50': 100 * 60}
+TIMEOUT = {'1': 20 * 60, '2': 30 * 60, '5': 45 * 60, '10': 60 * 60, '12': 60 * 60, '20': 90 * 60, '15': 75 * 60, '25': 100 * 60, '50': 100 * 60}
 QUIET = 30  # Seconds Claude must stay idle before a run counts as finished (a wake-up may follow).
 NO_QUESTIONS = ' Work without asking me questions: make reasonable assumptions and say what they were. Do not commit.'
 
@@ -147,6 +148,8 @@ SEED = {
 
 
 def seed(workspace, files=None):
+    if callable(files):  # A set that seeds from a real project (claude_usage_sidebar).
+        return files(workspace)
     for name, text in (files or SEED).items():
         path = workspace / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -415,7 +418,7 @@ def tasks():
 
 SETS = {'shop': (SEED, tasks), 'fleet': (fleet.SEED, fleet.tasks), 'fleet5': (fleet.SEED, fleet.tasks5),
         'hot': (fleet.HOT_SEED, fleet.tasks_hot), 'par': (fleet.HOT_SEED, fleet.tasks_par),
-        'multi': (fleet.HOT_SEED, multi.tasks)}
+        'multi': (fleet.HOT_SEED, multi.tasks), 'sidebar': (sidebar.seed, sidebar.tasks)}
 
 
 # ---------------------------------------------------------------- checking the work
@@ -439,6 +442,8 @@ def numbers(text):
 
 
 def check(name, workspace, reply, answers):
+    if name in sidebar.NAMES:
+        return sidebar.check(name, workspace, reply, answers)
     if name in multi.ALL_NAMES:
         return multi.check(name, workspace, reply, answers, pytest_counts)
     if name in fleet.NAMES + fleet.NAMES5 + fleet.NAMES_HOT + fleet.NAMES_PAR:
