@@ -85,6 +85,8 @@ def saved_state(session, workspace):
     return Store(session, workspace, data()).read()
 import claude_usage_fleet as fleet  # noqa: E402
 import claude_usage_multi as multi  # noqa: E402
+import claude_usage_adambench as adambench  # noqa: E402
+import claude_usage_bughunt as bughunt  # noqa: E402
 import claude_usage_sidebar as sidebar  # noqa: E402
 
 CODEX_SESSIONS = Path.home() / '.codex' / 'sessions'
@@ -96,7 +98,7 @@ CENT = Decimal('0.01')
 EXTRA = ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'PowerShell']
 WORKING = ('captured', 'submitting')
 STOP_AT = 90  # Claude's 5-hour window, percent: no new run starts above it.
-TIMEOUT = {'1': 20 * 60, '2': 30 * 60, '5': 45 * 60, '10': 60 * 60, '12': 60 * 60, '20': 90 * 60, '15': 75 * 60, '25': 100 * 60, '50': 100 * 60}
+TIMEOUT = {'1': 20 * 60, '2': 30 * 60, '3': 60 * 60, '5': 75 * 60, '10': 90 * 60, '10G5': 120 * 60, '10K': 120 * 60, '12': 60 * 60, '20': 150 * 60, '15': 75 * 60, '25': 100 * 60, '50': 100 * 60}
 QUIET = 30  # Seconds Claude must stay idle before a run counts as finished (a wake-up may follow).
 NO_QUESTIONS = ' Work without asking me questions: make reasonable assumptions and say what they were. Do not commit.'
 
@@ -147,9 +149,9 @@ SEED = {
 }
 
 
-def seed(workspace, files=None):
-    if callable(files):  # A set that seeds from a real project (claude_usage_sidebar).
-        return files(workspace)
+def seed(workspace, files=None, name=None):
+    if callable(files):  # A set that seeds from a real project (claude_usage_sidebar, claude_usage_bughunt).
+        return files(workspace) if files.__code__.co_argcount == 1 else files(workspace, name)
     for name, text in (files or SEED).items():
         path = workspace / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -418,7 +420,8 @@ def tasks():
 
 SETS = {'shop': (SEED, tasks), 'fleet': (fleet.SEED, fleet.tasks), 'fleet5': (fleet.SEED, fleet.tasks5),
         'hot': (fleet.HOT_SEED, fleet.tasks_hot), 'par': (fleet.HOT_SEED, fleet.tasks_par),
-        'multi': (fleet.HOT_SEED, multi.tasks), 'sidebar': (sidebar.seed, sidebar.tasks)}
+        'multi': (fleet.HOT_SEED, multi.tasks), 'sidebar': (sidebar.seed, sidebar.tasks),
+        'bughunt': (bughunt.seed, bughunt.tasks), 'adambench': (adambench.seed, adambench.tasks)}
 
 
 # ---------------------------------------------------------------- checking the work
@@ -444,6 +447,10 @@ def numbers(text):
 def check(name, workspace, reply, answers):
     if name in sidebar.NAMES:
         return sidebar.check(name, workspace, reply, answers)
+    if name in bughunt.NAMES:
+        return bughunt.check(name, workspace, reply, answers)
+    if name in adambench.NAMES:
+        return adambench.check(name, workspace, reply, answers)
     if name in multi.ALL_NAMES:
         return multi.check(name, workspace, reply, answers, pytest_counts)
     if name in fleet.NAMES + fleet.NAMES5 + fleet.NAMES_HOT + fleet.NAMES_PAR:
@@ -511,6 +518,21 @@ def timeline(events, mode, start):
         out.update(beforeHandoff=minutes(start, handoff), agentWorking=minutes(began, ended),
                    afterWake=minutes(ended, end))
     return out
+
+
+def plan_windows():
+    """All of Claude's plan windows now, {name: percent used}, from CLI-MODE's own usage helper: the stream reports only
+    the 5-hour and 7-day ones, not Weekly (Fable), which Fable mode exists to save. None when it cannot be read."""
+    helper = plugin_root() / 'backends' / 'claude' / 'scripts' / 'usage-summary.py'
+    try:
+        run = subprocess.run([sys.executable, str(helper), '--model', 'opus'], capture_output=True, text=True,
+                             encoding='utf-8', timeout=130)
+        windows = json.loads(run.stdout).get('windows') or []
+    except (OSError, ValueError, subprocess.TimeoutExpired, AttributeError):
+        return None
+    found = {w.get('window'): int(re.match(r'(\d+)', w.get('utilization') or '').group(1))
+             for w in windows if isinstance(w, dict) and re.match(r'\d+', w.get('utilization') or '')}
+    return found or None
 
 
 def five_hour(events):
@@ -673,7 +695,15 @@ def parallel_work(records):
                 span=round(span, 1), parallelism=round(serial / span, 2) if span else None,
                 waited=round(sum(max(0, start - captured) for start, _, _, captured, _ in spans
                                  if captured is not None), 1),
-                claims=[files for _, _, _, _, files in spans])
+                claims=[files for _, _, _, _, files in spans],
+                # Each handoff in order: when it began (minutes from the first), how long, at which effort, and
+                # whether it was an escalation (upgraded Fable mode: which effort found what).
+                waves=[dict(at=round((r['submittedAt'] - min(start for start, *_ in spans)) / 60, 1),
+                            minutes=round((r['endedAt'] - r['submittedAt']) / 60, 1), agent=r.get('session'),
+                            effort=(r.get('handoff') or {}).get('effort'),
+                            escalates=bool((r.get('handoff') or {}).get('escalates')))
+                       for r in sorted((r for r in records if r.get('submittedAt') is not None
+                                        and r.get('endedAt') is not None), key=lambda r: r['submittedAt'])])
 
 
 # ---------------------------------------------------------------- one run
@@ -700,7 +730,7 @@ class Run:
         self.name, self.mode, self.prompt, self.answers, self.out = name, mode, prompt, answers, out
         self.options = options  # The AUTO agent: agent, model, effort, fast.
         self.workspace = Path(tempfile.mkdtemp(prefix='cli-mode-usage-')).resolve()
-        seed(self.workspace, files)
+        seed(self.workspace, files, name)
         effort = options.get('hostEffort')
         self.host = Session(self.workspace, options.get('hostModel'), EXTRA + (['--effort', effort] if effort else []),
                             plugin_dir=None if INSTALLED else DEV)
@@ -811,9 +841,11 @@ class Run:
         records = [r for key, r in requests.items() if key not in self.seen]
         self.seen |= set(requests)
         tests, checks = check(name, self.workspace, '\n'.join(replies), answers)
-        if not tests['ok'] or checks.get('hiddenOutput'):  # Kept as it was, to see why (the run's folder goes).
+        if name in bughunt.NAMES + adambench.NAMES:  # Always kept: the whole diff against the seed, and the report.
+            (adambench if name in adambench.NAMES else bughunt).keep(self.workspace, self.out / ('%s-%s-%d' % (name, self.mode, len(self.seen))))
+        elif not tests['ok'] or checks.get('hiddenOutput'):  # Kept as it was, to see why (the run's folder goes).
             shutil.copytree(self.workspace, self.out / ('%s-%s-project' % (name, self.mode)), dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns('.git', '__pycache__', '.pytest_cache'))
+                            ignore=shutil.ignore_patterns('.git', '__pycache__', '.pytest_cache', 'node_modules'))
         now = self.agent_use()
         spent = {key: value - (self.agent_before or {}).get(key, 0) if isinstance(value, (int, float)) and
                  key != 'sessions' else value for key, value in now.items()} if now else None
@@ -1064,6 +1096,7 @@ def main():
                         continue
                     print(time.strftime('%I:%M:%S %p'), 'start', name, mode, repeat, flush=True)
                     run = Run(name, mode, prompt, answers, out, options, files)
+                    windows = plan_windows()  # Before; after is read once the run is done.
                     try:
                         result = run.go(TIMEOUT.get(name[1:], 45 * 60))
                     except SignedOut as exc:
@@ -1079,6 +1112,7 @@ def main():
                             run.close()
                         except OSError as exc:
                             print('cleanup failed:', exc, flush=True)
+                    result['planWindows'] = dict(before=windows, after=plan_windows())
                     record(result, name, mode, repeat)
     finally:
         if aside.exists():

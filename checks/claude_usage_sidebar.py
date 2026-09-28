@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 
 NAMES = ('Z5', 'Z10', 'Z20')
-UPSTREAM = Path(os.environ.get('SIDEBAR_UPSTREAM') or r'C:\Users\adamc\Desktop\ChatGPT\Sidebar\SidebarDiagnostics-upstream')
+UPSTREAM = Path(os.environ.get('SIDEBAR_UPSTREAM') or Path.home() / 'Desktop' / 'ChatGPT' / 'Sidebar' / 'SidebarDiagnostics-upstream')
 MSBUILD = Path(os.environ.get('SIDEBAR_MSBUILD') or
                r'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe')
 NO_QUESTIONS = ' Work without asking me questions: make reasonable assumptions and say what they were. Do not commit.'
