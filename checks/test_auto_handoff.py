@@ -110,8 +110,8 @@ class Handoffs(AutoBase):
         self.assertNotIn('autoWake', saved)
         self.assertEqual(self.stop_hook(), {})  # Nothing left to read: the turn may end.
         self.assertNotIn(request, claude.unrelayed(saved))  # Never chained into a user's relay.
-        self.assertIn('already read', self.context(self.prompt(
-            '<task-notification>\n<tool-use-id>toolu_bash2</tool-use-id>\n</task-notification>')))
+        again = self.prompt('<task-notification>\n<tool-use-id>toolu_bash2</tool-use-id>\n</task-notification>')
+        self.assertEqual(again.get('decision'), 'block')  # Already read: no model turn for it.
 
     def test_the_handoff_is_refused_at_once_and_the_long_form_still_works(self):
         self.auto()
@@ -475,6 +475,53 @@ class Handoffs(AutoBase):
         with patch.object(auto_mode, 'START_WAIT', 1):
             with self.assertRaisesRegex(RuntimeError, 'still starting after 1 s'):
                 self.ctl('handoff', '--task', 't3', '--agent', 'new')
+
+    def test_handoffs_sent_together_wake_claude_once(self):
+        """Live, 2026-09-28: five parallel parts woke Claude five times, each wake-up re-reading the whole 50k-token
+        conversation twice. A finished follow now waits for the rest of its batch, one wake-up reads every finished
+        result of the batch, and a notification whose result was already reported never reaches the model."""
+        import threading
+        from controller import Controller
+        state = self.auto()
+        lead = state['auto']['agent']
+        self.write_task('t1', 'Goal: fix parse().\nFiles: app/parser.py')
+        first = self.ctl('handoff', '--task', 't1')['requestId']
+        self.write_task('t2', 'Goal: fix the command line.\nFiles: app/cli.py')
+        second = self.ctl('handoff', '--task', 't2')['requestId']  # Queued on the same agent: the same batch.
+        control = Controller(self.store())
+        self.assertEqual(control.batch_working(self.store().read(), first), [second])
+        self.drain(lead)
+        with self.store().edit() as saved:  # The second is still at work while the first's follow ends.
+            saved['requests'][second]['status'] = 'submitting'
+        timer = threading.Timer(1.0, lambda: self._settle(second))
+        timer.start()
+        lines, began = [], time.monotonic()
+        control._end_with_batch(first, 'Antigravity-01', lines.append, poll=0.1)
+        timer.join()
+        self.assertGreaterEqual(time.monotonic() - began, 1.0)  # It waited for the second.
+        self.assertIn('waits for 1 more of the handoffs sent with it', lines[0])
+        with self.store().edit() as saved:
+            saved['followTasks'] = {'toolu_one': first, 'toolu_two': second}
+        wake = self.context(self.prompt('<task-notification>\n<tool-use-id>toolu_one</tool-use-id>\n'
+                                        '</task-notification>'))
+        self.assertIn('HANDOFF ' + first, wake)
+        self.assertIn('HANDOFF ' + second, wake)  # Its batch's other finished result came along.
+        later = self.prompt('<task-notification>\n<tool-use-id>toolu_two</tool-use-id>\n</task-notification>')
+        self.assertEqual(later.get('decision'), 'block')  # Already reported: no turn at all.
+        self.assertIn('reported with the rest of its handoffs', later['reason'])
+        mixed = self.prompt('<task-notification>\n<tool-use-id>toolu_two</tool-use-id>\n</task-notification>\n'
+                            '<task-notification>\n<tool-use-id>toolu_claude_own</tool-use-id>\n</task-notification>')
+        self.assertNotEqual(mixed.get('decision'), 'block')  # Claude's own task is in it too: never swallowed.
+
+    def _settle(self, request):
+        with self.store().edit() as saved:
+            saved['requests'][request].update(status='completed', endedAt=time.time())
+
+    def test_auto_starts_more_agents_by_default(self):
+        from state import AUTO_AGENT_LIMIT, DEFAULT_AGENT_LIMIT, agent_limit
+        self.assertEqual(agent_limit({'routingMode': 'auto'}), AUTO_AGENT_LIMIT)
+        self.assertEqual(agent_limit({'routingMode': 'direct'}), DEFAULT_AGENT_LIMIT)
+        self.assertEqual(agent_limit({'routingMode': 'auto', 'agentLimit': 3}), 3)  # /cli agents max wins.
 
     def test_the_files_line_says_what_a_task_claims(self):
         (self.project / 'Makefile').write_text('all:\n', encoding='utf-8')

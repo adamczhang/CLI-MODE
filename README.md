@@ -60,7 +60,7 @@ decides what to hand to your agents, writes the task, checks the result and tell
 | Feature | What it unlocks |
 |---|---|
 | **Six agents, one chat** | Use Antigravity, Claude Code, Grok Build, Cursor, GitHub Copilot and Codex CLI from Claude Code, each on its own plan. |
-| **AUTO mode** (Claude Code's default) | Claude and your agent as partners: Claude works itself and hands over long jobs, parallel parts and reviews, then checks the result. |
+| **AUTO mode** (Claude Code's default) | Claude Opus leads and checks; a cheaper engine from another provider does most of the work: long jobs and parallel parts, each on its own agent. |
 | **Several named agents at once** | A builder, a reviewer and a researcher working side by side; one prompt to several agents to compare answers. |
 | **Change receipts, diff and undo** | Every turn ends with what changed; `/cli undo` puts an agent's turn back. |
 | **Your tests after every change** | The answer says whether your tests still pass. |
@@ -100,14 +100,17 @@ stays until you switch back.
 - **DIRECT is the pass-through, and you orchestrate.** Every `/d` goes to the agent as you wrote it, with none of
   AUTO's planning and checking in between. You decide how many agents run and how the work is split. Use it when
   you want your CLI agent's subscription to do all the work, with Claude's usage kept to a minimum.
-- **AUTO is a partnership, not a pass-through.** Claude works on your request itself, as it would without
-  CLI-MODE, and hands work to your agent only when a handoff is worth it: a long job, a long message full of data,
-  independent parts that can run at once, a second opinion or review, or when you ask for the agent. Each
-  handoff costs about half a minute of Claude's own turns, and in usage tests Claude finished small and medium work
-  faster than any agent. Sending everything through AUTO would be slower than either mode.
-- **Pick an AUTO agent that brings something Claude doesn't:** a different model that is at least as capable, such
-  as Codex on GPT-6 Sol or Astra next to Claude Opus. A second model's view, and long work carried on another
-  subscription, are worth a handoff. Passing work from Opus to a much smaller model is not.
+- **AUTO is a partnership, not a pass-through.** Claude keeps quick work and anything that needs its judgment or
+  this conversation, and hands your agent the work worth handing over: a long job, a long message full of data,
+  independent parts that can run at once (each on its own agent), a review, or whatever you ask the agent to do.
+  Each handoff costs about half a minute of Claude's own turns, so sending every small request through AUTO would
+  be slower than either mode.
+- **Pair Opus with a cheaper execution engine.** AUTO's use case is Claude Opus as the lead, planning, writing
+  well-specified tasks and checking each result, with a less expensive model from another provider (a cheaper API
+  model or another subscription, such as Gemini Flash through Antigravity) carrying out the work. The aim is to
+  move most of the work, around 60%, off Claude and onto that cheaper engine, while Claude keeps the parts that need
+  its judgment. A second top-tier model as the agent costs about as much as Claude doing the work itself: it buys a
+  second opinion, not savings.
 
 1. Run **`/cli`**. The first time, pick your **AUTO agent** and its model, the usual way; the choice is
    remembered for every conversation, and afterwards `/cli` offers it as **1**. Any other agent you start from
@@ -157,7 +160,7 @@ What to know about AUTO:
   Choosing an AUTO agent, from the Mode page or by command, always turns AUTO on and starts it (and the backup).
   The AUTO settings page (or `/cli mode effort <level>` and `/cli mode fast on|off`) sets the AUTO agent's effort
   and Codex's own fast mode; running agents take them in place, with no restart.
-- **Long prompts go by reference:** a long message (8,000 characters or more), such as a spec with data pasted in,
+- **Long prompts go by reference:** a long message (4,000 characters or more), such as a spec with data pasted in,
   is saved for the agents to read, and Claude's task points to it instead of copying the data out again.
 - **For developers:** each task Claude writes is kept in `Agent_Working_Folder/.cli-mode/tasks/` (Goal,
   Context, Inputs, Files, Do not, Done when, Report); agents never commit or push; each result carries the change receipt and

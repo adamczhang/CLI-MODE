@@ -55,7 +55,7 @@ TEMPLATE = ('Goal: what to achieve, in one or two lines\n'
 # Pass by reference (usage test, 2026-09-27: handed off, a 25k-token prompt cost Claude 7 minutes and 25-30k output
 # tokens retyping its data for the agent): a prompt this long is saved where the agents can read it, and the task
 # names it in its Inputs line.
-PROMPT_SAVE_MIN = 8000  # Characters.
+PROMPT_SAVE_MIN = 4000  # Characters: a prompt this long is saved, and tasks point to it instead of restating it.
 PROMPTS_KEPT = 20
 # One writer per file: a writing task claims the files and folders its Files line names, and no two running tasks
 # (nor Claude's own edits) may change the same file. A task without that line, and any other request, claims them all;
@@ -592,8 +592,9 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         'constraints, name the files the request names, and let the agent explore. Do not guess either: name what '
         'you have not checked as something for the agent to find out, not as a fact or a suspect. When the user\'s '
         'message was long, CLI-MODE saves it and says where (Prompt saved: ...): name that file in the task\'s Inputs '
-        'line, with the markers of the part the agent needs, and never copy its data into the task or the project '
-        'yourself.\n'
+        'line, with the heading and markers of the part the agent needs, and leave the part there: Context adds only '
+        'what the saved prompt does not say (decisions, constraints, the other agents\' parts), and you never copy '
+        'its spec or data into the task or the project yourself.\n'
         'One writer per file: a writing task\'s Files line names the only files or folders it may change (without one, '
         'it claims the whole project; `none` claims no project file, for work that writes only in its working folder), '
         'and CLI-MODE refuses a handoff, or an edit of yours, that would change a file another running task may '
@@ -601,7 +602,8 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         '(`--agent <name>`), or start another ' + kind + ' like ' + name + ' for it with `--agent new` (15-40 s; at '
         'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn. A request with three '
         'or more independent parts that change different files, each several minutes of work, goes out at once, one '
-        'task per part on its own agent (`--agent new` beyond the idle ones), each with its own Files line; parts '
+        'task per part on its own agent (`--agent new` beyond the idle ones), each with its own Files line: write every '
+        'task file in one message, then run every handoff in the next, so the whole request goes out in two turns; parts '
         'that share files stay in one task, and a part of a minute or two stays in another part\'s task or is yours: '
         'a new agent starts cold, and costs more than such a part.\n'
         'To hand off, all in one message: (1) a line that opens with this attribution, exactly as written but with the '

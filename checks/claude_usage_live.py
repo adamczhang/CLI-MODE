@@ -84,6 +84,7 @@ def saved_state(session, workspace):
     from state import Store
     return Store(session, workspace, data()).read()
 import claude_usage_fleet as fleet  # noqa: E402
+import claude_usage_multi as multi  # noqa: E402
 
 CODEX_SESSIONS = Path.home() / '.codex' / 'sessions'
 AGY_CONVERSATIONS = Path.home() / '.gemini' / 'antigravity-acp' / 'conversations'
@@ -94,7 +95,7 @@ CENT = Decimal('0.01')
 EXTRA = ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'PowerShell']
 WORKING = ('captured', 'submitting')
 STOP_AT = 90  # Claude's 5-hour window, percent: no new run starts above it.
-TIMEOUT = {'1': 20 * 60, '5': 45 * 60, '15': 75 * 60, '25': 100 * 60}
+TIMEOUT = {'1': 20 * 60, '2': 30 * 60, '5': 45 * 60, '12': 60 * 60, '15': 75 * 60, '25': 100 * 60, '50': 100 * 60}
 QUIET = 30  # Seconds Claude must stay idle before a run counts as finished (a wake-up may follow).
 NO_QUESTIONS = ' Work without asking me questions: make reasonable assumptions and say what they were. Do not commit.'
 
@@ -413,7 +414,8 @@ def tasks():
 
 
 SETS = {'shop': (SEED, tasks), 'fleet': (fleet.SEED, fleet.tasks), 'fleet5': (fleet.SEED, fleet.tasks5),
-        'hot': (fleet.HOT_SEED, fleet.tasks_hot), 'par': (fleet.HOT_SEED, fleet.tasks_par)}
+        'hot': (fleet.HOT_SEED, fleet.tasks_hot), 'par': (fleet.HOT_SEED, fleet.tasks_par),
+        'multi': (fleet.HOT_SEED, multi.tasks)}
 
 
 # ---------------------------------------------------------------- checking the work
@@ -437,6 +439,8 @@ def numbers(text):
 
 
 def check(name, workspace, reply, answers):
+    if name in multi.ALL_NAMES:
+        return multi.check(name, workspace, reply, answers, pytest_counts)
     if name in fleet.NAMES + fleet.NAMES5 + fleet.NAMES_HOT + fleet.NAMES_PAR:
         return fleet.check(name, workspace, reply, answers, pytest_counts)
     tests = pytest_counts(workspace)
@@ -981,7 +985,7 @@ def main():
     for name, (prompt, answers) in all_tasks.items():
         (out / (name + '.prompt.txt')).write_text(prompt, encoding='utf-8')
         (out / (name + '.answers.json')).write_text(json.dumps(
-            {key: value for key, value in answers.items() if key != 'csv'}, indent=1), encoding='utf-8')
+            {key: value for key, value in answers.items() if key not in ('csv', 'files', 'test')}, indent=1), encoding='utf-8')
     print(json.dumps({name: dict(chars=len(p), tokensApprox=len(p) // 4) for name, (p, _) in all_tasks.items()}))
     if args.dry:
         print('RESULTS', out)
