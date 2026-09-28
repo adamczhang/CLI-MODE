@@ -69,6 +69,38 @@ decides what to hand to your agents, writes the task, checks the result and tell
 | **Persistent agents** | Each agent keeps its conversation across prompts, and can be brought into a new session. |
 | **Guided setup** | `/cli` checks each agent's CLI, sign-in and model access, and guides installation. |
 
+## Use cases
+
+**AUTO** puts a Claude model in the lead and gives the work to agents. **DIRECT** leaves you in the lead and keeps
+Claude out of the way. Which setup pays off depends on who pays for each side:
+
+| Use case | Mode | Lead → does the work | Why it pays off |
+|---|---|---|---|
+| **Premium lead, cheaper engine** | AUTO | Opus or Fable → Codex on Luna, Antigravity on Gemini Flash | Most of the work moves to a cheaper subscription, and Claude still plans and checks every result. |
+| **Fable lead, Opus hands** | AUTO | Fable → Claude Code on Opus | Fable, which counts heavily against your limits, spends them on judgment only. Opus does the building at its normal rate. |
+| **Opus lead, lighter Claude hands** | AUTO | Opus → Claude Code on Sonnet | Routine building runs on a model that uses less of your limit, with Opus reviewing every result. |
+| **Fan-out** | AUTO | One lead → up to five agents | Independent parts run at once, and one wake-up brings back every result, with the tests run once for the batch. |
+| **Second opinion** | AUTO | Claude → a read-only review by another model family | A model trained differently catches different mistakes, and a read-only review can't change a file. |
+| **Backup engine** | AUTO | AUTO agent, then a backup | When the AUTO agent fails or runs out of usage, the backup takes the task. |
+| **Bake-off** | DIRECT | You → one prompt to several agents | `/d cod-7k,gro-4k,cop-2m <prompt>` compares answers, change receipts and test results side by side. |
+| **Hand-split run** | DIRECT | You → one part per agent | Back-to-back `/d` messages, each to its own agent, all running at once. Claude's usage stays near zero. |
+| **Relay pipeline** | DIRECT | You → research → build → review | Pass each answer's box to the next agent, so each step runs on the model best at it. |
+
+- **The lead's share is small and steady.** On a real 13,000-line WPF project, Claude's planning and checking in
+  AUTO cost 5–12% of doing the same task alone, whichever agent did the work.
+  - With Codex on GPT-5.6 Luna (Extra High) doing the work, 88–93% of it moved off Claude.
+  - Every task passed its build, its own test and hidden acceptance checks, with one handoff each.
+  - The Codex weekly meter didn't move.
+- **A cheaper engine is usually a slower one.** Luna took about 12 minutes per task whatever its size, where Claude
+  alone took 3–6. Use it for long or parallel work, and let Claude keep quick fixes, which it does by default.
+- **Fable lead, Opus hands** keeps everything on one Claude subscription.
+  - **Fable's cost:** Fable models use your limits faster than other Claude models. On Max plans (and premium
+    Team and Enterprise seats) they may use at most half of your weekly limit. On Pro plans (and standard seats)
+    they run on usage credits only.
+  - **What the lead needs:** only a small share of the work. Your Fable allowance, or credits, goes only to
+    judging each request and result, and Opus builds at its normal rate.
+  - Check [Claude's plan details](https://support.claude.com) for the current rules.
+
 ## Supported CLIs
 
 | Agent | Tag | Access levels | `/cli usage` | Install guide |
@@ -82,7 +114,7 @@ decides what to hand to your agents, writes the task, checks the result and tell
 
 Every command that takes an agent accepts its tag or full name (`cla` or `claude`, `gro` or `grok`), and the
 tag starts its generated names (`GRO-4K`). Each agent works in the conversation's folder with its own account
-and model access. Up to four run at once, in any mix; conversations do not move between providers.
+and model access. Up to four run at once (five in AUTO), in any mix; conversations do not move between providers.
 
 ## Claude Code features
 
@@ -105,12 +137,7 @@ stays until you switch back.
   independent parts that can run at once (each on its own agent), a review, or whatever you ask the agent to do.
   Each handoff costs about half a minute of Claude's own turns, so sending every small request through AUTO would
   be slower than either mode.
-- **Pair Opus with a cheaper execution engine.** AUTO's use case is Claude Opus as the lead, planning, writing
-  well-specified tasks and checking each result, with a less expensive model from another provider (a cheaper API
-  model or another subscription, such as Gemini Flash through Antigravity) carrying out the work. The aim is to
-  move most of the work, around 60%, off Claude and onto that cheaper engine, while Claude keeps the parts that need
-  its judgment. A second top-tier model as the agent costs about as much as Claude doing the work itself: it buys a
-  second opinion, not savings.
+- **Which setup pays off** depends on who pays for each side: see [Use cases](#use-cases).
 
 1. Run **`/cli`**. The first time, pick your **AUTO agent** and its model, the usual way; the choice is
    remembered for every conversation, and afterwards `/cli` offers it as **1**. Any other agent you start from

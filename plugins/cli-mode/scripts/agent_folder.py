@@ -343,6 +343,14 @@ def instruction(name, brief=False, label=None, auto=False):
             'in your answer.')
 
 
+def remaining_note():
+    """Added to every AUTO task: the answer's last line says whether work is left, so CLI-MODE can tell Claude when
+    a fresh agent at a higher effort should take it (relay_view.remaining, auto_mode's ESCALATE line)."""
+    return ('\n\n---\nCLI-MODE: end your answer with one line about this task only (not work outside it): '
+            '`REMAINING: none` when you think it is done, or `REMAINING: <what is left of it, unsure, or worth '
+            'another look; where; and what makes you doubt it>`.')
+
+
 ATTACHMENTS = 'attachments'
 ATTACHMENT_LIMIT = 250 * 1024 * 1024  # Bytes per attached file; a larger one is left out and named in the reply.
 UPLOAD_ID = re.compile(r'^[0-9a-f]{8}-(?=.)')  # Claude Code's upload prefix: `878dde39-image.jpg`.

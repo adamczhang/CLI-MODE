@@ -4,6 +4,7 @@ fallback). The result never reaches the user's own relays."""
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -346,7 +347,9 @@ class Handoffs(AutoBase):
         self.write_task('t2', 'Goal: add a second parser test.\nFiles: tests/')
         self.ctl('handoff', '--task', 't2')
         self.drain(lead)
-        self.assertNotIn('CLI-MODE:', self.backend.sent[-1])  # Its session has the note already.
+        later = self.backend.sent[-1]
+        self.assertNotIn('Agent_Working_Folder/', later)  # Its session has the folder note already.
+        self.assertIn('REMAINING: none', later)  # Every AUTO task: say whether work is left (the ESCALATE check).
         self.assertFalse(agent_folder.brief_path(self.project).exists())  # AUTO starts no brief.
         self.prompt('/cli off')
         self.assertFalse(agent_folder.brief_path(self.project).exists())
@@ -450,31 +453,73 @@ class Handoffs(AutoBase):
         self.prompt('/cli off')  # The extras close with the rest.
         self.assertEqual(self.store().read()['owned'], [])
 
-    def test_a_new_agent_waits_for_another_start_instead_of_failing(self):
-        """Live, 2026-09-27: three parts went out at once with --agent new; the third start found the second one
-        under way and was refused, so its part queued behind a busy agent. Now it waits, then starts its own."""
+    def test_new_agents_start_at_the_same_time(self):
+        """Live, 2026-09-27/28: three parts went out at once with --agent new; the third start was refused while the
+        second ran, and later waited for it, about 20 s a start. Extras now start side by side, each on its own entry,
+        and a menu's activation in progress does not hold them."""
         import threading
+        from controller import Controller
         self.auto()
-        with self.store().edit() as saved:  # Another agent's start, under way.
+        with self.store().edit() as saved:  # The user's own activation, under way in a menu.
             saved['pending'] = dict(id='x' * 32, stage='verifying', phase='activation')
+        original = Controller.provision
 
-        def finish():
-            with self.store().edit() as saved:
-                saved.pop('pending', None)
-        timer = threading.Timer(1.5, finish)
-        timer.start()
-        self.write_task('t2', 'Goal: fix the command line.\nFiles: app/cli.py')
-        began = time.monotonic()
-        result = self.ctl('handoff', '--task', 't2', '--agent', 'new')
-        timer.join()
-        self.assertGreaterEqual(time.monotonic() - began, 1.0)  # It waited for the other start.
-        self.assertEqual(result['agent'], 'Antigravity-02')
-        with self.store().edit() as saved:  # A start that never ends: it gives up, and says what to do.
-            saved['pending'] = dict(id='y' * 32, stage='verifying', phase='activation')
-        self.write_task('t3', 'Goal: write the docs.\nFiles: docs/')
-        with patch.object(auto_mode, 'START_WAIT', 1):
-            with self.assertRaisesRegex(RuntimeError, 'still starting after 1 s'):
-                self.ctl('handoff', '--task', 't3', '--agent', 'new')
+        def slow(control, owned, generation, pending=None):
+            time.sleep(2.0)  # A real start takes 15-40 s.
+            return original(control, owned, generation, pending)
+        for task, where in (('t2', 'app/cli.py'), ('t3', 'docs/')):
+            self.write_task(task, 'Goal: work on ' + where + '.\nFiles: ' + where)
+        results, began = {}, time.monotonic()
+        with patch.object(Controller, 'provision', slow):
+            threads = [threading.Thread(target=lambda task=task: results.__setitem__(
+                task, self.ctl('handoff', '--task', task, '--agent', 'new'))) for task in ('t2', 't3')]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertLess(time.monotonic() - began, 3.5)  # Side by side: one after the other takes 4 s or more.
+        self.assertEqual({results['t2']['agent'], results['t3']['agent']}, {'Antigravity-02', 'Antigravity-03'})
+        state = self.store().read()
+        self.assertEqual(state['pending']['id'], 'x' * 32)  # The menu's activation is untouched.
+        self.assertTrue(all(item['ready'] and 'starting' not in item for item in state['owned']))
+        self.assertEqual(len(state['auto']['extras']), 2)
+
+    def test_a_batch_runs_the_tests_once_after_its_last_handoff(self):
+        """Live, 2026-09-27: an agent's test run saw its siblings' files half written and said Tests FAILED. A handoff
+        that ends while the rest of its batch still works defers its run; the last one's run covers them all."""
+        import test_gate
+        (self.project / 'app').mkdir(parents=True, exist_ok=True)
+        for name in ('one.py', 'two.py'):
+            (self.project / 'app' / name).write_text('original\n', encoding='utf-8')
+        for words in (['init', '-q'], ['add', '-A'], ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm',
+                                                      'base']):
+            subprocess.run(['git'] + words, cwd=self.project, check=True, capture_output=True)
+        runs = Path(self.data) / 'test-runs.txt'
+        test_gate.set_command(self.data, self.project, '"' + sys.executable + '" -c "open(r\'' + str(runs) +
+                              '\', \'a\').write(\'x\')"')
+        state = self.auto()
+        original, edits = self.backend.start, iter(('one.py', 'two.py'))
+
+        def start(owned, args, timeout=60):
+            process = original(owned, args, timeout)
+            if '--file' not in args:
+                return process
+            target = self.project / 'app' / next(edits)
+            target.write_text('changed\n', encoding='utf-8')
+            return runtime_process([dict(type='touched', toolCallId='call-1', kind='edit',
+                                         locations=[dict(path=str(target))]),
+                                    dict(type='message', text='Done.'), runtime_result()])
+        self.backend.start = start
+        self.write_task('t1', 'Goal: fix one.\nFiles: app/one.py')
+        first = self.ctl('handoff', '--task', 't1')['requestId']
+        self.write_task('t2', 'Goal: fix two.\nFiles: app/two.py')
+        second = self.ctl('handoff', '--task', 't2')['requestId']  # Queued: still at work when the first ends.
+        self.drain(state['auto']['agent'])
+        records = self.store().read()['requests']
+        self.assertEqual(runs.read_text(encoding='utf-8'), 'x')  # One run for the batch, after the last handoff.
+        self.assertTrue(records[first]['tests']['passed'] and records[first]['tests'].get('batch'))
+        self.assertTrue(records[second]['tests']['passed'])
+        self.assertFalse(any(records[key].get('testsDeferred') for key in (first, second)))
 
     def test_handoffs_sent_together_wake_claude_once(self):
         """Live, 2026-09-28: five parallel parts woke Claude five times, each wake-up re-reading the whole 50k-token
@@ -516,6 +561,45 @@ class Handoffs(AutoBase):
     def _settle(self, request):
         with self.store().edit() as saved:
             saved['requests'][request].update(status='completed', endedAt=time.time())
+
+    def test_an_agent_starts_while_claude_writes_the_tasks(self):
+        """Live, 2026-09-28: each extra started about 40 s after its handoff. Writing more task files than there are
+        free agents now starts one in the background at once, and `--agent new` takes it instead of starting another."""
+        import subprocess as sp
+        state = self.auto()
+        self.write_task('t1', 'Goal: fix parse().\nFiles: app/parser.py')
+        launched = []
+        with patch.object(sp, 'Popen', lambda command, **options: launched.append(command)):
+            allowed = self.pre('Write', file_path=str(auto_mode.task_file(self.project, 't1')), content=TASK)
+            self.assertEqual(allowed['permissionDecision'], 'allow')
+            self.assertEqual(launched, [])  # One task, and the AUTO agent is free: nothing to warm.
+            self.pre('Write', file_path=str(auto_mode.task_file(self.project, 't2')), content=TASK)
+        self.assertEqual(len(launched), 1)
+        self.assertEqual(launched[0][-3:-1], ['warm', '--token'])
+        warming = [item for item in self.store().read()['owned'] if item.get('warm')]
+        self.assertEqual((len(warming), warming[0]['alias'], warming[0]['ready']), (1, 'Antigravity-02', False))
+        self.assertEqual(self.ctl('warm', '--token', launched[0][-1])['agent'], 'Antigravity-02')  # The background start.
+        self.ctl('handoff', '--task', 't1')
+        self.write_task('t2', 'Goal: fix the command line.\nFiles: app/cli.py')
+        result = self.ctl('handoff', '--task', 't2', '--agent', 'new')
+        self.assertEqual(result['agent'], 'Antigravity-02')  # The warm one, not a third.
+        owned = self.store().read()['owned']
+        self.assertEqual(len(owned), 2)
+        self.assertFalse(any(item.get('warm') or item.get('claimed') for item in owned))
+        self.assertIn(owned[1]['name'], self.store().read()['auto']['extras'])
+        self.drain(state['auto']['agent'])
+
+    def test_cli_list_says_what_the_agents_did(self):
+        state = {'requests': {
+            'a': dict(routingMode='auto', handoff={'task': 't1'}, status='completed', session='s1', submittedAt=100,
+                      endedAt=220, changes=dict(files=2, added=30, removed=4)),
+            'b': dict(routingMode='auto', handoff={'task': 't2'}, status='completed', session='s2', submittedAt=100,
+                      endedAt=160, changes=dict(files=1, added=10, removed=0)),
+            'c': dict(routingMode='auto', handoff={'task': 't3'}, status='submitting', session='s1', submittedAt=300),
+            'd': dict(routingMode='direct', status='completed', session='s1')}}
+        self.assertEqual(auto_mode.work_summary(state), 'Agents did 2 tasks for Claude on 2 agents: 3 files changed '
+                                                        '(+40 -4), 3.0 min of their work.')
+        self.assertIsNone(auto_mode.work_summary({'requests': {}}))
 
     def test_auto_starts_more_agents_by_default(self):
         from state import AUTO_AGENT_LIMIT, DEFAULT_AGENT_LIMIT, agent_limit
@@ -843,6 +927,204 @@ class Ledger(AutoBase):
         self.assertIn(label + ': finished, Claude has not read it yet.', self.prompt('/cli list')['reason'])
         self.ctl('relay', '--request', request, '--for-host')
         self.assertIn(label + ': finished, read.', self.prompt('/cli list')['reason'])
+
+
+LEVELS = [('Low', 'low'), ('Medium', 'medium'), ('High', 'high'), ('Extra High', 'xhigh'), ('Max', 'max')]
+
+
+class Escalation(AutoBase):
+    """Upgraded Fable mode (2026-09-28): an agent below its highest effort that reports work left gets an ESCALATE
+    line in its result, naming a fresh agent at that effort, with the first agent's answer passed on by reference.
+    Claude still decides. The fake agent (Antigravity) has no effort of its own, so these give it Claude's levels."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = patch.object(auto_mode, 'entry_efforts', return_value=LEVELS)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def effort(self, session, value):
+        with self.store().edit() as state:
+            for item in state['owned']:
+                if item['name'] == session:
+                    item['settings']['effortValue'] = value
+
+    def result(self, answer, effort='medium'):
+        """One handoff whose agent answers with `answer` (the fake echoes its task), read as Claude reads it."""
+        lead = self.auto()['auto']['agent']
+        self.effort(lead, effort)
+        self.write_task('t1', 'Goal: hunt the queue modules.\nFiles: app/\n\n' + answer)
+        request = self.ctl('handoff', '--task', 't1')['requestId']
+        self.drain(lead)
+        return self.ctl('relay', '--request', request, '--for-host')['text']
+
+    def test_the_answer_says_what_is_left(self):
+        import relay_view
+        for answer, left in (
+                ('Fixed two.\nREMAINING: none', ''),
+                ('Fixed two.\n**REMAINING:** routines.ts: the once path looks off at the boundary.',
+                 'routines.ts: the once path looks off at the boundary'),
+                ('REMAINING: a\nmore\nREMAINING: the last one wins', 'the last one wins'),
+                ('Fixed two. Several planted bugs are probably still there.',
+                 'Several planted bugs are probably still there.'),
+                ('Fixed two. All tests pass.', None)):
+            with self.subTest(answer=answer):
+                self.assertEqual(relay_view.remaining(answer), left)
+        long = relay_view.remaining('REMAINING: ' + 'x' * 1000)  # A line, not a paragraph: its answer has the rest.
+        self.assertEqual(len(long), relay_view.REMAINING_MAX)
+        self.assertTrue(long.endswith('…'))
+
+    def test_work_left_below_the_top_effort_escalates_with_what_it_learned(self):
+        text = self.result('REMAINING: room-turn-timeout.ts: a late card may not expire the budget; unsure why.')
+        line = next(item for item in text.split('\n') if item.startswith('ESCALATE: '))
+        self.assertEqual(text.split('\n')[2], line)  # Right under the CHECK line.
+        request = re.search(r'^HANDOFF ([0-9a-f]{32}):', text).group(1)
+        for part in ('worked at Medium effort', 'a late card may not expire the budget', 'at Max effort',
+                     '`--agent new --effort max --escalates ' + request + '`', 'Goal and Files cover only what it names',
+                     'several separate areas: one agent each, all at once',
+                     '(what it fixed, ruled out and suspects)', 'Context: its doubt in one line',
+                     'It works and reports once', 'Skip it only for a trivial leftover'):
+            self.assertIn(part, line)
+        self.assertRegex(line, r'Inputs: (`Agent_Working_Folder/[^`]+/answers/[^`]+`|its answer above)')
+
+    def test_no_escalation_when_done_or_already_at_the_top(self):
+        self.assertNotIn('ESCALATE:', self.result('REMAINING: none'))
+        self.prompt('/cli off')
+        self.assertNotIn('ESCALATE:', self.result('REMAINING: routines.ts still unsure.', effort='max'))
+
+    def test_at_the_agent_limit_it_names_an_idle_agent(self):
+        with self.store().edit() as saved:
+            saved['agentLimit'] = 1
+        text = self.result('REMAINING: routines.ts still unsure.')
+        self.assertIn('`--agent <an idle agent> --effort max --escalates ', text)
+        self.assertIn('(the agent limit is reached', text)
+
+    def escalate(self, parent, effort='max', task='t2', left='REMAINING: none', agent='new'):
+        """The escalation of `parent`, to its agent at `effort` (raised in place: the fake has no effort of its own)."""
+        from controller import Controller
+        self.write_task(task, 'Goal: look again at the budget.\nFiles: app/' + task + '.py\n\n' + left)
+
+        def raised(control, session, effort=None, fast=None):
+            self.effort(session, effort)
+            return 'Antigravity-01 now works with it.'
+        with patch.object(Controller, 'reconfigure', autospec=True, side_effect=raised):
+            return self.ctl('handoff', '--task', task, '--agent', agent, '--effort', effort, '--escalates', parent)
+
+    def test_each_task_escalates_once_and_its_result_is_final(self):
+        from controller import Controller
+        text = self.result('REMAINING: room-turn-timeout.ts: a late card may not expire the budget.')
+        parent = re.search(r'^HANDOFF ([0-9a-f]{32}):', text).group(1)
+        lead = self.store().read()['auto']['agent']
+        child = self.escalate(parent, agent='auto', left='REMAINING: routines.ts: the once path skips its boundary.')
+        state = self.store().read()
+        self.assertEqual(state['requests'][child['requestId']]['handoff']['escalates'], parent)
+        self.assertEqual(state['requests'][parent]['escalatedBy'], [child['requestId']])
+        self.assertEqual(state['requests'][parent]['doubt'],
+                         'room-turn-timeout.ts: a late card may not expire the budget')
+        self.drain(lead)
+        result = self.ctl('relay', '--request', child['requestId'], '--for-host')['text']
+        line = next(item for item in result.split('\n') if item.startswith('FOLLOW-UP: '))
+        for part in ('was the Max-effort look at: "room-turn-timeout.ts: a late card may not expire the budget"',
+                     'It reports: "routines.ts: the once path skips its boundary"',
+                     'Its result is final: do not send this again', 'Only if that names a different issue',
+                     '--escalates ' + child['requestId']):
+            self.assertIn(part, line)
+        self.assertNotIn('ESCALATE:', result)
+        # The same task again after its round: refused. (Several agents of one round go together; see below.)
+        with self.store().edit() as saved:
+            saved['requests'][parent]['escalatedAt'] -= Controller.BATCH_WINDOW + 1
+        with self.assertRaisesRegex(RuntimeError, 'has had its escalation'):
+            self.escalate(parent, task='t3', agent='auto')
+        # Read again, the escalated task shows no second ESCALATE line.
+        self.assertNotIn('ESCALATE:', self.ctl('relay', '--request', parent, '--for-host')['text'])
+
+    def test_a_round_may_send_several_agents_and_other_tasks_still_escalate(self):
+        text = self.result('REMAINING: a.py and b.py both look off.')
+        parent = re.search(r'^HANDOFF ([0-9a-f]{32}):', text).group(1)
+        lead = self.store().read()['auto']['agent']
+        first = self.escalate(parent, agent='auto', task='t2')
+        second = self.escalate(parent, agent='auto', task='t3')  # The same round: both go.
+        self.assertEqual(self.store().read()['requests'][parent]['escalatedBy'],
+                         [first['requestId'], second['requestId']])
+        self.drain(lead)
+        self.effort(lead, 'medium')  # A different task, back at Medium: it can escalate too.
+        self.write_task('t4', 'Goal: other module.\nFiles: app/other.py\n\nREMAINING: other.py unsure.')
+        other = self.ctl('handoff', '--task', 't4')['requestId']
+        self.drain(lead)
+        self.assertIn('ESCALATE: ', self.ctl('relay', '--request', other, '--for-host')['text'])
+
+    def test_an_unknown_task_to_escalate_is_refused(self):
+        self.auto()
+        with self.assertRaisesRegex(RuntimeError, 'No AUTO handoff ' + 'f' * 32 + ' to escalate'):
+            self.escalate('f' * 32)
+
+    def test_the_rule_says_to_follow_it(self):
+        state = self.auto()
+        rule = auto_mode.rule(self.data, state, self.project, 'python controller.py handoff --task <id>')
+        self.assertIn('A result with an ESCALATE line', rule)
+        self.assertIn('Each task escalates once', rule)
+        self.assertIn('its result (a FOLLOW-UP line) is final, and you hand on only a different issue', rule)
+
+    def test_every_auto_task_asks_what_is_left_and_why(self):
+        lead = self.auto()['auto']['agent']
+        for task in ('t1', 't2'):
+            self.write_task(task, 'Goal: ' + task + '.\nFiles: app/' + task + '.py')
+            self.ctl('handoff', '--task', task)
+            self.drain(lead)
+            self.assertIn('`REMAINING: none`', self.backend.sent[-1])
+            self.assertIn('what makes you doubt it', self.backend.sent[-1])
+            self.assertIn('about this task only (not work outside it)', self.backend.sent[-1])
+
+    def test_an_effort_its_model_lacks_is_refused(self):
+        self.auto()
+        self.write_task('t1', 'Goal: x.\nFiles: app/')
+        with self.assertRaisesRegex(RuntimeError, r'No effort "ultra" for this agent\. Its levels: low, medium, high, '
+                                                  r'xhigh, max\.'):
+            self.ctl('handoff', '--task', 't1', '--effort', 'ultra')
+        with patch.object(auto_mode, 'entry_efforts', return_value=[]):
+            with self.assertRaisesRegex(RuntimeError, 'no effort setting of its own'):
+                self.ctl('handoff', '--task', 't1', '--effort', 'max')
+
+    def test_a_new_agent_starts_at_the_effort_and_skips_a_warm_one_at_another(self):
+        from controller import Controller
+        control = Controller(self.store(), self.backend)
+        with patch.object(Controller, 'lead_choice', return_value=dict(agent='claude', model='opus', access='allow',
+                                                                       effort='medium', fast=None)), \
+                patch.object(Controller, 'claim_warm', return_value='WARM') as warm, \
+                patch.object(Controller, 'start_alongside', return_value='NEW') as start,                 patch.object(auto_mode, 'agent_entry', return_value={'name': 'NEW'}):
+            self.assertEqual(control.start_extra(effort='max'), 'NEW')
+            warm.assert_not_called()
+            self.assertEqual(start.call_args.args[0]['effort'], 'max')
+            self.assertEqual(control.start_extra(effort='medium'), 'WARM')  # Its own effort: a warm one will do.
+            self.assertEqual(control.start_extra(), 'WARM')
+
+    def test_an_idle_agent_takes_the_effort_in_place_and_a_busy_one_refuses(self):
+        from controller import Controller
+        lead = self.auto()['auto']['agent']
+        self.effort(lead, 'medium')
+        self.write_task('t1', 'Goal: x.\nFiles: app/x.py')
+
+        def raised(control, session, effort=None, fast=None):
+            self.effort(session, effort)
+            return 'Antigravity-01 now works with it.'
+        with patch.object(Controller, 'reconfigure', autospec=True, side_effect=raised) as reconfigure:
+            result = self.ctl('handoff', '--task', 't1', '--effort', 'max')
+            reconfigure.assert_called_once()
+        state = self.store().read()
+        self.assertEqual(state['requests'][result['requestId']]['handoff']['effort'], 'max')  # Recorded.
+        self.write_task('t2', 'Goal: y.\nFiles: app/y.py')
+        self.effort(lead, 'medium')  # t1 is still waiting for the agent: it is busy.
+        with self.assertRaisesRegex(RuntimeError, 'is working, so its effort cannot change now'):
+            self.ctl('handoff', '--task', 't2', '--effort', 'max')
+
+    def test_the_hook_passes_the_effort_to_the_new_agents_start(self):
+        self.auto()
+        self.write_task('t2', 'Goal: look again at the queues.\nFiles: app/')
+        approved = self.pre('Bash', command=self.command('handoff', '--task', 't2', '--agent', 'new', '--effort', 'max'),
+                            description='x')
+        self.assertEqual(approved['permissionDecision'], 'allow')
+        self.assertRegex(approved['updatedInput']['command'],
+                         r'handoff --task t2 --agent new --request [0-9a-f]{32} --follow --effort max')
 
 
 if __name__ == '__main__':

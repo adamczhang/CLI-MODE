@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### AUTO mode (Claude Code)
+- **Escalation to the highest effort.** Every AUTO task asks its agent to end with `REMAINING: none` or what is
+  left, where, and why it doubts it. When an agent below its model's highest effort reports work left, its result
+  carries an ESCALATE line: hand that to a fresh agent at the highest effort (`handoff --agent new --effort max`),
+  with the first agent's saved answer as the task's Inputs and its doubt as Context. Claude still decides. Each task
+  escalates once (`--escalates` links them; one round may send one agent per area at once), and the escalated
+  agent's result is final: a FOLLOW-UP line hands on only a different issue it names, as new work.
+  `handoff --effort <level>` also sets an idle agent's effort in place.
+
+### Both hosts
+- **A test run that runs out of time is not a failure.** The test gate says it timed out, and the result's check
+  no longer calls it failed. A test command CLI-MODE found on its own gets 3 minutes (one set with `/cli test`
+  keeps 10), so a whole monorepo's suite no longer holds each turn for 10 minutes.
+- **Searches split across agents.** A bug hunt, audit or review of many files is grouped into sets, one per agent,
+  handed out at once; a shared report file stays Claude's.
+- **New agents start side by side.** Several `--agent new` handoffs at once each start their agent at the same
+  time, instead of one after another (about 20 s each); a start never waits for a menu's activation either.
+- **Agents warm up while Claude writes the tasks.** When Claude writes more task files than there are free agents,
+  CLI-MODE starts another in the background at once, and the handoff takes it when ready instead of starting
+  one then (each start took about 40 s). Agents also stay warm between tasks, as before.
+- **AUTO runs up to 5 agents by default** (`/cli agents max <n>` changes it). With more parts than that, Claude
+  queues the rest on running agents and says in its report that the agent limit was reached.
+- **A batch runs the tests once.** A handoff that ends while the rest of its batch still works no longer runs the
+  project's tests on half-written files (they had said Tests FAILED); the last one's run covers the whole batch,
+  and its TESTS line goes on every result.
+- **Tasks tell the agent what Claude already knows**: the test command, the files involved and the project's
+  layout and conventions go in the task's Context, so a cheaper agent spends less time finding its way.
+- **Small requests cost Claude less.** A short request stays with Claude even when it has parts, unless each part
+  is several minutes of work, and a result that says `CHECK: ok` gets a line or two in Claude's report.
+- **`/cli list` shows what the agents did** in the conversation: their tasks, the files and lines they changed,
+  and their minutes of work.
+
 ## 0.4.0 — AUTO: Claude leads, a cheaper engine works — 2026-09-28
 
 ### AUTO mode (Claude Code)

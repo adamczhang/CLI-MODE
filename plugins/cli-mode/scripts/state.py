@@ -19,7 +19,7 @@ REGISTRY = names.REGISTRY
 DEFAULT_ROUTING_MODE = 'direct'  # Codex's only mode; Claude Code starts in AUTO (default_routing_mode).
 MAX_QUEUED_REQUESTS = 32
 DEFAULT_AGENT_LIMIT = 4
-AUTO_AGENT_LIMIT = 6  # AUTO's default (agent_limit); /cli agents max <n> overrides both.
+AUTO_AGENT_LIMIT = 5  # AUTO's default (agent_limit); /cli agents max <n> overrides both.
 MAX_AGENT_LIMIT = 8
 # An idle agent's process exits after this long; its next /d starts it again in the same conversation.
 DEFAULT_TIMEOUT = 60

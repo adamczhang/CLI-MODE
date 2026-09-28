@@ -393,6 +393,8 @@ class DispatchMixin:
                                                  and not auto, label=agent_label(state, session), auto=auto)
                 named = auto
             text += agent_folder.attachments_note(record.get('attachments'))
+            if auto:  # Every AUTO task: its answer ends saying whether work is left (the ESCALATE check).
+                text += agent_folder.remaining_note()
         if hasattr(self.backend, 'validate_prompt'):
             self.backend.validate_prompt(owned)
         if hasattr(self.backend, 'prepare'):

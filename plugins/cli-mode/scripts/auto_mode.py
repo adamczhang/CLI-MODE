@@ -44,7 +44,8 @@ STRENGTH_RULES = {
             'files, and CLI-MODE refuses your own project edits.'),
 }
 TEMPLATE = ('Goal: what to achieve, in one or two lines\n'
-            'Context: files, decisions and constraints the task needs\n'
+            'Context: what you already know that saves exploring (the test command, the files involved, the '
+            'layout and conventions to follow), then decisions and constraints\n'
             'Inputs: files to read first, such as the user\'s saved prompt (the part it needs, by its markers)\n'
             'Files: the only files or folders it may change (other agents may be changing the rest), or none when it '
             'writes only in its own working folder\n'
@@ -64,7 +65,8 @@ PROMPTS_KEPT = 20
 WHOLE = '*'
 EVERYTHING = frozenset(('*', '.', 'all', 'any', 'everything', 'project', 'repo', 'repository'))
 AUTO_TIMEOUT = 120  # Minutes an idle AUTO agent keeps running (its ACPX owner TTL); /cli off closes it sooner.
-START_WAIT = 300  # Seconds an extra agent's start waits for another agent's start to finish.
+WARM_WINDOW = 600  # Seconds: task files this recent and not handed off yet count as waiting for an agent.
+WARM_CLAIM_WAIT = 120  # Seconds `--agent new` waits for a warm agent still starting.
 # Normal since 2026-09-27: in every usage test Claude did small and medium work faster itself, so it decides and
 # hands off only what is worth it. Strong was the default before: a saved Strong counts only when it was chosen.
 DEFAULT_STRENGTH = 'normal'
@@ -161,6 +163,28 @@ def effort_options(root, choice):
         return list(frontends.phase_options(root, choice['agent'], 'effort', settings, adapter.catalog(root)))
     except (ValueError, KeyError, OSError, TypeError):
         return []
+
+
+def entry_efforts(root, entry):
+    """A running agent's effort levels, lowest first, as (label, value): empty when its model has no effort of its
+    own (Antigravity's is part of the model)."""
+    settings = (entry or {}).get('settings') or {}
+    if not entry or not settings.get('model'):
+        return []
+    return effort_options(root, {'agent': entry['backend'], 'model': settings['model'],
+                                 'access': settings.get('access'), 'effort': settings.get('effortValue')})
+
+
+def effort_level(root, entry, wanted):
+    """`--effort <level>` for this agent: the value its model uses, from a label or value in any case."""
+    levels = entry_efforts(root, entry)
+    if not levels:
+        raise RuntimeError('This agent\'s model has no effort setting of its own, so --effort cannot be used with it.')
+    found = next((value for label, value in levels if wanted.casefold() in (label.casefold(), value.casefold())), None)
+    if found is None:
+        raise RuntimeError('No effort "' + wanted + '" for this agent. Its levels: ' +
+                           ', '.join(value for _, value in levels) + '.')
+    return found
 
 
 def effort_name(root, choice):
@@ -482,6 +506,24 @@ def unread(state):
             and not record.get('hostRead')]
 
 
+def work_summary(state):
+    """What the agents have done in this conversation, from CLI-MODE's own records, for the user's /cli list: the
+    work AUTO moved off Claude. None before the first finished handoff."""
+    done = [record for _, record in auto_requests(state) if record.get('status') == 'completed']
+    if not done:
+        return None
+    files = sum(((record.get('changes') or {}).get('files') or 0) for record in done)
+    added = sum(((record.get('changes') or {}).get('added') or 0) for record in done)
+    removed = sum(((record.get('changes') or {}).get('removed') or 0) for record in done)
+    minutes = sum(max(0.0, (record.get('endedAt') or 0) - (record.get('submittedAt') or 0)) for record in done
+                  if record.get('endedAt') and record.get('submittedAt')) / 60
+    agents = len({record.get('session') for record in done})
+    return ('Agents did ' + str(len(done)) + (' task' if len(done) == 1 else ' tasks') + ' for Claude on ' +
+            str(agents) + (' agent' if agents == 1 else ' agents') + ': ' + str(files) +
+            (' file' if files == 1 else ' files') + ' changed (+' + str(added) + ' -' + str(removed) + '), ' +
+            ('%.1f' % minutes) + ' min of their work.')
+
+
 def ledger_lines(state, relay_command=None, limit=LEDGER_SHOWN, active=False):
     """The AUTO ledger: unread results first, then the newest. With `relay_command(request)` (Claude's copy), an
     unread result names its exact relay; without it (the user's /cli list), it says Claude has not read it yet.
@@ -586,10 +628,15 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         'port or refactor across files, many tests to write or fix); a request whose long message CLI-MODE saved '
         '(Prompt saved: ...); independent parts of several minutes each that can run at once; what the user asks the '
         'agent to do; and reviews, second opinions and wide research (read-only). Everything else is yours, and so is '
-        'anything that depends on this conversation: when in doubt, do it yourself. A handoff adds about half a '
+        'anything that depends on this conversation: when in doubt, do it yourself. A short request (a few '
+        'paragraphs, no pasted data) is yours even when it has several parts, unless each part is several minutes of '
+        'work: on small requests a handoff\'s fixed cost outweighs the work it moves. A handoff adds about half a '
         'minute of your own turns and the agent is slower than you, so a needless handoff costs more than doing a '
         'job yourself. Do not read the code to decide, nor to write a task or its Files line: give the goal and '
-        'constraints, name the files the request names, and let the agent explore. Do not guess either: name what '
+        'constraints, name the files the request names, and let the agent explore. What you already know from this '
+        'conversation that would save it exploring goes in Context in a line or two (the test command, the files '
+        'involved, the layout and conventions): a cheaper agent spends most of its time finding its way. Do not '
+        'guess either: name what '
         'you have not checked as something for the agent to find out, not as a fact or a suspect. When the user\'s '
         'message was long, CLI-MODE saves it and says where (Prompt saved: ...): name that file in the task\'s Inputs '
         'line, with the heading and markers of the part the agent needs, and leave the part there: Context adds only '
@@ -600,12 +647,22 @@ def rule(root, state, workspace, handoff_command, style=lambda text: text):
         'and CLI-MODE refuses a handoff, or an edit of yours, that would change a file another running task may '
         'change; a result names any edit outside its claim. Work on other files can run in parallel: hand it to an idle agent '
         '(`--agent <name>`), or start another ' + kind + ' like ' + name + ' for it with `--agent new` (15-40 s; at '
-        'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn. A request with three '
+        'most ' + str(agent_limit(state)) + ' agents run). A task for a busy agent waits its turn: with more parts than '
+        'the limit allows, hand the rest to running agents (`--agent <name>`) and end your report with one line '
+        'saying the agent limit was reached. A request with three '
         'or more independent parts that change different files, each several minutes of work, goes out at once, one '
         'task per part on its own agent (`--agent new` beyond the idle ones), each with its own Files line: write every '
         'task file in one message, then run every handoff in the next, so the whole request goes out in two turns; parts '
         'that share files stay in one task, and a part of a minute or two stays in another part\'s task or is yours: '
-        'a new agent starts cold, and costs more than such a part.\n'
+        'a new agent starts cold, and costs more than such a part. A search across many files with nothing known in '
+        'advance (a bug hunt, an audit, a review of a set of modules) splits the same way: group the files it covers '
+        'into sets of similar size, one per agent up to the limit, and hand each set out at once, each task\'s Files '
+        'line naming its own set; a shared output such as a report file is yours, written from their results. A '
+        'search of a few files stays one task. A result with an ESCALATE line says its agent reported work left '
+        'of its task while below its highest effort: follow it as it says (a fresh agent at that effort, with '
+        '`--escalates`, the first agent\'s answer as Inputs and its doubt as Context). Each task escalates once, and '
+        'the escalated agent works and reports once: its result (a FOLLOW-UP line) is final, and you hand on only a '
+        'different issue it names, as new work.\n'
         'To hand off, all in one message: (1) a line that opens with this attribution, exactly as written but with the '
         'name of the agent you hand it to, then says in plain words what you pass on:\n' +
         style('Passing to ' + name + ':') + '\n(2) the task, written with the Write tool to ' +
@@ -885,13 +942,18 @@ class AutoMixin:
             self.close_page(state)
         return dict(state, message='Mode page closed. /cli mode opens it again.')
 
-    def handoff(self, task, agent=None, read_only=False, request=None, check=False):
+    def handoff(self, task, agent=None, read_only=False, request=None, check=False, effort=None, escalates=None):
         """Hand Claude's task file to an AUTO agent: captured as a /d is, marked as Claude's own (routingMode auto),
         so its result wakes Claude instead of going to the user word for word.
 
         The approval hook normally runs this itself and turns Claude's call into the follow (lever L2). A new agent
         (`--agent new`) takes too long to start in a hook: `check` then runs only the checks that can refuse it, and
-        the background task runs the rest under the `request` id the hook chose (hooks/claude.py:handoff_approval)."""
+        the background task runs the rest under the `request` id the hook chose (hooks/claude.py:handoff_approval).
+
+        `effort` sets the effort this task runs at (an ESCALATE line's `--effort max`): a new agent starts at it, and
+        an idle agent takes it in place, in the same conversation; a busy one cannot change. `escalates` names the
+        handoff whose ESCALATE (or FOLLOW-UP) line this follows: each task escalates once, so a second round for the
+        same one is refused, while the agents of one round (several areas at once) all go."""
         if request is not None and not re.fullmatch(r'[0-9a-f]{32}', request):
             raise ValueError('A handoff --request is 32 lowercase hex characters.')
         state = self.store.read()
@@ -911,13 +973,23 @@ class AutoMixin:
             raise RuntimeError('The task file is over ' + str(TASK_MAX // 1024) + ' KB. Keep the task to what the '
                                'agent needs; it can read the project itself.')
         files = None if read_only else task_files(text, self.store.workspace)
+        if escalates:
+            parent = (state.get('requests') or {}).get(escalates)
+            if not parent or not parent.get('handoff'):
+                raise RuntimeError('No AUTO handoff ' + escalates + ' to escalate. Nothing was handed off.')
+            first = parent.get('escalatedAt')
+            if first and time.time() - first > self.BATCH_WINDOW:
+                raise RuntimeError('That task has had its escalation (each task escalates once). Report what is '
+                                   'still left as unresolved instead. Nothing was handed off.')
         if agent and agent.casefold() == 'new':
             # Another agent like the AUTO agent, for work in parallel: checked first, since it takes 15-40 s to start.
             lead = agent_entry(state, self.handoff_target(state))
+            level = effort_level(self.store.root, lead, effort) if effort else None
             found = files and conflict(state, files)
             if found:
                 raise RuntimeError(conflict_text(state, found, files) + ' No agent was started.')
-            if len(state.get('owned') or []) >= agent_limit(state):
+            warm = any(item.get('warm') and not item.get('claimed') for item in state.get('owned') or [])
+            if len(state.get('owned') or []) >= agent_limit(state) and not warm:  # A warm one is already counted.
                 raise RuntimeError(str(len(state['owned'])) + ' agents are running, the limit, so no agent was started. '
                                    'Hand this to one of them with --agent <name>; it waits its turn there. (The user '
                                    'raises the limit with /cli agents max <n>.)')
@@ -926,10 +998,22 @@ class AutoMixin:
                 goal = first[5:].strip() if first.casefold().startswith('goal:') else first
                 return dict(checked=True, label=adapters.module(lead['backend']).LABEL + ' (new) · ' + (
                     goal[:24].rstrip() + '…' if len(goal) > 24 else goal))
-            session = self.start_extra()
+            session = self.start_extra(effort=level)
             state = self.store.read()
         else:
             session = self.handoff_target(state, agent)
+            if effort:
+                entry = agent_entry(state, session)
+                level = effort_level(self.store.root, entry, effort)
+                if level != (entry.get('settings') or {}).get('effortValue'):
+                    if pending_work(state, session=session):
+                        raise RuntimeError(agent_label(state, session) + ' is working, so its effort cannot change '
+                                           'now. Hand this to --agent new --effort ' + level + ', or run it again '
+                                           'when it has finished. Nothing was handed off.')
+                    said = self.reconfigure(session, effort=level)
+                    if not (said or '').endswith('now works with it.'):
+                        raise RuntimeError((said or 'Its effort could not change.') + ' Nothing was handed off.')
+                    state = self.store.read()
         target = agent_entry(state, session)
         name = agent_label(state, session)
         if read_only and target.get('actsWithoutAsking'):
@@ -946,8 +1030,15 @@ class AutoMixin:
             if found:
                 raise RuntimeError(conflict_text(latest, found, files) + ' Nothing was handed off.')
             self.store.capture(latest, request, text, session=session)
+            effort_now = (target.get('settings') or {}).get('effortValue')  # Recorded: which effort did this work.
             latest['requests'][request]['handoff'] = dict(task=task, readOnly=bool(read_only),
-                                                          **({'files': files} if files is not None else {}))
+                                                          **({'files': files} if files is not None else {}),
+                                                          **({'effort': effort_now} if effort_now else {}),
+                                                          **({'escalates': escalates} if escalates else {}))
+            parent = latest['requests'].get(escalates) if escalates else None
+            if parent is not None:  # Once per task: its round's agents are listed, and the time it began.
+                parent.setdefault('escalatedAt', time.time())
+                parent.setdefault('escalatedBy', []).append(request)
             labels = latest.setdefault('followLabels', {})  # The follow's pane row: `<Agent NAME> · <goal>`.
             labels.pop(request, None)
             labels[request] = label
@@ -956,6 +1047,51 @@ class AutoMixin:
         started = self.ensure_pump(session)
         return dict(requestId=request, agent=name, task=task, readOnly=bool(read_only), label=label,
                     worker=started.get('worker'))
+
+    def escalation(self, state, request_id, record, answer, saved=None):
+        """The ESCALATE or FOLLOW-UP line for a result, with the doubt it answers; (None, None) when there is none.
+
+        ESCALATE: the agent says work is left of its task (its REMAINING line, or its own words) and worked below its
+        model's highest effort. Each task escalates once: a task already escalated gets no
+        second line, while other tasks still can. The line hands over what the first agent learned by reference (its
+        saved answer as Inputs, its doubt as Context), and several separate areas go out at once, one agent each.
+        FOLLOW-UP: the result of an escalation. It is final: the lead does not send it again, and hands on only an
+        issue other than the one it was sent to check, as new work. Claude decides either way."""
+        import relay_view
+        left = relay_view.remaining(answer)
+        if not left:
+            return None, None
+        requests = state.get('requests') or {}
+        entry = agent_entry(state, record.get('session'))
+        levels = entry_efforts(self.store.root, entry) if entry else []
+        top_label, top = levels[-1] if levels else ('its highest', None)
+        name = agent_label(state, record['session']) if entry else 'The agent'
+        read_only = ' --read-only' if (record.get('handoff') or {}).get('readOnly') else ''
+        parent = (record.get('handoff') or {}).get('escalates')
+        if parent:
+            sent = (requests.get(parent) or {}).get('doubt') or 'what was left of an earlier task'
+            if (record.get('escalatedBy') or []):
+                return None, None
+            return ('FOLLOW-UP: ' + name + ' was the ' + top_label + '-effort look at: "' + sent + '". It reports: "' +
+                    left + '". Its result is final: do not send this again. Only if that names a different issue from '
+                    'the one it was sent to check, hand the new issue on as new work (a fresh agent at ' +
+                    top_label + ' effort, `--agent new' + (' --effort ' + top if top else '') + ' --escalates ' +
+                    request_id + read_only + '`); otherwise report it as unresolved.'), left
+        current = (entry or {}).get('settings', {}).get('effortValue')
+        if not levels or current == top or record.get('escalatedBy'):
+            return None, None  # No higher effort to try, or this task has had its escalation.
+        now = next((label for label, value in levels if value == current), current or 'its default')
+        free = len(state.get('owned') or []) < agent_limit(state) or any(
+            item.get('warm') and not item.get('claimed') for item in state.get('owned') or [])
+        flags = ' --effort ' + top + ' --escalates ' + request_id + read_only
+        how = ('`--agent new' + flags + '`' if free else '`--agent <an idle agent>' + flags +
+               '` (the agent limit is reached: an idle agent takes the higher effort in place)')
+        return ('ESCALATE: ' + name + ' worked at ' + now + ' effort and says what is left: "' + left + '". Hand it to '
+                'a fresh agent at ' + top_label + ' effort with ' + how + ': a task whose Goal and Files cover only '
+                'what it names (several separate areas: one agent each, all at once); Inputs: ' +
+                ('`' + saved + '`' if saved else 'its answer above') + ' (what it fixed, ruled out and suspects); '
+                'Context: its doubt in one line, so it starts where this one stopped. It works and reports once. Skip '
+                'it only for a trivial leftover, and say so.'), left
 
     def note_handoff_error(self, request, message):
         """A handoff the background task could not make (a new agent that did not start): its wake-up says why."""
@@ -986,39 +1122,163 @@ class AutoMixin:
                                'starts it again.')
         return session
 
-    def start_extra(self):
+    def start_extra(self, effort=None):
         """Start another agent like the running AUTO agent (its kind, model, effort and access), named after it:
-        `Codex-02`. It joins this conversation's extras, closes with the others, and idles out like them.
+        `Codex-02`. It joins this conversation's extras, closes with the others, and idles out like them. With
+        `effort`, it starts at that effort instead (an escalation), and a warm agent at another effort is left.
 
-        One agent starts at a time (a conversation has one pending activation), so a start that finds another under
-        way waits for it, in this handoff's background task, and then starts its own (live, 2026-09-27: three parts
-        handed out at once, and the third start was refused, so its part queued behind a busy agent)."""
-        deadline = time.monotonic() + START_WAIT
-        while True:
-            state = self.store.read()
-            lead = agent_entry(state, self.handoff_target(state))
-            if len(state.get('owned') or []) >= agent_limit(state):
+        Extras start at the same time: each owns its own entry while it starts (`starting`), never the menu's one
+        pending activation (live, 2026-09-28: starts queued one after another, about 20 s each, so the fifth part of
+        five waited over a minute to begin)."""
+        choice = self.lead_choice()
+        warm = self.claim_warm() if effort is None or effort == choice.get('effort') else None
+        if warm:
+            return warm
+        session = self.start_alongside(dict(choice, effort=effort) if effort else choice)
+        if not agent_entry(self.store.read(), session):
+            raise RuntimeError('The new agent did not start, so nothing was handed off.')
+        return session
+
+    def lead_choice(self):
+        """Settings for another agent like the running AUTO agent (its kind, model, effort, access, fast mode)."""
+        state = self.store.read()
+        lead = agent_entry(state, self.handoff_target(state))
+        settings = lead.get('settings') or {}
+        return {'agent': lead['backend'], 'model': settings.get('model'), 'access': settings.get('access'),
+                'effort': settings.get('effortValue'), 'fast': settings.get('fast')}
+
+    def claim_warm(self, wait=WARM_CLAIM_WAIT, poll=1.0):
+        """A warm extra (started ahead by `warm`, while Claude wrote the task files) for `--agent new`: a ready one at
+        once, else one still starting, once it is ready. None when there is none, or it failed to start."""
+        with self.store.edit() as state:
+            found = next((item for item in state['owned'] if item.get('warm') and not item.get('claimed')), None)
+            if found is None:
+                return None
+            found['claimed'] = True
+            name = found['name']
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            item = agent_entry(self.store.read(), name)
+            if item is None:
+                return None  # Its start failed: a new one starts instead.
+            if item.get('ready'):
+                with self.store.edit() as state:
+                    for entry in state['owned']:
+                        if entry['name'] == name:
+                            entry.pop('warm', None)
+                            entry.pop('claimed', None)
+                return name
+            time.sleep(poll)
+        return None
+
+    def warm_needed(self, state, adding=None):
+        """Task files written and not handed off yet outnumber the agents free to take them (idle, or warming and
+        unclaimed), and another agent may start: then one starts now, before its handoff (just in time)."""
+        if len(state.get('owned') or []) >= agent_limit(state):
+            return False
+        handed = {(record.get('handoff') or {}).get('task') for _, record in auto_requests(state)}
+        now, folder = time.time(), tasks_dir(self.store.workspace)
+        try:
+            written = {path.stem for path in folder.glob('*.md') if now - path.stat().st_mtime < WARM_WINDOW}
+        except OSError:
+            written = set()
+        pending = (written | ({adding} if adding else set())) - handed
+        busy = {record.get('session') for _, record in auto_requests(state) if record.get('status') in WORKING}
+        free = sum(1 for item in state.get('owned') or [] if not item.get('claimed') and (
+            (item.get('ready') and item['name'] not in busy) or (item.get('warm') and item.get('starting'))))
+        return len(pending) > free
+
+    def warm_ahead(self, task):
+        """The approval hook, as Claude writes task file `task`: when it needs an agent none is free to take, reserve
+        one and start it in a background process, so it is ready by its handoff (live, 2026-09-28: each extra's start
+        took about 40 s after its handoff; Claude writes a batch's task files well before handing them off)."""
+        if not self.warm_needed(self.store.read(), adding=task):
+            return None
+        owned, _ = self.reserve_alongside(self.lead_choice(), warm=True)
+        import os
+        import subprocess
+        import sys
+        from queue_worker import CONTROLLER
+        command = [sys.executable, str(CONTROLLER), '--thread', self.store.thread, '--workspace',
+                   self.store.workspace, '--data-root', str(self.store.root), 'warm', '--token', owned['starting']]
+        options = {'stdin': subprocess.DEVNULL, 'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL,
+                   'close_fds': True}
+        try:
+            if os.name == 'nt':
+                flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+                try:  # Outside the hook's job, which ends its processes with it.
+                    subprocess.Popen(command, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, **options)
+                except OSError:
+                    subprocess.Popen(command, creationflags=flags, **options)
+            else:
+                subprocess.Popen(command, start_new_session=True, **options)
+        except OSError:
+            self.cleanup(owned)  # Not started: its handoff starts one itself.
+            return None
+        return owned['alias']
+
+    def warm(self, token):
+        """`warm --token`: start the reserved warm extra (the slow part, 15-40 s), detached from Claude's turn."""
+        state = self.store.read()
+        owned = next((item for item in state['owned'] if item.get('starting') == token), None)
+        if owned is None:
+            return dict(started=False)
+        self.use(owned['backend'])
+        self.finish_alongside(owned, token, state['generation'])
+        return dict(started=True, agent=owned['alias'])
+
+    def start_alongside(self, choice):
+        """Start an extra AUTO agent while others start or work: its entry is reserved (name, limit) at once, the slow
+        start runs outside the store's lock, and it joins the extras when ready."""
+        owned, generation = self.reserve_alongside(choice)
+        return self.finish_alongside(owned, owned['starting'], generation)
+
+    def reserve_alongside(self, choice, warm=False):
+        import uuid
+        from state import ACTS_WITHOUT_ASKING
+        target = self.use(choice['agent']).ID
+        settings = self.adapter.selection(self.store.root, choice['model'], choice['access'], choice.get('effort'))
+        if choice.get('fast') is not None and getattr(self.adapter, 'FAST_MODE_KEY', None):
+            settings['fast'] = bool(choice['fast'])
+        token = uuid.uuid4().hex
+        with self.store.edit() as state:
+            if len(state['owned']) >= agent_limit(state):
                 raise RuntimeError(str(len(state['owned'])) + ' agents are running, the limit, so no agent was '
                                    'started. Hand this to one of them with --agent <name>; it waits its turn there. '
                                    '(The user raises the limit with /cli agents max <n>.)')
-            if (state.get('pending') or {}).get('stage') != 'verifying':
-                settings = lead.get('settings') or {}
-                choice = {'agent': lead['backend'], 'model': settings.get('model'), 'access': settings.get('access'),
-                          'effort': settings.get('effortValue'), 'fast': settings.get('fast')}
-                try:
-                    result = self.start_role('extra', choice)
-                    break
-                except RuntimeError as exc:
-                    if 'already being verified' not in str(exc):
-                        raise  # Another start took the slot first: wait for it, as below.
-            if time.monotonic() >= deadline:
-                raise RuntimeError('Another agent was still starting after ' + str(START_WAIT) + ' s, so no agent '
-                                   'was started. Hand this to a running agent with --agent <name>.')
-            time.sleep(1)
-        session = result.get('activated')
-        if not session or not agent_entry(self.store.read(), session):
-            raise RuntimeError('The new agent did not start, so nothing was handed off.')
-        return session
+            owned = dict(name='cli-mode-' + self.store.key[:12] + '-' + uuid.uuid4().hex[:12],
+                         workspace=self.store.workspace, backend=target, role='main', settings=settings, ready=False,
+                         starting=token, alias=auto_name(target, [item.get('alias') for item in state['owned']]),
+                         timeout=AUTO_TIMEOUT)
+            if warm:
+                owned['warm'] = True
+            if target in ACTS_WITHOUT_ASKING:
+                owned['actsWithoutAsking'] = True
+            if getattr(self.backend, 'profile', None):
+                owned['acpxProfile'] = self.backend.profile
+            if hasattr(self.backend, 'prepare'):
+                self.backend.prepare(owned)
+            state['owned'].append(owned)
+            generation = state['generation']
+        return owned, generation
+
+    def finish_alongside(self, owned, token, generation):
+        target, settings = owned['backend'], owned['settings']
+        try:
+            provider = self.provision(owned, generation, token)
+            with self.store.edit() as state:
+                if not self.valid(state, generation, token):
+                    raise RuntimeError('The start was canceled (/cli off), so nothing was handed off.')
+                for item in state['owned']:
+                    if item.get('starting') == token:
+                        item.pop('starting')
+                        item.update(ready=True, providerSession=provider, lastUsedAt=time.time())
+                state['active'] = True
+                adopt(state, 'auto-extra', owned['name'], target, settings, self.store.root)
+        except BaseException:
+            self.cleanup(owned)
+            raise
+        return owned['name']
 
     def relay_for_host(self, request_id, wait=25.0, poll=.25, answer_max=None):
         """A handoff's result for Claude to read (not to post): plain lines, then the agent's answer. It marks the
@@ -1076,15 +1336,20 @@ class AutoMixin:
                 other = alongside(latest, request_id)
                 theirs = [path for path, key in changed if key and not any(overlaps(key, item) for item in other)]
             outside = outside_claim(theirs, claim, self.store.workspace)
+        escalate, doubt = self.escalation(latest, request_id, finished, relay_view.messages(public),
+                                          ((view['receipt'] or {}).get('refs') or {}).get('answer'))
         text = relay_view.host_text(
             request_id, label, status, public, view['receipt'], read_only=handoff.get('readOnly'),
             task=task_file(self.store.workspace, task).as_posix() if task and TASK_ID.fullmatch(task) else None,
             stopped=stopped, access=(agent_entry(latest, record.get('session')) or {}).get('settings'),
-            touched=own, answer_max=answer_max or relay_view.HOST_ANSWER_MAX, alongside=expected, outside=outside)
+            touched=own, answer_max=answer_max or relay_view.HOST_ANSWER_MAX, alongside=expected, outside=outside,
+            escalate=escalate)
         with self.store.edit() as latest:
             saved = (latest.get('requests') or {}).get(request_id)
             if saved:
                 saved.update(relayed=True, hostRead=True)
+                if doubt:  # What its escalation is sent to check, named again in that one's FOLLOW-UP.
+                    saved['doubt'] = doubt
             latest.setdefault('relayProgress', {})[request_id] = dict(cursor=position, done=True)
             if latest.get('autoWake') == request_id:
                 latest.pop('autoWake')
